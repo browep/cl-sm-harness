@@ -17,6 +17,11 @@ case "$mode" in
       --eval '(require :asdf)' \
       --eval '(asdf:test-system :claude-agent-sdk-cl/tests)'
     ;;
+  parity)
+    node /workspace/scripts/verify-parity.mjs \
+      /opt/upstream-catalog.json \
+      /workspace/test/fixtures/upstream/manifest.json
+    ;;
   *)
     printf '%s\n' "unknown test mode: $mode" >&2
     exit 64

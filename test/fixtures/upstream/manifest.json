@@ -1,0 +1,1444 @@
+{
+  "schema_version": 1,
+  "upstream": {
+    "repository": "https://github.com/anthropics/claude-agent-sdk-python",
+    "commit": "3145cc637778b23cb3caff7556ab76a10028b084"
+  },
+  "test_files": [
+    {
+      "path": "tests/conftest.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_build_wheel.py",
+      "state": "not-applicable",
+      "rationale": "Python packaging, release, or bundled-CLI maintenance behavior has no Common Lisp runtime equivalent; target packaging checks will be added separately.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_changelog.py",
+      "state": "not-applicable",
+      "rationale": "Python packaging, release, or bundled-CLI maintenance behavior has no Common Lisp runtime equivalent; target packaging checks will be added separately.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_client.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_close_cancellation.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_download_cli.py",
+      "state": "not-applicable",
+      "rationale": "Python packaging, release, or bundled-CLI maintenance behavior has no Common Lisp runtime equivalent; target packaging checks will be added separately.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_errors.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_example_postgres_session_store.py",
+      "state": "not-applicable",
+      "rationale": "This validates an upstream Python example plus external service fixture; the portable SessionStore contract remains deferred separately.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_example_redis_session_store.py",
+      "state": "not-applicable",
+      "rationale": "This validates an upstream Python example plus external service fixture; the portable SessionStore contract remains deferred separately.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_example_redis_session_store_live.py",
+      "state": "not-applicable",
+      "rationale": "This validates an upstream Python example plus external service fixture; the portable SessionStore contract remains deferred separately.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_example_s3_session_store.py",
+      "state": "not-applicable",
+      "rationale": "This validates an upstream Python example plus external service fixture; the portable SessionStore contract remains deferred separately.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_example_s3_session_store_live.py",
+      "state": "not-applicable",
+      "rationale": "This validates an upstream Python example plus external service fixture; the portable SessionStore contract remains deferred separately.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_integration.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_mcp_large_output.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_message_parser.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_option_warnings.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_query.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_rate_limit_event_repro.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_sdk_mcp_integration.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_session_helpers_store.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_session_import.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_session_mutations.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_session_resume.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_session_store_anyio.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_session_store_conformance.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_session_summary.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_sessions.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_streaming_client.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_subprocess_buffering.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_task_compat.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_tool_callbacks.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_transcript_mirror.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_transport.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_types.py",
+      "state": "deferred",
+      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "path": "tests/test_update_cli_version.py",
+      "state": "not-applicable",
+      "rationale": "Python packaging, release, or bundled-CLI maintenance behavior has no Common Lisp runtime equivalent; target packaging checks will be added separately.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    }
+  ],
+  "exports": [
+    {
+      "module": "claude_agent_sdk",
+      "name": "query",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "__version__",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "Transport",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ClaudeSDKClient",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "PermissionMode",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "EffortLevel",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "McpServerConfig",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "McpSdkServerConfig",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "McpServerStatus",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "McpServerStatusConfig",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "McpServerConnectionStatus",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "McpServerInfo",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "McpStatusResponse",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "McpToolAnnotations",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "McpToolInfo",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "UserMessage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "AssistantMessage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SystemMessage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "TaskStartedMessage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "TaskProgressMessage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "TaskUpdatedMessage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "TaskNotificationMessage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "TaskNotificationStatus",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "TaskUpdatedStatus",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "TERMINAL_TASK_STATUSES",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "TaskUsage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ResultMessage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ModelUsage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "DeferredToolUse",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "RateLimitEvent",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "RateLimitInfo",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "RateLimitStatus",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "RateLimitType",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "StreamEvent",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "Message",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ClaudeAgentOptions",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "TaskBudget",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "TextBlock",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ThinkingBlock",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ThinkingConfig",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ThinkingConfigAdaptive",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ThinkingConfigEnabled",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ThinkingConfigDisabled",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ToolUseBlock",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ToolResultBlock",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ServerToolName",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ServerToolUseBlock",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ServerToolResultBlock",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ContentBlock",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ContextUsageCategory",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ContextUsageResponse",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "CanUseTool",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "CanUseToolShadowedWarning",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ToolPermissionContext",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "PermissionResult",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "PermissionResultAllow",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "PermissionResultDeny",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "PermissionUpdate",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "HookCallback",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "HookContext",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "HookInput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "HookEventMessage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "BaseHookInput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "PreToolUseHookInput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "PostToolUseHookInput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "PostToolUseFailureHookInput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "PostToolUseFailureHookSpecificOutput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "UserPromptSubmitHookInput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "StopHookInput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SubagentStopHookInput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "PreCompactHookInput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "NotificationHookInput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SubagentStartHookInput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "PermissionRequestHookInput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "NotificationHookSpecificOutput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SubagentStartHookSpecificOutput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "PermissionRequestHookSpecificOutput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "HookJSONOutput",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "HookMatcher",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "AgentDefinition",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SettingSource",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SdkPluginConfig",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "list_sessions",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "get_session_info",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "get_session_messages",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "list_subagents",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "get_subagent_messages",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SDKSessionInfo",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SessionMessage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SessionKey",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SessionStore",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SessionStoreEntry",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SessionStoreFlushMode",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SessionStoreListEntry",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SessionSummaryEntry",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SessionListSubkeysKey",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "InMemorySessionStore",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "fold_session_summary",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "MirrorErrorMessage",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "project_key_for_directory",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "import_session_to_store",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "list_sessions_from_store",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "get_session_info_from_store",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "get_session_messages_from_store",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "list_subagents_from_store",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "get_subagent_messages_from_store",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "rename_session",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "tag_session",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "delete_session",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "fork_session",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ForkSessionResult",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "rename_session_via_store",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "tag_session_via_store",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "delete_session_via_store",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "fork_session_via_store",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SdkBeta",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SandboxSettings",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SandboxNetworkConfig",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SandboxIgnoreViolations",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "create_sdk_mcp_server",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "tool",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "SdkMcpTool",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ToolAnnotations",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ClaudeSDKError",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "CLIConnectionError",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "CLINotFoundError",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "ProcessError",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    },
+    {
+      "module": "claude_agent_sdk",
+      "name": "CLIJSONDecodeError",
+      "state": "deferred",
+      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
+      "lisp_symbol": null,
+      "lisp_test": null,
+      "vectors": []
+    }
+  ],
+  "vectors": []
+}

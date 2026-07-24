@@ -113,7 +113,7 @@ docker compose run --rm test unit
 
 loads the test system and runs a known empty/bootstrap FiveAM suite. The image records pinned SBCL, package, and Claude CLI versions. The root `.env` is not copied into the image.
 
-### Phase 2 — Parity catalog and reference oracle
+### [x] Phase 2 — Parity catalog and reference oracle *(completed in pending commit)*
 
 **Files:** `docs/upstream-baseline.md`, `docs/api-parity.md`, `test/fixtures/upstream/manifest.json`, reference-image setup, export/verification scripts.
 

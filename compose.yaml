@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: test
     image: claude-agent-sdk-cl:test
     working_dir: /workspace
     network_mode: none
@@ -15,6 +16,20 @@ services:
       - ./scripts:/workspace/scripts:ro
       - claude-agent-sdk-cl-cache:/cache
     command: ["unit"]
+
+  reference:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: reference
+    image: claude-agent-sdk-cl:reference
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./test/fixtures/upstream:/out
+    command: ["/opt/catalog/upstream-catalog.json", "/out/reference-catalog.json"]
 
 volumes:
   claude-agent-sdk-cl-cache:

@@ -85,9 +85,9 @@ docker compose run --rm test integration
 CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm test live
 ```
 
-Phase 1 implements the offline `unit` command. It builds a pinned Node base image with SBCL, FiveAM, and Claude Code CLI `2.1.219`; exact resolved runtime versions are retained in `/usr/local/share/claude-agent-sdk-cl/runtime-versions.txt` in the image. The `test` service has network disabled, mounts source read-only, and uses a named `/cache` volume for compiled artifacts.
+Phase 1 implements the offline `unit` command. Phase 2 adds `parity`: it compares the checked-in classification manifest with a catalog generated from the pinned upstream Python source in a separate credential-free Docker stage. It builds a pinned Node base image with SBCL, FiveAM, and Claude Code CLI `2.1.219`; exact resolved runtime versions are retained in `/usr/local/share/claude-agent-sdk-cl/runtime-versions.txt` in the image. The `test` service has network disabled, mounts source read-only, and uses a named `/cache` volume for compiled artifacts.
 
-The `test` service intentionally mounts only its ASDF/source/test/script inputs. It cannot see the root `.env`, and the test wrapper fails closed if an `.env` mount is added. The fake-process, parity, and live commands remain future phases; see [PLAN.md](PLAN.md) for delivery order.
+The `test` service intentionally mounts only its ASDF/source/test/script inputs. It cannot see the root `.env`, and the test wrapper fails closed if an `.env` mount is added. The `reference` service is also credential-free and network-isolated at runtime; it can export the pinned source catalog for later vector generation. Fake-process integration and live commands remain future phases; see [PLAN.md](PLAN.md) for delivery order.
 
 ## Authentication boundary
 
@@ -128,7 +128,7 @@ Pytest itself will not run against the Lisp implementation; Python test harness 
 
 ## Status
 
-Phase 1 Docker/test foundation is implemented: `docker compose build --pull` followed by `docker compose run --rm test unit` runs the bootstrap FiveAM suite without network access or credentials. API and protocol implementation remains planned. See GitHub [issue #1](https://github.com/browep/claude-agent-sdk-cl/issues/1) and [PLAN.md](PLAN.md).
+Phases 1–2 are implemented: the Docker/FiveAM foundation and its upstream parity catalog/reference oracle are available through `docker compose build --pull`, `docker compose run --rm test unit`, and `docker compose run --rm test parity`. API and protocol implementation remains planned. See GitHub [issue #1](https://github.com/browep/claude-agent-sdk-cl/issues/1) and [PLAN.md](PLAN.md).
 
 ## License
 
