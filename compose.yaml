@@ -1,0 +1,20 @@
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: claude-agent-sdk-cl:test
+    working_dir: /workspace
+    network_mode: none
+    volumes:
+      # Mount only runtime source. In particular, root .env is never visible to
+      # offline tests and cannot be copied into the image by .dockerignore.
+      - ./claude-agent-sdk-cl.asd:/workspace/claude-agent-sdk-cl.asd:ro
+      - ./src:/workspace/src:ro
+      - ./test:/workspace/test:ro
+      - ./scripts:/workspace/scripts:ro
+      - claude-agent-sdk-cl-cache:/cache
+    command: ["unit"]
+
+volumes:
+  claude-agent-sdk-cl-cache:

@@ -1,0 +1,9 @@
+.git
+.env
+.env.*
+!.env.example
+.hermes
+**/__pycache__
+**/*.fasl
+**/*.cfasl
+**/*.tmp
