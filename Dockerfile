@@ -20,7 +20,9 @@ RUN python /usr/local/bin/catalog.py \
       --output /opt/catalog/upstream-catalog.json
 
 FROM catalog AS reference
-RUN pip install --no-cache-dir /opt/upstream
+COPY docker/reference/requirements.lock /opt/reference/requirements.lock
+RUN pip install --no-cache-dir --require-hashes --no-deps -r /opt/reference/requirements.lock
+ENV PYTHONPATH=/opt/upstream/src
 COPY docker/reference/export_contracts.py /usr/local/bin/export-contracts.py
 ENTRYPOINT ["python", "/usr/local/bin/export-contracts.py"]
 
