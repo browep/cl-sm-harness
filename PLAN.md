@@ -125,7 +125,7 @@ loads the test system and runs a known empty/bootstrap FiveAM suite. The image r
 
 **Done when:** representative Python-derived fixture vectors cover defaults, option serialization, message variants, malformed data, unknown fields, and typed errors—without launching a process.
 
-### Phase 3.1 — Reproducible Python reference dependencies *(prerequisite to Phase 4)*
+### [x] Phase 3.1 — Reproducible Python reference dependencies *(completed in `92c0b97`)*
 
 **Files:** `docker/reference/requirements.lock`, reference-image install commands, and reference-build verification.
 
