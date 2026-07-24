@@ -100,7 +100,7 @@ Every one of the upstream suite's 35 test files must appear in the parity manife
 
 ## Phased delivery
 
-### Phase 1 — Reproducible Docker foundation
+### [x] Phase 1 — Reproducible Docker foundation *(completed in `5cd96ed`)*
 
 **Files:** `Dockerfile`, `compose.yaml`, `docker/entrypoint.sh`, `scripts/test.sh`, `.dockerignore`, `.env.example`, ASDF system, test bootstrap.
 
