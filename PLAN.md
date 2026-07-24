@@ -119,7 +119,7 @@ loads the test system and runs a known empty/bootstrap FiveAM suite. The image r
 
 **Done when:** every upstream test file has a manifest row and `docker compose run --rm test parity` fails on missing classification or fixture provenance.
 
-### [x] Phase 3 — Options, types, and conditions *(completed in pending commit)*
+### [x] Phase 3 — Options, types, and conditions *(completed in `28fb83a`)*
 
 **Files:** `src/options.lisp`, `src/types.lisp`, `src/conditions.lisp`, corresponding FiveAM suites and fixtures.
 
