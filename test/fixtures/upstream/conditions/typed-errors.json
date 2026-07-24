@@ -1,0 +1,13 @@
+{
+  "source": {
+    "upstream_commit": "3145cc637778b23cb3caff7556ab76a10028b084",
+    "pytest_node": "tests/test_errors.py::TestErrorTypes::test_process_error",
+    "symbol": "claude_agent_sdk._errors.ProcessError"
+  },
+  "process_error": {
+    "message": "claude exited",
+    "exit_code": 17,
+    "stderr": "bad stderr"
+  },
+  "malformed_json_line": "{broken"
+}

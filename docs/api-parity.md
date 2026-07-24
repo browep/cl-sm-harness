@@ -6,7 +6,7 @@ The machine-readable authority is [`test/fixtures/upstream/manifest.json`](../te
 
 ## Current state
 
-The target contains only Docker/ASDF/FiveAM bootstrap behavior. Therefore no upstream public API is marked `ported` yet. All runtime contracts are explicitly deferred; upstream Python packaging/release checks and Python example-service tests are `not-applicable` with per-row rationale.
+The target has a deterministic Phase 3 domain slice. `ClaudeAgentOptions`, `AssistantMessage`, `TextBlock`, `ProcessError`, and `CLIJSONDecodeError` have fixture-linked Common Lisp counterparts and are marked `ported` in the manifest. The remaining runtime contracts are explicitly deferred; upstream Python packaging/release checks and Python example-service tests are `not-applicable` with per-row rationale.
 
 | Area | State | Planned slice |
 |---|---|---|

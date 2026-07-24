@@ -5,14 +5,20 @@
   :version "0.1.0"
   :serial t
   :components ((:file "src/packages")
-               (:file "src/bootstrap")))
+               (:file "src/bootstrap")
+               (:file "src/conditions")
+               (:file "src/options")
+               (:file "src/types")))
 
 (asdf:defsystem #:claude-agent-sdk-cl/tests
   :description "Tests for claude-agent-sdk-cl"
-  :depends-on (#:claude-agent-sdk-cl #:fiveam)
+  :depends-on (#:claude-agent-sdk-cl #:fiveam #:yason)
   :serial t
   :components ((:file "test/packages")
-               (:file "test/bootstrap"))
+               (:file "test/bootstrap")
+               (:file "test/conditions")
+               (:file "test/options")
+               (:file "test/types"))
   :perform (asdf:test-op (operation component)
              (declare (ignore operation component))
              (unless (uiop:symbol-call '#:fiveam '#:run! :claude-agent-sdk-cl/tests)

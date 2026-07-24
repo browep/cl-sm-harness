@@ -1,0 +1,19 @@
+{
+  "source": {
+    "upstream_commit": "3145cc637778b23cb3caff7556ab76a10028b084",
+    "pytest_node": "tests/test_types.py::TestOptions::test_claude_code_options_with_tools",
+    "symbol": "claude_agent_sdk.types.ClaudeAgentOptions"
+  },
+  "options": {
+    "allowedTools": [
+      "Read",
+      "Write"
+    ],
+    "disallowedTools": [
+      "Bash"
+    ],
+    "permissionMode": "acceptEdits",
+    "continue": true,
+    "model": "claude-sonnet-4-5"
+  }
+}

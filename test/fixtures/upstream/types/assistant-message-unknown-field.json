@@ -1,0 +1,22 @@
+{
+  "source": {
+    "upstream_commit": "3145cc637778b23cb3caff7556ab76a10028b084",
+    "pytest_node": "tests/test_message_parser.py::TestMessageParser::test_parse_valid_assistant_message",
+    "symbol": "claude_agent_sdk._internal.message_parser.parse_message"
+  },
+  "wire": {
+    "type": "assistant",
+    "message": {
+      "model": "claude-sonnet-4-5",
+      "content": [
+        {
+          "type": "text",
+          "text": "Hello"
+        }
+      ]
+    },
+    "futureField": {
+      "enabled": true
+    }
+  }
+}

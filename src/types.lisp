@@ -1,0 +1,51 @@
+(in-package #:claude-agent-sdk-cl)
+
+(defclass message () ((extra :initarg :extra :initform (make-hash-table :test #'equal) :reader message-extra)))
+(defclass user-message (message) ((content :initarg :content :reader user-message-content)))
+(defclass assistant-message (message)
+  ((content :initarg :content :reader assistant-message-content)
+   (model :initarg :model :reader assistant-message-model)))
+(defclass text-block () ((text :initarg :text :reader text-block-text)))
+(defclass thinking-block () ((thinking :initarg :thinking :reader thinking-block-thinking) (signature :initarg :signature :reader thinking-block-signature)))
+(defclass tool-use-block () ((id :initarg :id :reader tool-use-block-id) (name :initarg :name :reader tool-use-block-name) (input :initarg :input :reader tool-use-block-input)))
+(defclass tool-result-block () ((tool-use-id :initarg :tool-use-id :reader tool-result-block-tool-use-id) (content :initarg :content :reader tool-result-block-content) (is-error :initarg :is-error :initform nil :reader tool-result-block-is-error)))
+(defclass unknown-content-block () ((raw :initarg :raw :reader unknown-content-block-raw)))
+(defclass permission-update () ((type :initarg :type :reader permission-update-type) (wire :initarg :wire :reader permission-update-wire)))
+
+(defun %object (value context)
+  (unless (hash-table-p value) (signal-cli-json-error context))
+  value)
+
+(defun %extra-fields (object known)
+  (let ((extra (make-hash-table :test #'equal)))
+    (maphash (lambda (key value) (unless (member key known :test #'equal) (setf (gethash key extra) value))) object)
+    extra))
+
+(defun decode-content-block (wire)
+  (%object wire "content block must be an object")
+  (let ((type (gethash "type" wire)))
+    (cond
+      ((string= type "text") (make-instance 'text-block :text (or (gethash "text" wire) "")))
+      ((string= type "thinking") (make-instance 'thinking-block :thinking (or (gethash "thinking" wire) "") :signature (gethash "signature" wire)))
+      ((string= type "tool_use") (make-instance 'tool-use-block :id (gethash "id" wire) :name (gethash "name" wire) :input (gethash "input" wire)))
+      ((string= type "tool_result") (make-instance 'tool-result-block :tool-use-id (gethash "tool_use_id" wire) :content (gethash "content" wire) :is-error (gethash "is_error" wire)))
+      (t (make-instance 'unknown-content-block :raw wire)))))
+
+(defun decode-message (wire)
+  (%object wire "message envelope must be an object")
+  (let* ((type (gethash "type" wire)) (body (%object (gethash "message" wire) "message body must be an object"))
+         (content (gethash "content" body)))
+    (unless (listp content) (signal-cli-json-error "message content must be a list"))
+    (let ((blocks (mapcar #'decode-content-block content))
+          (extra (%extra-fields wire '("type" "message"))))
+      (cond
+        ((string= type "user") (make-instance 'user-message :content blocks :extra extra))
+        ((string= type "assistant") (make-instance 'assistant-message :content blocks :model (gethash "model" body) :extra extra))
+        (t (signal-cli-json-error (format nil "unsupported message type: ~A" type)))))))
+
+(defun decode-permission-update (wire)
+  (%object wire "permission update must be an object")
+  (make-instance 'permission-update :type (gethash "type" wire) :wire wire))
+
+(defun permission-update->wire (update)
+  (permission-update-wire update))

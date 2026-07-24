@@ -434,11 +434,13 @@
     {
       "module": "claude_agent_sdk",
       "name": "AssistantMessage",
-      "state": "deferred",
-      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
-      "lisp_symbol": null,
-      "lisp_test": null,
-      "vectors": []
+      "state": "ported",
+      "rationale": "Representative deterministic Phase 3 domain slice.",
+      "lisp_symbol": "claude-agent-sdk-cl:assistant-message",
+      "lisp_test": "claude-agent-sdk-cl/tests::decode-content-and-preserve-unknown-fields",
+      "vectors": [
+        "test/fixtures/upstream/types/assistant-message-unknown-field.json"
+      ]
     },
     {
       "module": "claude_agent_sdk",
@@ -605,11 +607,13 @@
     {
       "module": "claude_agent_sdk",
       "name": "ClaudeAgentOptions",
-      "state": "deferred",
-      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
-      "lisp_symbol": null,
-      "lisp_test": null,
-      "vectors": []
+      "state": "ported",
+      "rationale": "Representative deterministic Phase 3 domain slice.",
+      "lisp_symbol": "claude-agent-sdk-cl:agent-options",
+      "lisp_test": "claude-agent-sdk-cl/tests::options-default-and-wire-encoding",
+      "vectors": [
+        "test/fixtures/upstream/options/options-wire.json"
+      ]
     },
     {
       "module": "claude_agent_sdk",
@@ -623,11 +627,13 @@
     {
       "module": "claude_agent_sdk",
       "name": "TextBlock",
-      "state": "deferred",
-      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
-      "lisp_symbol": null,
-      "lisp_test": null,
-      "vectors": []
+      "state": "ported",
+      "rationale": "Representative deterministic Phase 3 domain slice.",
+      "lisp_symbol": "claude-agent-sdk-cl:text-block",
+      "lisp_test": "claude-agent-sdk-cl/tests::decode-content-and-preserve-unknown-fields",
+      "vectors": [
+        "test/fixtures/upstream/types/assistant-message-unknown-field.json"
+      ]
     },
     {
       "module": "claude_agent_sdk",
@@ -1424,21 +1430,59 @@
     {
       "module": "claude_agent_sdk",
       "name": "ProcessError",
-      "state": "deferred",
-      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
-      "lisp_symbol": null,
-      "lisp_test": null,
-      "vectors": []
+      "state": "ported",
+      "rationale": "Representative deterministic Phase 3 domain slice.",
+      "lisp_symbol": "claude-agent-sdk-cl:process-error",
+      "lisp_test": "claude-agent-sdk-cl/tests::typed-conditions-remain-distinct",
+      "vectors": [
+        "test/fixtures/upstream/conditions/typed-errors.json"
+      ]
     },
     {
       "module": "claude_agent_sdk",
       "name": "CLIJSONDecodeError",
-      "state": "deferred",
-      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
-      "lisp_symbol": null,
-      "lisp_test": null,
-      "vectors": []
+      "state": "ported",
+      "rationale": "Representative deterministic Phase 3 domain slice.",
+      "lisp_symbol": "claude-agent-sdk-cl:cli-json-error",
+      "lisp_test": "claude-agent-sdk-cl/tests::typed-conditions-remain-distinct",
+      "vectors": [
+        "test/fixtures/upstream/conditions/typed-errors.json"
+      ]
     }
   ],
-  "vectors": []
+  "vectors": [
+    {
+      "path": "test/fixtures/upstream/types/assistant-message-unknown-field.json",
+      "sha256": "ef4727e7c967144b38ba60c9472a7dbf86d03d2e42f3c27e3cb7ba8a5aa4417f",
+      "upstream_commit": "3145cc637778b23cb3caff7556ab76a10028b084",
+      "source": {
+        "pytest_node": "tests/test_message_parser.py::TestMessageParser::test_parse_valid_assistant_message",
+        "symbol": "claude_agent_sdk._internal.message_parser.parse_message"
+      },
+      "generation_command": "docker compose run --rm reference --phase3-fixtures /out",
+      "target_lisp_test": "claude-agent-sdk-cl/tests::decode-content-and-preserve-unknown-fields"
+    },
+    {
+      "path": "test/fixtures/upstream/options/options-wire.json",
+      "sha256": "1d7b28dbd189f223032f97021829ab2e1aea63380c2efdc412e8f10dad04f259",
+      "upstream_commit": "3145cc637778b23cb3caff7556ab76a10028b084",
+      "source": {
+        "pytest_node": "tests/test_types.py::TestOptions::test_claude_code_options_with_tools",
+        "symbol": "claude_agent_sdk.types.ClaudeAgentOptions"
+      },
+      "generation_command": "docker compose run --rm reference --phase3-fixtures /out",
+      "target_lisp_test": "claude-agent-sdk-cl/tests::options-default-and-wire-encoding"
+    },
+    {
+      "path": "test/fixtures/upstream/conditions/typed-errors.json",
+      "sha256": "9035f027faf250969764294a61d9dae70c5ab670770db793f17b1fd71d6351c0",
+      "upstream_commit": "3145cc637778b23cb3caff7556ab76a10028b084",
+      "source": {
+        "pytest_node": "tests/test_errors.py::TestErrorTypes::test_process_error",
+        "symbol": "claude_agent_sdk._errors.ProcessError"
+      },
+      "generation_command": "docker compose run --rm reference --phase3-fixtures /out",
+      "target_lisp_test": "claude-agent-sdk-cl/tests::typed-conditions-remain-distinct"
+    }
+  ]
 }

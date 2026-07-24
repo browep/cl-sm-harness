@@ -50,7 +50,7 @@ for (const vector of manifest.vectors ?? []) {
   const digest = crypto.createHash("sha256").update(fs.readFileSync(fullPath)).digest("hex");
   if (digest !== vector.sha256) fail(`checksum mismatch: ${vector.path}`);
   if (vector.upstream_commit !== manifest.upstream?.commit) fail(`vector commit mismatch: ${vector.path}`);
-  if (!nonblank(vector.generation_command) || !nonblank(vector.source?.pytest_node) || !nonblank(vector.source?.symbol)) fail(`incomplete provenance: ${vector.path}`);
+  if (!nonblank(vector.target_lisp_test) || !nonblank(vector.generation_command) || !nonblank(vector.source?.pytest_node) || !nonblank(vector.source?.symbol)) fail(`incomplete provenance: ${vector.path}`);
 }
 
 if (process.exitCode) process.exit(process.exitCode);

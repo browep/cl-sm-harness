@@ -27,12 +27,16 @@ FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca440
 
 ARG SBCL_VERSION=2:2.2.9-1
 ARG FIVEAM_VERSION=1.4.2-1
+ARG YASON_VERSION=0.7.6-1.1
+ARG TRIVIAL_GRAY_STREAMS_VERSION=20210117.git2b3823e-1
 ARG CLAUDE_CODE_VERSION=2.1.219
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
         "sbcl=${SBCL_VERSION}" \
         "cl-fiveam=${FIVEAM_VERSION}" \
+        "cl-yason=${YASON_VERSION}" \
+        "cl-trivial-gray-streams=${TRIVIAL_GRAY_STREAMS_VERSION}" \
         ca-certificates \
     && npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && useradd --create-home --uid 10001 --shell /usr/sbin/nologin sdk \
