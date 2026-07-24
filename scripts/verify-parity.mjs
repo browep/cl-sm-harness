@@ -21,6 +21,13 @@ for (const field of ["repository", "commit"]) {
   if (catalog.upstream?.[field] !== manifest.upstream?.[field]) fail(`upstream ${field} differs from catalog`);
 }
 
+const vectorMetadata = new Map();
+for (const vector of manifest.vectors ?? []) {
+  if (!nonblank(vector.path)) { fail("vector path is required"); continue; }
+  if (vectorMetadata.has(vector.path)) fail(`duplicate vector metadata: ${vector.path}`);
+  vectorMetadata.set(vector.path, vector);
+}
+
 function validateEntries(label, catalogEntries, manifestEntries, key) {
   if (!Array.isArray(manifestEntries)) return fail(`${label} entries must be an array`);
   const expected = new Set(catalogEntries.map(key));
@@ -33,8 +40,14 @@ function validateEntries(label, catalogEntries, manifestEntries, key) {
     if ((entry.state === "deferred" || entry.state === "not-applicable") && !nonblank(entry.rationale)) {
       fail(`${label} ${entryKey} requires rationale`);
     }
-    if (entry.state === "ported" && (!nonblank(entry.lisp_symbol) || !nonblank(entry.lisp_test) || !Array.isArray(entry.vectors) || entry.vectors.length === 0)) {
-      fail(`ported ${label} ${entryKey} requires lisp_symbol, lisp_test, and vectors`);
+    if (entry.state === "ported") {
+      if (!nonblank(entry.lisp_symbol) || !nonblank(entry.lisp_test) || !Array.isArray(entry.vectors) || entry.vectors.length === 0) {
+        fail(`ported ${label} ${entryKey} requires lisp_symbol, lisp_test, and vectors`);
+      } else {
+        for (const vectorPath of entry.vectors) {
+          if (!vectorMetadata.has(vectorPath)) fail(`ported ${label} ${entryKey} references missing vector metadata: ${vectorPath}`);
+        }
+      }
     }
   }
   for (const entryKey of expected) if (!actual.has(entryKey)) fail(`unclassified upstream ${label}: ${entryKey}`);

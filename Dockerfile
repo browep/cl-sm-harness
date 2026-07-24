@@ -20,10 +20,12 @@ RUN python /usr/local/bin/catalog.py \
       --output /opt/catalog/upstream-catalog.json
 
 FROM catalog AS reference
+RUN pip install --no-cache-dir /opt/upstream
 COPY docker/reference/export_contracts.py /usr/local/bin/export-contracts.py
 ENTRYPOINT ["python", "/usr/local/bin/export-contracts.py"]
 
 FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS test
+ARG UPSTREAM_COMMIT
 
 ARG SBCL_VERSION=2:2.2.9-1
 ARG FIVEAM_VERSION=1.4.2-1

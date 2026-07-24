@@ -30,6 +30,19 @@ VECTORS = {
 }
 
 
+def verify_upstream_message_parser() -> None:
+    """Execute one pinned upstream behavior before exporting its target vector."""
+    from claude_agent_sdk._internal.message_parser import parse_message
+    from claude_agent_sdk.types import AssistantMessage, TextBlock
+
+    wire = VECTORS["types/assistant-message-unknown-field.json"]["wire"]
+    parsed = parse_message(wire)
+    if not isinstance(parsed, AssistantMessage):
+        raise RuntimeError(f"expected AssistantMessage, got {type(parsed)!r}")
+    if not isinstance(parsed.content[0], TextBlock) or parsed.content[0].text != "Hello":
+        raise RuntimeError("upstream parser did not preserve the expected text block")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("catalog", nargs="?", type=Path)
@@ -37,6 +50,7 @@ def main() -> None:
     parser.add_argument("--phase3-fixtures", type=Path, help="write phase-3 vectors under this directory")
     args = parser.parse_args()
     if args.phase3_fixtures:
+        verify_upstream_message_parser()
         for relative, payload in VECTORS.items():
             output = args.phase3_fixtures / relative
             output.parent.mkdir(parents=True, exist_ok=True)
