@@ -113,7 +113,7 @@ docker compose run --rm test unit
 
 loads the test system and runs a known empty/bootstrap FiveAM suite. The image records pinned SBCL, package, and Claude CLI versions. The root `.env` is not copied into the image.
 
-### [x] Phase 2 — Parity catalog and reference oracle *(completed in `f058d68`)*
+### [x] Phase 2 — Parity catalog and reference oracle *(completed in `f058d68`, hardened in `f60e4a5`)*
 
 **Files:** `docs/upstream-baseline.md`, `docs/api-parity.md`, `test/fixtures/upstream/manifest.json`, reference-image setup, export/verification scripts.
 
@@ -125,11 +125,19 @@ loads the test system and runs a known empty/bootstrap FiveAM suite. The image r
 
 **Done when:** representative Python-derived fixture vectors cover defaults, option serialization, message variants, malformed data, unknown fields, and typed errors—without launching a process.
 
+### Phase 3.1 — Reproducible Python reference dependencies *(prerequisite to Phase 4)*
+
+**Files:** `docker/reference/requirements.lock`, reference-image install commands, and reference-build verification.
+
+**Done when:** every dependency needed to execute the selected upstream probes is pinned with hashes or immutable artifact digests; `docker compose build --pull reference` installs only that lock; the reference image reports the pinned upstream commit and dependency snapshot without credentials. The target Lisp image remains Python-free.
+
 ### Phase 4 — JSONL protocol and subprocess transport
 
-**Files:** `src/transport/protocol.lisp`, `src/transport/subprocess.lisp`, protocol/subprocess tests, fake executable.
+**Files:** `src/transport/protocol.lisp`, `src/transport/subprocess.lisp`, protocol/subprocess tests, fake executable, and focused-test runner support.
 
-**Done when:** offline tests prove partial lines, request routing, EOF, malformed JSON, stderr capture, non-zero exit, timeout, and idempotent close/kill behavior.
+**Before implementation:** document the target CLI provisioning contract. Upstream Python normally selects a wheel-bundled executable before a configured/system executable; this port must explicitly state whether it ships a project-owned pinned binary or requires a configured/system path, preserve an explicit `cli-path` override, and not call the current global npm install packaging parity.
+
+**Done when:** offline tests prove partial lines, request routing, EOF, malformed JSON, stderr capture, non-zero exit, timeout, and idempotent close/kill behavior. `docker compose run --rm test unit --suite protocol` and `docker compose run --rm test integration` are real focused commands, not aliases for the whole suite.
 
 ### Phase 5 — One-shot `query`
 
