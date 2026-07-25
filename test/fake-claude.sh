@@ -55,6 +55,13 @@ case "${1:-ok}" in
     printf '%s\n' 'fake query failed' >&2
     exit 23
     ;;
+  query-cancel-wait)
+    # Emit one public system record then replace the shell with sleep. This keeps
+    # one directly managed child alive for cancellation tests (no descendants /
+    # process-group semantics, which are tracked separately in Phase 4.2/#11).
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"s","cwd":"/tmp"}'
+    exec sleep 5
+    ;;
   query-large-stderr)
     # Large stderr concurrent with stdout JSON: proves stderr is drained
     # concurrently (undrained stderr pipe would deadlock the child).
@@ -71,7 +78,7 @@ case "${1:-ok}" in
     cat >/dev/null
     ;;
   sleep)
-    sleep 5
+    exec sleep 5
     ;;
   *)
     printf '%s\n' "unknown fake mode: $1" >&2

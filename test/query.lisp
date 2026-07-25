@@ -159,8 +159,109 @@
       (is-true cleanup)
       (is (eq :eof (getf cleanup :reason))))))
 
+;;;; ---------------------------------------------------------------------------
+;;;; Subprocess-backed streaming query transport (fake-CLI driven, offline).
+;;;; ---------------------------------------------------------------------------
+
 (defparameter +system-line+
   "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\",\"cwd\":\"/tmp\"}")
+
+(defparameter +fake-cli+ "/workspace/test/fake-claude.sh")
+
+(defun run-subprocess-query (arguments &key (prompt "hi") on-message (timeout 10))
+  (let ((transport (claude-agent-sdk-cl::make-subprocess-query-transport
+                    :cli-path +fake-cli+ :arguments arguments :timeout timeout)))
+    (claude-agent-sdk-cl:query prompt :transport transport :on-message on-message)))
+
+(test subprocess-query-streams-ordered-transcript
+  (let ((messages (run-subprocess-query '("query"))))
+    (is (= 3 (length messages)))
+    (is (typep (first messages) 'claude-agent-sdk-cl:system-message))
+    (is (string= "init" (claude-agent-sdk-cl:system-message-subtype (first messages))))
+    (is (typep (second messages) 'claude-agent-sdk-cl:assistant-message))
+    (is (typep (third messages) 'claude-agent-sdk-cl:result-message))
+    (is (string= "done" (claude-agent-sdk-cl:result-message-result (third messages))))))
+
+(test subprocess-query-skips-control-records
+  (let ((messages (run-subprocess-query '("query-control"))))
+    (is (= 2 (length messages)))
+    (is (typep (first messages) 'claude-agent-sdk-cl:assistant-message))
+    (is (typep (second messages) 'claude-agent-sdk-cl:result-message))))
+
+(test subprocess-query-preserves-exact-stdin
+  ;; The fake echoes stdin byte count; proves no implicit trailing newline.
+  (dolist (case '(("abc" . "3")
+                  (#.(format nil "abc~%") . "4")
+                  ("" . "0")
+                  ("café" . "5")))                 ; é is 2 UTF-8 bytes
+    (let* ((messages (run-subprocess-query '("query-stdin-length") :prompt (car case)))
+           (result (first (last messages))))
+      (is (typep result 'claude-agent-sdk-cl:result-message))
+      (is (string= (cdr case) (claude-agent-sdk-cl:result-message-result result))
+          "stdin ~S should echo byte count ~S" (car case) (cdr case)))))
+
+(test subprocess-query-write-before-read-does-not-deadlock
+  ;; Child writes 256 KiB stdout before reading stdin; parent supplies a large
+  ;; prompt. Readers-before-stdin ordering must prevent the Phase 4.1 deadlock.
+  (let* ((big-prompt (make-string 262144 :initial-element #\x))
+         (messages (run-subprocess-query '("query-write-before-read")
+                                         :prompt big-prompt)))
+    (is (typep (first messages) 'claude-agent-sdk-cl:system-message))
+    (is (typep (first (last messages)) 'claude-agent-sdk-cl:result-message))
+    (is (find-if (lambda (m) (typep m 'claude-agent-sdk-cl:assistant-message)) messages))))
+
+(test subprocess-query-drains-large-stderr-concurrently
+  (let ((messages (run-subprocess-query '("query-large-stderr"))))
+    (is (typep (first messages) 'claude-agent-sdk-cl:assistant-message))
+    (is (typep (second messages) 'claude-agent-sdk-cl:result-message))))
+
+(test subprocess-query-logs-raw-stdout-chunks
+  ;; Phase 4.1 policy: transport diagnostics keep raw/unredacted streaming bytes.
+  (let* ((events '())
+         (claude-agent-sdk-cl::*transport-log-function*
+           (lambda (event) (push event events))))
+    (run-subprocess-query '("query"))
+    (let ((chunks (loop for event in (nreverse events)
+                        when (eq :cli.stdout.chunk (getf event :event))
+                          collect (getf event :chunk))))
+      (is-true chunks)
+      (is (search "\"type\":\"system\"" (apply #'concatenate 'string chunks)))
+      (is (search "\"type\":\"result\"" (apply #'concatenate 'string chunks))))))
+
+(test subprocess-query-malformed-mid-stream-signals-cli-json-error
+  (signals claude-agent-sdk-cl::cli-json-error
+    (run-subprocess-query '("query-malformed"))))
+
+(test subprocess-query-nonzero-exit-signals-process-error
+  ;; EOF + nonzero exit must surface a process-error (exit 23, stderr text),
+  ;; not a silent :eof close.
+  (handler-case
+      (progn (run-subprocess-query '("query-nonzero"))
+             (fail "expected process-error"))
+    (claude-agent-sdk-cl:process-error (condition)
+      (is (= 23 (claude-agent-sdk-cl:process-error-exit-code condition)))
+      (is (search "fake query failed" (claude-agent-sdk-cl:process-error-stderr condition))))))
+
+(test subprocess-query-timeout-signals-process-error
+  ;; `sleep` mode never emits output; a small timeout must bound the wait.
+  (let ((start (get-internal-real-time)))
+    (signals claude-agent-sdk-cl:process-error
+      (run-subprocess-query '("sleep") :timeout 1))
+    (let ((elapsed (/ (- (get-internal-real-time) start)
+                      internal-time-units-per-second)))
+      (is (< elapsed 4) "timeout should bound elapsed (~,2Fs)" elapsed))))
+
+(test subprocess-query-cancellation-closes-cleanly
+  ;; Cancel after the first message while a directly managed `exec sleep` child
+  ;; remains alive. This proves transport cancellation without testing descendant
+  ;; process-group semantics (the separate Phase 4.2/#11 concern).
+  (let* ((count 0)
+         (messages (run-subprocess-query
+                    '("query-cancel-wait")
+                    :on-message (lambda (m) (declare (ignore m)) (incf count) :cancel))))
+    (is (= 1 (length messages)))
+    (is (= 1 count))
+    (is (typep (first messages) 'claude-agent-sdk-cl:system-message))))
 
 (test query-yields-system-then-assistant-then-result-in-order
   ;; Upstream emits system records before the assistant turn; they are public

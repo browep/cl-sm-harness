@@ -13,7 +13,8 @@
                (:file "src/transport/logging")
                (:file "src/transport/protocol")
                (:file "src/transport/subprocess")
-               (:file "src/query")))
+               (:file "src/query")
+               (:file "src/transport/subprocess-query")))
 
 (asdf:defsystem #:claude-agent-sdk-cl/tests
   :description "Tests for claude-agent-sdk-cl"
