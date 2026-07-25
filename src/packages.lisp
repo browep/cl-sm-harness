@@ -11,4 +11,12 @@
            #:assistant-message-content #:assistant-message-model
            #:text-block #:text-block-text #:thinking-block #:tool-use-block #:tool-result-block
            #:decode-message #:decode-permission-update #:permission-update #:permission-update-type
-           #:permission-update->wire))
+           #:permission-update->wire
+           #:result-message #:decode-result-message
+           #:result-message-subtype #:result-message-duration-ms #:result-message-duration-api-ms
+           #:result-message-is-error #:result-message-num-turns #:result-message-session-id
+           #:result-message-stop-reason #:result-message-total-cost-usd #:result-message-usage
+           #:result-message-result #:result-message-structured-output #:result-message-model-usage
+           #:result-message-permission-denials #:result-message-deferred-tool-use
+           #:result-message-errors #:result-message-api-error-status #:result-message-uuid
+           #:result-message-terminal-reason))

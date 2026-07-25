@@ -26,6 +26,60 @@
   (signals claude-agent-sdk-cl::cli-json-error
     (claude-agent-sdk-cl::decode-message (make-wire-object "type" "assistant" "message" "not-an-object"))))
 
+(test decode-result-message-preserves-known-and-unknown-fields
+  (let* ((wire (make-wire-object
+                "type" "result" "subtype" "success"
+                "duration_ms" 123 "duration_api_ms" 100
+                "is_error" t "num_turns" 1 "session_id" "session-1"
+                "result" "done" "total_cost_usd" 0.01d0
+                "terminal_reason" "completed" "futureField" "preserved"))
+         (message (claude-agent-sdk-cl::decode-result-message wire)))
+    (is (typep message 'claude-agent-sdk-cl::result-message))
+    (is (typep message 'claude-agent-sdk-cl::message))
+    (is (string= "success" (claude-agent-sdk-cl::result-message-subtype message)))
+    (is (= 123 (claude-agent-sdk-cl::result-message-duration-ms message)))
+    (is (= 100 (claude-agent-sdk-cl::result-message-duration-api-ms message)))
+    ;; is_error true proves the decoder actually reads the field (a NIL here
+    ;; would be indistinguishable from an absent key under Yason).
+    (is (eq t (claude-agent-sdk-cl::result-message-is-error message)))
+    (is (= 1 (claude-agent-sdk-cl::result-message-num-turns message)))
+    (is (string= "session-1" (claude-agent-sdk-cl::result-message-session-id message)))
+    (is (string= "done" (claude-agent-sdk-cl::result-message-result message)))
+    (is (= 0.01d0 (claude-agent-sdk-cl::result-message-total-cost-usd message)))
+    (is (string= "completed" (claude-agent-sdk-cl::result-message-terminal-reason message)))
+    (is (string= "preserved" (gethash "futureField" (claude-agent-sdk-cl::message-extra message))))))
+
+(test decode-result-message-error-subtype-and-absent-optionals
+  ;; is_error true is still a message, not a transport error; a genuinely absent
+  ;; is_error key and other absent optionals decode to NIL without signalling.
+  (let* ((wire (make-wire-object
+                "type" "result" "subtype" "error_max_turns"
+                "num_turns" 8 "session_id" "session-2"))
+         (message (claude-agent-sdk-cl::decode-result-message wire)))
+    (is (string= "error_max_turns" (claude-agent-sdk-cl::result-message-subtype message)))
+    (is (null (claude-agent-sdk-cl::result-message-is-error message)))
+    (is (null (claude-agent-sdk-cl::result-message-result message)))
+    (is (null (claude-agent-sdk-cl::result-message-total-cost-usd message)))
+    (is (null (claude-agent-sdk-cl::result-message-terminal-reason message)))))
+
+(test decode-result-message-rejects-non-result-and-non-object
+  (signals claude-agent-sdk-cl::cli-json-error
+    (claude-agent-sdk-cl::decode-result-message (make-wire-object "type" "assistant")))
+  (signals claude-agent-sdk-cl::cli-json-error
+    (claude-agent-sdk-cl::decode-result-message "not-an-object"))
+  ;; Missing "type" key: gethash returns NIL, so the guard must use `equal`,
+  ;; not `string=` (which would signal TYPE-ERROR on NIL).
+  (signals claude-agent-sdk-cl::cli-json-error
+    (claude-agent-sdk-cl::decode-result-message (make-wire-object))))
+
+(test decode-result-message-is-reachable-through-public-export
+  ;; Proves the exported (single-colon) surface, not just the internal symbol.
+  (let ((message (claude-agent-sdk-cl:decode-result-message
+                  (make-wire-object "type" "result" "subtype" "success"
+                                    "session_id" "s"))))
+    (is (typep message 'claude-agent-sdk-cl:result-message))
+    (is (string= "success" (claude-agent-sdk-cl:result-message-subtype message)))))
+
 (test permission-update-roundtrips-a-rule-wire-object
   (let* ((wire (make-wire-object
                 "type" "addRules" "destination" "localSettings" "behavior" "allow"
