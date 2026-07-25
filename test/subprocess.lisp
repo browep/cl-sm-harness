@@ -36,6 +36,17 @@
     (is (null (getf (fifth events) :alive-before-close)))
     (is (= 0 (getf (fifth events) :exit-code)))))
 
+(test subprocess-drains-while-writing-large-stdin
+  ;; Child writes 256 KiB to stdout before reading stdin; parent writes a large
+  ;; stdin payload. Readers must run concurrently with the stdin write or both
+  ;; sides deadlock on full pipes.
+  (let ((input (make-string 262144 :initial-element #\i)))
+    (let ((result (claude-agent-sdk-cl::run-cli
+                   "/workspace/test/fake-claude.sh" '("write-before-read")
+                   :input input :timeout 5)))
+      (is (= 0 (getf result :exit-code)))
+      (is (= 262144 (length (getf result :stdout)))))))
+
 (test subprocess-preserves-exact-stdin
   (dolist (input (list "" "hello"
                        (format nil "hello~%")

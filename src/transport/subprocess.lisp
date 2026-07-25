@@ -44,40 +44,60 @@
 
 (defun run-cli (cli-path arguments &key timeout input)
   (let* ((transport (make-subprocess-transport cli-path arguments))
-         (process (progn (start-subprocess transport) (subprocess-transport-process transport)))
+         (process (progn (start-subprocess transport)
+                         (subprocess-transport-process transport)))
          (stdout nil)
-         (stderr nil))
-    (when input
-      (write-string input (uiop:process-info-input process)))
-    (close (uiop:process-info-input process))
-    (emit-transport-log :cli.stdin.closed :input input)
-    ;; Drain both pipes while the child runs; waiting first can deadlock once
-    ;; either OS pipe fills.
+         (stderr nil)
+         (stdin-closed-p nil))
+    ;; Start readers BEFORE writing stdin: a child that writes stdout before
+    ;; reading stdin will otherwise fill its stdout pipe and deadlock against
+    ;; the parent's blocking stdin write.
     (let ((stdout-reader (sb-thread:make-thread
                           (lambda () (setf stdout (uiop:slurp-stream-string
                                                    (uiop:process-info-output process))))))
           (stderr-reader (sb-thread:make-thread
                           (lambda () (setf stderr (uiop:slurp-stream-string
                                                    (uiop:process-info-error-output process)))))))
-      (handler-case
-          (let ((exit-code (if timeout
-                               (sb-ext:with-timeout timeout (uiop:wait-process process))
-                               (uiop:wait-process process))))
-            (setf (subprocess-transport-exit-code transport) exit-code
+      (labels ((close-stdin-once ()
+                 ;; Single-threaded: with-timeout is synchronous, so the main
+                 ;; path and the timeout handler never touch this concurrently.
+                 (unless stdin-closed-p
+                   (ignore-errors (close (uiop:process-info-input process)))
+                   (setf stdin-closed-p t)
+                   (emit-transport-log :cli.stdin.closed :input input)))
+               (write-and-close-stdin ()
+                 (unwind-protect
+                      (when input
+                        (write-string input (uiop:process-info-input process)))
+                   (close-stdin-once)))
+               (write-then-wait ()
+                 (write-and-close-stdin)
+                 (uiop:wait-process process))
+               (join-readers ()
+                 (sb-thread:join-thread stdout-reader)
+                 (sb-thread:join-thread stderr-reader)))
+        (handler-case
+            ;; The timeout intentionally covers the stdin write too, so a child
+            ;; that never drains stdin cannot hang the parent indefinitely.
+            (let ((exit-code (if timeout
+                                 (sb-ext:with-timeout timeout (write-then-wait))
+                                 (write-then-wait))))
+              (setf (subprocess-transport-exit-code transport) exit-code
+                    (subprocess-transport-waited-p transport) t)
+              (join-readers)
+              (emit-transport-log :cli.exit :exit-code exit-code :stdout stdout :stderr stderr)
+              (close-subprocess transport)
+              (list :exit-code exit-code :stdout stdout :stderr stderr))
+          (sb-ext:timeout ()
+            ;; Do NOT re-enter the stdin write here: it may already be blocked
+            ;; on a child that never drains stdin. Only ensure stdin is closed.
+            (close-stdin-once)
+            (when (uiop:process-alive-p process)
+              (uiop:terminate-process process))
+            (setf (subprocess-transport-exit-code transport) (uiop:wait-process process)
                   (subprocess-transport-waited-p transport) t)
-            (sb-thread:join-thread stdout-reader)
-            (sb-thread:join-thread stderr-reader)
-            (emit-transport-log :cli.exit :exit-code exit-code :stdout stdout :stderr stderr)
+            (join-readers)
+            (emit-transport-log :cli.timeout :timeout timeout :stdout stdout :stderr stderr
+                                             :exit-code (subprocess-transport-exit-code transport))
             (close-subprocess transport)
-            (list :exit-code exit-code :stdout stdout :stderr stderr))
-        (sb-ext:timeout ()
-          (when (uiop:process-alive-p process)
-            (uiop:terminate-process process))
-          (setf (subprocess-transport-exit-code transport) (uiop:wait-process process)
-                (subprocess-transport-waited-p transport) t)
-          (sb-thread:join-thread stdout-reader)
-          (sb-thread:join-thread stderr-reader)
-          (emit-transport-log :cli.timeout :timeout timeout :stdout stdout :stderr stderr
-                                           :exit-code (subprocess-transport-exit-code transport))
-          (close-subprocess transport)
-          (signal-process-error "Claude CLI timed out" 124 "timeout"))))))
+            (signal-process-error "Claude CLI timed out" 124 "timeout")))))))

@@ -22,6 +22,10 @@ case "${1:-ok}" in
   raw-stdin)
     cat
     ;;
+  write-before-read)
+    head -c 262144 /dev/zero | tr '\000' o
+    cat >/dev/null
+    ;;
   sleep)
     sleep 5
     ;;
