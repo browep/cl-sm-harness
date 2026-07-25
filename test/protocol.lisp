@@ -14,6 +14,14 @@
                                                         (concatenate 'string "{\"id\":\"b\"}" (string #\Return) (string #\Newline)))))
     (is (null (claude-agent-sdk-cl::flush-jsonl-framer framer)))))
 
+(test jsonl-framer-enforces-pending-record-limit-and-recovers
+  (let ((framer (claude-agent-sdk-cl::make-jsonl-framer :max-pending-length 4)))
+    (signals claude-agent-sdk-cl::cli-json-error
+      (claude-agent-sdk-cl::push-jsonl-chunk framer "12345"))
+    (is (equal '("{}")
+               (claude-agent-sdk-cl::push-jsonl-chunk framer
+                                                        (concatenate 'string "{}" (string #\Newline)))))))
+
 (test protocol-router-allocates-and-routes-request-ids
   (let ((router (claude-agent-sdk-cl::make-protocol-router)))
     (is (string= "request-1" (claude-agent-sdk-cl::next-request-id router)))

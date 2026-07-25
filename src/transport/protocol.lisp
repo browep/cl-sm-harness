@@ -1,7 +1,9 @@
 (in-package #:claude-agent-sdk-cl)
 
-(defstruct (jsonl-framer (:constructor make-jsonl-framer ()))
-  (pending "" :type string))
+(defstruct (jsonl-framer
+            (:constructor make-jsonl-framer (&key (max-pending-length 1048576))))
+  (pending "" :type string)
+  (max-pending-length 1048576 :type integer))
 
 (defun push-jsonl-chunk (framer chunk)
   "Add arbitrary stdout text CHUNK and return its complete JSONL records.
@@ -18,6 +20,10 @@ Chunks are never trimmed before line assembly."
                (push record records)
                (setf start (1+ newline))))
     (setf (jsonl-framer-pending framer) (subseq text start))
+    (when (> (length (jsonl-framer-pending framer))
+             (jsonl-framer-max-pending-length framer))
+      (setf (jsonl-framer-pending framer) "")
+      (signal-cli-json-error "unterminated JSONL record exceeded configured pending-record limit"))
     (nreverse records)))
 
 (defun flush-jsonl-framer (framer)
