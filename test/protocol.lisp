@@ -22,19 +22,38 @@
                (claude-agent-sdk-cl::push-jsonl-chunk framer
                                                         (concatenate 'string "{}" (string #\Newline)))))))
 
-(test protocol-router-allocates-and-routes-request-ids
+(test protocol-router-routes-nested-control-responses
+  ;; Upstream wire shape: control_response nests request_id under `response`.
   (let ((router (claude-agent-sdk-cl::make-protocol-router)))
     (is (string= "request-1" (claude-agent-sdk-cl::next-request-id router)))
     (is (string= "request-2" (claude-agent-sdk-cl::next-request-id router)))
     (claude-agent-sdk-cl::register-request router "request-2")
+    ;; Matched control response consumes the pending request.
     (multiple-value-bind (record route)
         (claude-agent-sdk-cl::route-protocol-record router
-                                                     (claude-agent-sdk-cl::decode-jsonl-record "{\"request_id\":\"request-2\",\"type\":\"result\"}"))
+          (claude-agent-sdk-cl::decode-jsonl-record
+           "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"request-2\"}}"))
       (is (eq :response route))
-      (is (string= "result" (gethash "type" record))))
+      (is (string= "control_response" (gethash "type" record))))
+    ;; A second response for the now-consumed id is an unmatched control message,
+    ;; never a user event.
     (multiple-value-bind (record route)
         (claude-agent-sdk-cl::route-protocol-record router
-                                                     (claude-agent-sdk-cl::decode-jsonl-record "{\"type\":\"assistant\"}"))
+          (claude-agent-sdk-cl::decode-jsonl-record
+           "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"request-2\"}}"))
+      (declare (ignore record))
+      (is (eq :control route)))
+    ;; Unknown control-response id is control traffic, not a user event.
+    (multiple-value-bind (record route)
+        (claude-agent-sdk-cl::route-protocol-record router
+          (claude-agent-sdk-cl::decode-jsonl-record
+           "{\"type\":\"control_response\",\"response\":{\"subtype\":\"error\",\"request_id\":\"nope\",\"error\":\"boom\"}}"))
+      (declare (ignore record))
+      (is (eq :control route)))
+    ;; A genuine SDK message is a user event.
+    (multiple-value-bind (record route)
+        (claude-agent-sdk-cl::route-protocol-record router
+          (claude-agent-sdk-cl::decode-jsonl-record "{\"type\":\"assistant\"}"))
       (is (eq :event route))
       (is (string= "assistant" (gethash "type" record))))))
 
@@ -43,7 +62,7 @@
          (claude-agent-sdk-cl::*transport-log-function*
            (lambda (event) (push event events)))
          (router (claude-agent-sdk-cl::make-protocol-router))
-         (raw "{\"request_id\":\"request-9\",\"type\":\"result\",\"payload\":\"raw value\"}"))
+         (raw "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"request-9\",\"payload\":\"raw value\"}}"))
     (claude-agent-sdk-cl::register-request router "request-9")
     (claude-agent-sdk-cl::route-protocol-record router
                                                  (claude-agent-sdk-cl::decode-jsonl-record raw))
@@ -51,6 +70,7 @@
     (is (equal '(:jsonl.record :protocol.route)
                (mapcar (lambda (event) (getf event :event)) events)))
     (is (string= raw (getf (first events) :raw-record)))
+    (is (string= "request-9" (getf (second events) :request-id)))
     (is (eq :response (getf (second events) :route)))))
 
 (test jsonl-decoder-allows-trailing-whitespace

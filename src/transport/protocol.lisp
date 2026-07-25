@@ -43,14 +43,36 @@ Chunks are never trimmed before line assembly."
   (setf (gethash request-id (protocol-router-pending router)) t)
   request-id)
 
+(defun control-response-p (record)
+  "True when RECORD is an upstream `control_response' control message."
+  (equal "control_response" (gethash "type" record)))
+
+(defun control-response-request-id (record)
+  "Extract the nested request id from a control_response's `response' object."
+  (let ((response (gethash "response" record)))
+    (when (hash-table-p response)
+      (gethash "request_id" response))))
+
 (defun route-protocol-record (router record)
-  "Return RECORD and whether it is a registered response or an unsolicited event."
-  (let ((request-id (gethash "request_id" record)))
-    (let ((route (if (and request-id (gethash request-id (protocol-router-pending router)))
-                     (progn (remhash request-id (protocol-router-pending router)) :response)
-                     :event)))
-      (emit-transport-log :protocol.route :record record :request-id request-id :route route)
-      (values record route))))
+  "Classify RECORD and return (values record route). Route keywords:
+  :response  matched pending control response (consumed from the router)
+  :control   internal control traffic that must NOT be yielded as a user event
+             (unmatched/duplicate/unknown control responses; upstream drops
+             these with `continue')
+  :event     user-visible SDK message
+Control responses use upstream's nested `response.request_id' wire shape, not a
+top-level `request_id'."
+  (let* ((control-p (control-response-p record))
+         (request-id (when control-p (control-response-request-id record)))
+         (route (cond
+                  ((and control-p request-id
+                        (gethash request-id (protocol-router-pending router)))
+                   (remhash request-id (protocol-router-pending router))
+                   :response)
+                  (control-p :control)
+                  (t :event))))
+    (emit-transport-log :protocol.route :record record :request-id request-id :route route)
+    (values record route)))
 
 (defparameter +jsonl-whitespace+ '(#\Space #\Tab #\Return #\Newline))
 
