@@ -22,6 +22,36 @@
                (claude-agent-sdk-cl::push-jsonl-chunk framer
                                                         (concatenate 'string "{}" (string #\Newline)))))))
 
+(test jsonl-framer-flushes-eof-records
+  ;; Empty framer: flush is nil and idempotent.
+  (let ((framer (claude-agent-sdk-cl::make-jsonl-framer)))
+    (is (null (claude-agent-sdk-cl::flush-jsonl-framer framer)))
+    (is (null (claude-agent-sdk-cl::flush-jsonl-framer framer))))
+  ;; Valid unterminated final record: flush returns the raw record, which
+  ;; decodes cleanly. The framer is the framing boundary; decode is validation.
+  (let ((framer (claude-agent-sdk-cl::make-jsonl-framer)))
+    (is (null (claude-agent-sdk-cl::push-jsonl-chunk framer "{\"type\":\"result\"}")))
+    (let ((raw (claude-agent-sdk-cl::flush-jsonl-framer framer)))
+      (is (string= "{\"type\":\"result\"}" raw))
+      (is (string= "result" (gethash "type" (claude-agent-sdk-cl::decode-jsonl-record raw)))))
+    ;; Flush clears pending state.
+    (is (null (claude-agent-sdk-cl::flush-jsonl-framer framer))))
+  ;; Incomplete JSON at EOF: flush returns the raw partial; decoding it signals.
+  (let ((framer (claude-agent-sdk-cl::make-jsonl-framer)))
+    (is (null (claude-agent-sdk-cl::push-jsonl-chunk framer "{\"type\":")))
+    (let ((raw (claude-agent-sdk-cl::flush-jsonl-framer framer)))
+      (is (string= "{\"type\":" raw))
+      (signals claude-agent-sdk-cl::cli-json-error
+        (claude-agent-sdk-cl::decode-jsonl-record raw))))
+  ;; After flush, framer is reusable for a fresh newline-delimited record.
+  (let ((framer (claude-agent-sdk-cl::make-jsonl-framer)))
+    (is (null (claude-agent-sdk-cl::push-jsonl-chunk framer "partial")))
+    (is (string= "partial" (claude-agent-sdk-cl::flush-jsonl-framer framer)))
+    (is (null (claude-agent-sdk-cl::flush-jsonl-framer framer)))
+    (is (equal '("{}")
+               (claude-agent-sdk-cl::push-jsonl-chunk
+                framer (concatenate 'string "{}" (string #\Newline)))))))
+
 (test protocol-router-routes-nested-control-responses
   ;; Upstream wire shape: control_response nests request_id under `response`.
   (let ((router (claude-agent-sdk-cl::make-protocol-router)))
