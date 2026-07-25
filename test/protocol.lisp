@@ -30,6 +30,12 @@
       (is (eq :event route))
       (is (string= "assistant" (gethash "type" record))))))
 
+(test jsonl-decoder-rejects-trailing-or-nonobject-data
+  (signals claude-agent-sdk-cl::cli-json-error
+    (claude-agent-sdk-cl::decode-jsonl-record "{\"type\":\"result\"} trailing"))
+  (signals claude-agent-sdk-cl::cli-json-error
+    (claude-agent-sdk-cl::decode-jsonl-record "[\"not\",\"a\",\"record\"]")))
+
 (test jsonl-decoder-skips-blank-and-signals-malformed-records
   (is (null (claude-agent-sdk-cl::decode-jsonl-record "  ")))
   (let ((record (claude-agent-sdk-cl::decode-jsonl-record "{\"type\":\"result\",\"ok\":true}")))
