@@ -1,15 +1,42 @@
 (in-package #:claude-agent-sdk-cl)
 
+(defvar *cli-path-resolver* nil
+  "When non-NIL, a thunk returning a candidate CLI namestring for PATH discovery.
+Bound in tests for deterministic discovery without mutating the process PATH.")
+
+(defun default-cli-path-resolver ()
+  "Discover `claude' on PATH. Explicit paths never pass through this function."
+  (ignore-errors
+    (string-trim '(#\Space #\Newline #\Return)
+                 (uiop:run-program '("sh" "-c" "command -v claude") :output :string))))
+
+(defun executable-file-p (path)
+  "True only when PATH names an existing, non-directory, executable file."
+  (and path
+       (probe-file path)
+       (not (uiop:directory-pathname-p (uiop:ensure-pathname path)))
+       (zerop (nth-value 2 (uiop:run-program (list "test" "-x" (namestring path))
+                                             :ignore-error-status t)))))
+
 (defun resolve-cli-path (&optional explicit-cli-path)
-  "Resolve configured CLI path, otherwise PATH; no bundled-CLI packaging claim."
-  (let ((candidate (or explicit-cli-path
-                       (ignore-errors
-                         (string-trim '(#\Space #\Newline #\Return)
-                                      (uiop:run-program '("sh" "-c" "command -v claude") :output :string))))))
-    (unless (and candidate (probe-file candidate))
-      (error 'cli-not-found-error :message "Claude Code not found; provide an executable cli-path or install claude on PATH."))
+  "Resolve configured CLI path, otherwise PATH; no bundled-CLI packaging claim.
+Explicit paths are validated directly and never routed through a shell."
+  (multiple-value-bind (candidate source)
+      (if explicit-cli-path
+          (values explicit-cli-path :explicit)
+          (values (funcall (or *cli-path-resolver* #'default-cli-path-resolver)) :path))
+    (unless (executable-file-p candidate)
+      (emit-transport-log :cli.resolve :source source
+                                       :configured-path explicit-cli-path
+                                       :candidate-path candidate
+                                       :resolved-path nil)
+      (error 'cli-not-found-error
+             :message "Claude Code not found; provide an executable cli-path or install claude on PATH."))
     (let ((resolved (namestring (truename candidate))))
-      (emit-transport-log :cli.resolve :configured-path explicit-cli-path :resolved-path resolved)
+      (emit-transport-log :cli.resolve :source source
+                                       :configured-path explicit-cli-path
+                                       :candidate-path candidate
+                                       :resolved-path resolved)
       resolved)))
 
 (defstruct (subprocess-transport (:constructor make-subprocess-transport (cli-path arguments)))

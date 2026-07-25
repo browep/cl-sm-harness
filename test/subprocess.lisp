@@ -90,6 +90,38 @@
   (signals claude-agent-sdk-cl::process-error
     (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh" '("sleep") :timeout 0.05)))
 
+(test cli-discovery-precedence-and-validation
+  ;; Explicit executable path wins even when the PATH resolver would fail.
+  (let ((claude-agent-sdk-cl::*cli-path-resolver* (lambda () nil)))
+    (is (search "fake-claude.sh"
+                (claude-agent-sdk-cl::resolve-cli-path "/workspace/test/fake-claude.sh"))))
+  ;; Injected PATH resolver succeeds without mutating the process PATH.
+  (let ((claude-agent-sdk-cl::*cli-path-resolver*
+          (lambda () "/workspace/test/fake-claude.sh")))
+    (is (search "fake-claude.sh" (claude-agent-sdk-cl::resolve-cli-path))))
+  ;; Injected PATH resolver returning nil signals the typed condition.
+  (let ((claude-agent-sdk-cl::*cli-path-resolver* (lambda () nil)))
+    (signals claude-agent-sdk-cl::cli-not-found-error
+      (claude-agent-sdk-cl::resolve-cli-path)))
+  ;; Explicit directory is rejected.
+  (signals claude-agent-sdk-cl::cli-not-found-error
+    (claude-agent-sdk-cl::resolve-cli-path "/workspace/test/"))
+  ;; Explicit non-executable regular file is rejected.
+  (signals claude-agent-sdk-cl::cli-not-found-error
+    (claude-agent-sdk-cl::resolve-cli-path "/workspace/test/subprocess.lisp")))
+
+(test cli-discovery-logs-source-and-does-not-shell-explicit-path
+  (let* ((events '())
+         (claude-agent-sdk-cl::*transport-log-function*
+           (lambda (event) (push event events)))
+         (claude-agent-sdk-cl::*cli-path-resolver* (lambda () nil)))
+    ;; A path containing shell metacharacters must be treated literally, never
+    ;; interpreted; it simply fails validation rather than executing anything.
+    (signals claude-agent-sdk-cl::cli-not-found-error
+      (claude-agent-sdk-cl::resolve-cli-path "/workspace/test/nope; touch /tmp/pwned"))
+    (is (eq :explicit (getf (first (nreverse events)) :source)))
+    (is (not (probe-file "/tmp/pwned")))))
+
 (test missing-cli-signals-typed-condition
   (signals claude-agent-sdk-cl::cli-not-found-error
     (claude-agent-sdk-cl::resolve-cli-path "/does/not/exist")))
