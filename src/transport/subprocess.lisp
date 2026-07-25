@@ -1,5 +1,12 @@
 (in-package #:claude-agent-sdk-cl)
 
+(defvar *transport-log-function* nil
+  "Optional callback receiving full, unredacted transport event plists.")
+
+(defun emit-transport-log (event &rest fields)
+  (when *transport-log-function*
+    (funcall *transport-log-function* (list* :event event fields))))
+
 (defun resolve-cli-path (&optional explicit-cli-path)
   "Resolve configured CLI path, otherwise PATH; no bundled-CLI packaging claim."
   (let ((candidate (or explicit-cli-path
@@ -8,17 +15,20 @@
                                       (uiop:run-program '("sh" "-c" "command -v claude") :output :string))))))
     (unless (and candidate (probe-file candidate))
       (error 'cli-not-found-error :message "Claude Code not found; provide an executable cli-path or install claude on PATH."))
-    (namestring (truename candidate))))
+    (let ((resolved (namestring (truename candidate))))
+      (emit-transport-log :cli.resolve :configured-path explicit-cli-path :resolved-path resolved)
+      resolved)))
 
 (defstruct (subprocess-transport (:constructor make-subprocess-transport (cli-path arguments)))
   cli-path arguments process (closed-p nil))
 
 (defun start-subprocess (transport)
   (unless (subprocess-transport-process transport)
-    (setf (subprocess-transport-process transport)
-          (uiop:launch-program (cons (resolve-cli-path (subprocess-transport-cli-path transport))
-                                     (subprocess-transport-arguments transport))
-                               :input :stream :output :stream :error-output :stream)))
+    (let ((command (cons (resolve-cli-path (subprocess-transport-cli-path transport))
+                         (subprocess-transport-arguments transport))))
+      (setf (subprocess-transport-process transport)
+            (uiop:launch-program command :input :stream :output :stream :error-output :stream))
+      (emit-transport-log :cli.spawn :command command :arguments (subprocess-transport-arguments transport))))
   transport)
 
 (defun close-subprocess (transport)
@@ -37,13 +47,15 @@
       (write-string input (uiop:process-info-input process))
       (terpri (uiop:process-info-input process)))
     (close (uiop:process-info-input process))
+    (emit-transport-log :cli.stdin.closed :input input)
     (handler-case
         (let ((exit-code (if timeout
                              (sb-ext:with-timeout timeout (uiop:wait-process process))
                              (uiop:wait-process process))))
-          (list :exit-code exit-code
-                :stdout (uiop:slurp-stream-string (uiop:process-info-output process))
-                :stderr (uiop:slurp-stream-string (uiop:process-info-error-output process))))
+          (let ((stdout (uiop:slurp-stream-string (uiop:process-info-output process)))
+                (stderr (uiop:slurp-stream-string (uiop:process-info-error-output process))))
+            (emit-transport-log :cli.exit :exit-code exit-code :stdout stdout :stderr stderr)
+            (list :exit-code exit-code :stdout stdout :stderr stderr)))
       (sb-ext:timeout ()
         (close-subprocess transport)
         (signal-process-error "Claude CLI timed out" 124 "timeout")))))

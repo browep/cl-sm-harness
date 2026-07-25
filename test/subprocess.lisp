@@ -14,6 +14,18 @@
     (is (= 23 (getf result :exit-code)))
     (is (search "fake cli failed" (getf result :stderr)))))
 
+(test transport-logger-keeps-full-lifecycle-payloads
+  (let* ((events '())
+         (claude-agent-sdk-cl::*transport-log-function*
+           (lambda (event) (push event events))))
+    (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh" '("echo") :input "raw prompt")
+    (setf events (nreverse events))
+    (is (equal '(:cli.resolve :cli.spawn :cli.stdin.closed :cli.exit)
+               (mapcar (lambda (event) (getf event :event)) events)))
+    (is (equal '("echo") (getf (second events) :arguments)))
+    (is (string= "raw prompt" (getf (third events) :input)))
+    (is (search "raw prompt" (getf (fourth events) :stdout)))))
+
 (test fake-cli-reads-stdin
   (let ((result (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh" '("echo") :input "hello")))
     (is (= 0 (getf result :exit-code)))
