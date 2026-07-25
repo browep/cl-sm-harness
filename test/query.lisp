@@ -159,6 +159,24 @@
       (is-true cleanup)
       (is (eq :eof (getf cleanup :reason))))))
 
+(defparameter +system-line+
+  "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\",\"cwd\":\"/tmp\"}")
+
+(test query-yields-system-then-assistant-then-result-in-order
+  ;; Upstream emits system records before the assistant turn; they are public
+  ;; messages, NOT internal :control traffic, and must be yielded in order.
+  (let* ((transport (make-fake-transport
+                     (concatenate 'string +system-line+ +nl+)
+                     (concatenate 'string +assistant-line+ +nl+)
+                     (concatenate 'string +result-line+ +nl+)))
+         (messages (claude-agent-sdk-cl:query "hi" :transport transport)))
+    (is (= 3 (length messages)))
+    (is (typep (first messages) 'claude-agent-sdk-cl:system-message))
+    (is (string= "init" (claude-agent-sdk-cl:system-message-subtype (first messages))))
+    (is (typep (second messages) 'claude-agent-sdk-cl:assistant-message))
+    (is (typep (third messages) 'claude-agent-sdk-cl:result-message))
+    (is (equal '(:eof) (fake-query-close-reasons transport)))))
+
 (test query-validates-prompt-and-transport-before-start
   ;; Non-string prompt: signals before any transport start.
   (let ((transport (make-fake-transport)))

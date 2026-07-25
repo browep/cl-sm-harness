@@ -12,6 +12,10 @@
 (defclass unknown-content-block () ((raw :initarg :raw :reader unknown-content-block-raw)))
 (defclass permission-update () ((type :initarg :type :reader permission-update-type) (wire :initarg :wire :reader permission-update-wire)))
 
+(defclass system-message (message)
+  ((subtype :initarg :subtype :reader system-message-subtype)
+   (data :initarg :data :reader system-message-data)))
+
 (defclass result-message (message)
   ((subtype :initarg :subtype :reader result-message-subtype)
    (duration-ms :initarg :duration-ms :reader result-message-duration-ms)
@@ -66,6 +70,21 @@
 (defun decode-permission-update (wire)
   (%object wire "permission update must be an object")
   (make-instance 'permission-update :type (gethash "type" wire) :wire wire))
+
+(defun decode-system-message (wire)
+  "Decode a top-level type=\"system\" record. Preserves the full raw wire on
+`data' (callers can read un-modelled system fields) and keeps unknown fields in
+message-extra. Subtype-aware modelling (task_started, hook lifecycle, ...) is a
+later parity slice; a generic system-message is enough to not crash live streams."
+  (%object wire "system message must be an object")
+  (unless (equal "system" (gethash "type" wire))
+    (signal-cli-json-error "system message type must be \"system\""))
+  (unless (gethash "subtype" wire)
+    (signal-cli-json-error "system message missing \"subtype\""))
+  (make-instance 'system-message
+                 :subtype (gethash "subtype" wire)
+                 :data wire
+                 :extra (%extra-fields wire '("type" "subtype"))))
 
 (defparameter +result-message-known-fields+
   '("type" "subtype" "duration_ms" "duration_api_ms" "is_error"

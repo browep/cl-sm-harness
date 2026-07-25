@@ -7,11 +7,11 @@
 ;;;; cannot prove message-by-message delivery, control skipping, EOF
 ;;;; finalization, or mid-stream cancellation). See Phase 4.1 / issue #10.
 ;;;;
-;;;; TODO(phase-5 follow-up): upstream also yields `"system"' messages
-;;;; (parse_message maps type="system" -> SystemMessage with subtype dispatch).
-;;;; `decode-query-event' currently handles user/assistant/result only and
-;;;; signals cli-json-error on system records — this MUST be added before any
-;;;; real-CLI smoke, since live streams emit system events.
+;;;; Note: `"system"' records ARE decoded (generic `system-message', below), so
+;;;; live streams that emit system events before the assistant turn no longer
+;;;; crash. Subtype-aware modelling (task_started, task_progress, hook lifecycle,
+;;;; ... per upstream message_parser.py) is deferred to a later parity slice; the
+;;;; generic system-message preserves the full raw wire on `data'.
 
 (defclass query-transport ()
   ()
@@ -45,6 +45,7 @@ top-level record with no nested body and uses `decode-result-message'."
   (let ((type (gethash "type" record)))
     (cond
       ((equal type "result") (decode-result-message record))
+      ((equal type "system") (decode-system-message record))
       ((or (equal type "assistant") (equal type "user")) (decode-message record))
       (t (signal-cli-json-error
           (format nil "unsupported query message type: ~A" type))))))

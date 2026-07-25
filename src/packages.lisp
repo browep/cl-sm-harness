@@ -21,4 +21,6 @@
            #:result-message-errors #:result-message-api-error-status #:result-message-uuid
            #:result-message-terminal-reason
            #:query #:query-transport #:read-query-chunk
-           #:start-query-transport #:close-query-transport))
+           #:start-query-transport #:close-query-transport
+           #:system-message #:decode-system-message
+           #:system-message-subtype #:system-message-data))

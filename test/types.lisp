@@ -80,6 +80,36 @@
     (is (typep message 'claude-agent-sdk-cl:result-message))
     (is (string= "success" (claude-agent-sdk-cl:result-message-subtype message)))))
 
+(test decode-system-message-preserves-subtype-and-raw-fields
+  (let* ((wire (make-wire-object
+                "type" "system" "subtype" "init"
+                "session_id" "s" "uuid" "u" "cwd" "/tmp" "futureField" "keep"))
+         (message (claude-agent-sdk-cl::decode-system-message wire)))
+    (is (typep message 'claude-agent-sdk-cl::system-message))
+    (is (typep message 'claude-agent-sdk-cl::message))
+    (is (string= "init" (claude-agent-sdk-cl::system-message-subtype message)))
+    ;; Full raw wire preserved for callers that need un-modelled system fields.
+    (is (eq wire (claude-agent-sdk-cl::system-message-data message)))
+    ;; Unknown fields also surfaced through message-extra.
+    (is (string= "keep" (gethash "futureField" (claude-agent-sdk-cl::message-extra message))))))
+
+(test decode-system-message-rejects-non-system-missing-subtype-and-non-object
+  (signals claude-agent-sdk-cl::cli-json-error
+    (claude-agent-sdk-cl::decode-system-message (make-wire-object "type" "assistant" "subtype" "x")))
+  (signals claude-agent-sdk-cl::cli-json-error
+    (claude-agent-sdk-cl::decode-system-message (make-wire-object "type" "system")))
+  (signals claude-agent-sdk-cl::cli-json-error
+    (claude-agent-sdk-cl::decode-system-message "not-an-object"))
+  ;; Missing "type" key must signal via equal guard, not TYPE-ERROR.
+  (signals claude-agent-sdk-cl::cli-json-error
+    (claude-agent-sdk-cl::decode-system-message (make-wire-object "subtype" "init"))))
+
+(test decode-system-message-is-reachable-through-public-export
+  (let ((message (claude-agent-sdk-cl:decode-system-message
+                  (make-wire-object "type" "system" "subtype" "init"))))
+    (is (typep message 'claude-agent-sdk-cl:system-message))
+    (is (string= "init" (claude-agent-sdk-cl:system-message-subtype message)))))
+
 (test permission-update-roundtrips-a-rule-wire-object
   (let* ((wire (make-wire-object
                 "type" "addRules" "destination" "localSettings" "behavior" "allow"
