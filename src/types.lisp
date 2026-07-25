@@ -49,10 +49,10 @@
   (%object wire "content block must be an object")
   (let ((type (gethash "type" wire)))
     (cond
-      ((string= type "text") (make-instance 'text-block :text (or (gethash "text" wire) "")))
-      ((string= type "thinking") (make-instance 'thinking-block :thinking (or (gethash "thinking" wire) "") :signature (gethash "signature" wire)))
-      ((string= type "tool_use") (make-instance 'tool-use-block :id (gethash "id" wire) :name (gethash "name" wire) :input (gethash "input" wire)))
-      ((string= type "tool_result") (make-instance 'tool-result-block :tool-use-id (gethash "tool_use_id" wire) :content (gethash "content" wire) :is-error (gethash "is_error" wire)))
+      ((equal type "text") (make-instance 'text-block :text (or (gethash "text" wire) "")))
+      ((equal type "thinking") (make-instance 'thinking-block :thinking (or (gethash "thinking" wire) "") :signature (gethash "signature" wire)))
+      ((equal type "tool_use") (make-instance 'tool-use-block :id (gethash "id" wire) :name (gethash "name" wire) :input (gethash "input" wire)))
+      ((equal type "tool_result") (make-instance 'tool-result-block :tool-use-id (gethash "tool_use_id" wire) :content (gethash "content" wire) :is-error (gethash "is_error" wire)))
       (t (make-instance 'unknown-content-block :raw wire)))))
 
 (defun decode-message (wire)

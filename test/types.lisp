@@ -26,6 +26,14 @@
   (signals claude-agent-sdk-cl::cli-json-error
     (claude-agent-sdk-cl::decode-message (make-wire-object "type" "assistant" "message" "not-an-object"))))
 
+(test decode-content-block-tolerates-missing-type
+  ;; A content block with no "type" must not signal TYPE-ERROR (string= on NIL);
+  ;; it falls through to unknown-content-block and preserves the raw wire.
+  (let* ((wire (make-wire-object "text" "orphaned"))
+         (block (claude-agent-sdk-cl::decode-content-block wire)))
+    (is (typep block 'claude-agent-sdk-cl::unknown-content-block))
+    (is (eq wire (claude-agent-sdk-cl::unknown-content-block-raw block)))))
+
 (test decode-result-message-preserves-known-and-unknown-fields
   (let* ((wire (make-wire-object
                 "type" "result" "subtype" "success"
