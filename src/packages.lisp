@@ -19,4 +19,6 @@
            #:result-message-result #:result-message-structured-output #:result-message-model-usage
            #:result-message-permission-denials #:result-message-deferred-tool-use
            #:result-message-errors #:result-message-api-error-status #:result-message-uuid
-           #:result-message-terminal-reason))
+           #:result-message-terminal-reason
+           #:query #:query-transport #:read-query-chunk
+           #:start-query-transport #:close-query-transport))

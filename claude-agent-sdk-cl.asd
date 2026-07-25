@@ -12,7 +12,8 @@
                (:file "src/types")
                (:file "src/transport/logging")
                (:file "src/transport/protocol")
-               (:file "src/transport/subprocess")))
+               (:file "src/transport/subprocess")
+               (:file "src/query")))
 
 (asdf:defsystem #:claude-agent-sdk-cl/tests
   :description "Tests for claude-agent-sdk-cl"
@@ -24,7 +25,8 @@
                (:file "test/options")
                (:file "test/types")
                (:file "test/protocol")
-               (:file "test/subprocess"))
+               (:file "test/subprocess")
+               (:file "test/query"))
   :perform (asdf:test-op (operation component)
              (declare (ignore operation component))
              (unless (uiop:symbol-call '#:fiveam '#:run! :claude-agent-sdk-cl/tests)

@@ -59,8 +59,8 @@
     (let ((blocks (mapcar #'decode-content-block content))
           (extra (%extra-fields wire '("type" "message"))))
       (cond
-        ((string= type "user") (make-instance 'user-message :content blocks :extra extra))
-        ((string= type "assistant") (make-instance 'assistant-message :content blocks :model (gethash "model" body) :extra extra))
+        ((equal type "user") (make-instance 'user-message :content blocks :extra extra))
+        ((equal type "assistant") (make-instance 'assistant-message :content blocks :model (gethash "model" body) :extra extra))
         (t (signal-cli-json-error (format nil "unsupported message type: ~A" type)))))))
 
 (defun decode-permission-update (wire)
