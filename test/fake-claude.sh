@@ -22,6 +22,50 @@ case "${1:-ok}" in
   raw-stdin)
     cat
     ;;
+  query)
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"s","cwd":"/tmp"}'
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"fake response"}]}}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","result":"done"}'
+    ;;
+  query-control)
+    printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"unknown"}}'
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"fake response"}]}}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","result":"done"}'
+    ;;
+  query-write-before-read)
+    # Emit a valid init line, THEN a large no-newline payload before reading
+    # stdin. The bulk sits in the framer's pending buffer (no newline => no
+    # premature decode). If the transport writes stdin synchronously before
+    # starting stdout reads, the child blocks writing stdout and the parent
+    # blocks writing stdin => deadlock. Readers-before-stdin avoids it.
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"s","cwd":"/tmp"}'
+    head -c 262144 /dev/zero | tr '\000' ' '
+    cat >/dev/null
+    printf '\n%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"after stdin"}]}}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","result":"done"}'
+    ;;
+  query-stdin-length)
+    # Echo the exact stdin byte count back as the result string. Proves stdin is
+    # delivered with no implicit trailing newline, without JSON-escaping stdin.
+    bytes=$(cat | wc -c | tr -d ' ')
+    printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","result":"%s"}\n' "$bytes"
+    ;;
+  query-nonzero)
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"partial"}]}}'
+    printf '%s\n' 'fake query failed' >&2
+    exit 23
+    ;;
+  query-large-stderr)
+    # Large stderr concurrent with stdout JSON: proves stderr is drained
+    # concurrently (undrained stderr pipe would deadlock the child).
+    head -c 262144 /dev/zero | tr '\000' e >&2
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","result":"done"}'
+    ;;
+  query-malformed)
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"before garbage"}]}}'
+    printf '%s\n' '{garbage'
+    ;;
   write-before-read)
     head -c 262144 /dev/zero | tr '\000' o
     cat >/dev/null
