@@ -46,8 +46,7 @@
          (stdout nil)
          (stderr nil))
     (when input
-      (write-string input (uiop:process-info-input process))
-      (terpri (uiop:process-info-input process)))
+      (write-string input (uiop:process-info-input process)))
     (close (uiop:process-info-input process))
     (emit-transport-log :cli.stdin.closed :input input)
     ;; Drain both pipes while the child runs; waiting first can deadlock once

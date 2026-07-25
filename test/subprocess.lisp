@@ -33,6 +33,20 @@
     (is (string= "raw prompt" (getf (third events) :input)))
     (is (search "raw prompt" (getf (fourth events) :stdout)))))
 
+(test subprocess-preserves-exact-stdin
+  (dolist (input (list "" "hello"
+                       (format nil "hello~%")
+                       (format nil "line1~%line2")
+                       "café λ"))
+    (let ((result (claude-agent-sdk-cl::run-cli
+                   "/workspace/test/fake-claude.sh" '("raw-stdin") :input input)))
+      (is (= 0 (getf result :exit-code)))
+      (is (string= input (getf result :stdout)))))
+  (let ((result (claude-agent-sdk-cl::run-cli
+                 "/workspace/test/fake-claude.sh" '("raw-stdin"))))
+    (is (= 0 (getf result :exit-code)))
+    (is (string= "" (getf result :stdout)))))
+
 (test fake-cli-reads-stdin
   (let ((result (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh" '("echo") :input "hello")))
     (is (= 0 (getf result :exit-code)))

@@ -17,8 +17,10 @@ case "${1:-ok}" in
     wait
     ;;
   echo)
-    IFS= read -r line
-    printf '{"type":"echo","text":"%s"}\n' "$line"
+    printf '{"type":"echo","text":"%s"}\n' "$(cat)"
+    ;;
+  raw-stdin)
+    cat
     ;;
   sleep)
     sleep 5
