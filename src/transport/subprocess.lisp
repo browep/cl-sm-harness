@@ -13,7 +13,7 @@
       resolved)))
 
 (defstruct (subprocess-transport (:constructor make-subprocess-transport (cli-path arguments)))
-  cli-path arguments process (closed-p nil))
+  cli-path arguments process (closed-p nil) (waited-p nil) exit-code)
 
 (defun start-subprocess (transport)
   (unless (subprocess-transport-process transport)
@@ -26,11 +26,20 @@
 
 (defun close-subprocess (transport)
   (unless (subprocess-transport-closed-p transport)
-    (let ((process (subprocess-transport-process transport)))
-      (when (and process (uiop:process-alive-p process))
-        (uiop:terminate-process process))
-      (when process (uiop:wait-process process)))
-    (setf (subprocess-transport-closed-p transport) t))
+    (let ((process (subprocess-transport-process transport))
+          (alive-before nil)
+          (waited-before (subprocess-transport-waited-p transport)))
+      (when (and process (not waited-before))
+        (setf alive-before (uiop:process-alive-p process))
+        (when alive-before
+          (uiop:terminate-process process))
+        (setf (subprocess-transport-exit-code transport) (uiop:wait-process process)
+              (subprocess-transport-waited-p transport) t))
+      (setf (subprocess-transport-closed-p transport) t)
+      (emit-transport-log :cli.close
+                          :alive-before-close alive-before
+                          :waited-before-close waited-before
+                          :exit-code (subprocess-transport-exit-code transport))))
   t)
 
 (defun run-cli (cli-path arguments &key timeout input)
@@ -54,13 +63,21 @@
           (let ((exit-code (if timeout
                                (sb-ext:with-timeout timeout (uiop:wait-process process))
                                (uiop:wait-process process))))
+            (setf (subprocess-transport-exit-code transport) exit-code
+                  (subprocess-transport-waited-p transport) t)
             (sb-thread:join-thread stdout-reader)
             (sb-thread:join-thread stderr-reader)
             (emit-transport-log :cli.exit :exit-code exit-code :stdout stdout :stderr stderr)
+            (close-subprocess transport)
             (list :exit-code exit-code :stdout stdout :stderr stderr))
         (sb-ext:timeout ()
-          (close-subprocess transport)
+          (when (uiop:process-alive-p process)
+            (uiop:terminate-process process))
+          (setf (subprocess-transport-exit-code transport) (uiop:wait-process process)
+                (subprocess-transport-waited-p transport) t)
           (sb-thread:join-thread stdout-reader)
           (sb-thread:join-thread stderr-reader)
-          (emit-transport-log :cli.timeout :timeout timeout :stdout stdout :stderr stderr)
+          (emit-transport-log :cli.timeout :timeout timeout :stdout stdout :stderr stderr
+                                           :exit-code (subprocess-transport-exit-code transport))
+          (close-subprocess transport)
           (signal-process-error "Claude CLI timed out" 124 "timeout"))))))

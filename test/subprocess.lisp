@@ -27,11 +27,14 @@
            (lambda (event) (push event events))))
     (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh" '("echo") :input "raw prompt")
     (setf events (nreverse events))
-    (is (equal '(:cli.resolve :cli.spawn :cli.stdin.closed :cli.exit)
+    (is (equal '(:cli.resolve :cli.spawn :cli.stdin.closed :cli.exit :cli.close)
                (mapcar (lambda (event) (getf event :event)) events)))
     (is (equal '("echo") (getf (second events) :arguments)))
     (is (string= "raw prompt" (getf (third events) :input)))
-    (is (search "raw prompt" (getf (fourth events) :stdout)))))
+    (is (search "raw prompt" (getf (fourth events) :stdout)))
+    (is (eq t (getf (fifth events) :waited-before-close)))
+    (is (null (getf (fifth events) :alive-before-close)))
+    (is (= 0 (getf (fifth events) :exit-code)))))
 
 (test subprocess-preserves-exact-stdin
   (dolist (input (list "" "hello"
@@ -58,6 +61,19 @@
     (claude-agent-sdk-cl::start-subprocess transport)
     (is-true (claude-agent-sdk-cl::close-subprocess transport))
     (is-true (claude-agent-sdk-cl::close-subprocess transport))))
+
+(test transport-logger-orders-timeout-before-close
+  (let* ((events '())
+         (claude-agent-sdk-cl::*transport-log-function*
+           (lambda (event) (push event events))))
+    (signals claude-agent-sdk-cl::process-error
+      (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh" '("sleep") :timeout 0.05))
+    (setf events (nreverse events))
+    (let ((names (mapcar (lambda (event) (getf event :event)) events)))
+      (is (= 1 (count :cli.timeout names)))
+      (is (= 1 (count :cli.close names)))
+      (is (eq :cli.close (car (last names))))
+      (is (< (position :cli.timeout names) (position :cli.close names))))))
 
 (test subprocess-timeout-signals-process-error
   (signals claude-agent-sdk-cl::process-error

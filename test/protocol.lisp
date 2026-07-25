@@ -53,6 +53,13 @@
     (is (string= raw (getf (first events) :raw-record)))
     (is (eq :response (getf (second events) :route)))))
 
+(test jsonl-decoder-allows-trailing-whitespace
+  ;; Real tab/newline after valid JSON exercises the post-parse predicate,
+  ;; not string-trim; guards the +jsonl-whitespace+ fix.
+  (let ((record (claude-agent-sdk-cl::decode-jsonl-record
+                 (concatenate 'string "{\"type\":\"ok\"}" (string #\Tab) (string #\Newline)))))
+    (is (string= "ok" (gethash "type" record)))))
+
 (test jsonl-decoder-rejects-trailing-or-nonobject-data
   (signals claude-agent-sdk-cl::cli-json-error
     (claude-agent-sdk-cl::decode-jsonl-record "{\"type\":\"result\"} trailing"))
