@@ -8,12 +8,12 @@ case "${1:-ok}" in
     exit 23
     ;;
   large-output)
-    head -c 131072 /dev/zero | tr '\\000' x
-    head -c 131072 /dev/zero | tr '\\000' y >&2
+    head -c 2097152 /dev/zero | tr '\000' x
+    head -c 2097152 /dev/zero | tr '\000' y >&2
     ;;
   interleaved-output)
-    (head -c 131072 /dev/zero | tr '\\000' x) &
-    (head -c 131072 /dev/zero | tr '\\000' y >&2) &
+    (head -c 2097152 /dev/zero | tr '\000' x) &
+    (head -c 2097152 /dev/zero | tr '\000' y >&2) &
     wait
     ;;
   echo)

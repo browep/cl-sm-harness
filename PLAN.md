@@ -139,6 +139,28 @@ loads the test system and runs a known empty/bootstrap FiveAM suite. The image r
 
 **Done when:** offline tests prove partial lines, request routing, EOF, malformed JSON, stderr capture, non-zero exit, timeout, and idempotent close/kill behavior. `docker compose run --rm test unit --suite protocol` and `docker compose run --rm test integration` are real focused commands, not aliases for the whole suite.
 
+### [x] Phase 4.1 — Transport hardening and diagnostic logging *(completed in #10; live follow-up in #11)*
+Deterministic Docker-offline hardening + opt-in full-payload diagnostic logging:
+- full-payload opt-in lifecycle/protocol logging via an injectable callback
+  (`cli.resolve/spawn/stdin.closed/exit/timeout/close`, `jsonl.record/decode_error`,
+  `protocol.route/cleanup`); offline tests use synthetic payloads only, no real
+  credentials are printed, committed, or placed in fixtures
+- concurrent stdout/stderr draining; output readers start before stdin writes
+  (256 KiB write-before-read regression) — fixes pipe deadlock classes
+- exact stdin preservation (removed implicit trailing newline)
+- strict JSONL validation (trailing garbage / non-object roots), trailing-whitespace
+  predicate fix, bounded pending records, and `flush-jsonl-framer` EOF contract
+- nested upstream `control_response.response.request_id` routing; unmatched control
+  traffic routes as internal `:control`, never a user event
+- `clear-protocol-router` cleanup helper (logs full `:protocol.cleanup` context);
+  intended call site is the Phase 5/6 query loop (protocol layer owns routing)
+- injectable CLI discovery + POSIX `test -f`/`test -x` executable validation
+  (explicit paths never shell-interpreted); timeout validation before spawn and
+  post-timeout recovery
+- multi-megabyte (2 MiB) stdout/stderr and interleaved drains under concurrent readers
+- deferred live-only items (signal termination semantics, descendant/process-group
+  cleanup, reproducibility context, live Claude CLI drift diagnostics) tracked in #11
+
 ### Phase 5 — One-shot `query`
 
 **Files:** `src/query.lisp`, `test/query.lisp`, one-shot transcript fixtures, `examples/one-shot.lisp`.

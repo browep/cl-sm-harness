@@ -14,12 +14,17 @@
     (is (= 23 (getf result :exit-code)))
     (is (search "fake cli failed" (getf result :stderr)))))
 
+(defparameter *large-output-bytes* 2097152
+  "Byte size the `large-output'/`interleaved-output' fake-CLI modes emit on each
+of stdout and stderr. Kept in sync with test/fake-claude.sh (which hardcodes
+2097152); update both together.")
+
 (test subprocess-drains-large-and-interleaved-output
   (dolist (mode '("large-output" "interleaved-output"))
-    (let ((result (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh" (list mode) :timeout 2)))
+    (let ((result (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh" (list mode) :timeout 10)))
       (is (= 0 (getf result :exit-code)))
-      (is (= 131072 (length (getf result :stdout))))
-      (is (= 131072 (length (getf result :stderr)))))))
+      (is (= *large-output-bytes* (length (getf result :stdout))))
+      (is (= *large-output-bytes* (length (getf result :stderr)))))))
 
 (test transport-logger-keeps-full-lifecycle-payloads
   (let* ((events '())
