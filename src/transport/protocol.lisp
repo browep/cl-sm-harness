@@ -46,11 +46,11 @@ Chunks are never trimmed before line assembly."
 (defun route-protocol-record (router record)
   "Return RECORD and whether it is a registered response or an unsolicited event."
   (let ((request-id (gethash "request_id" record)))
-    (if (and request-id (gethash request-id (protocol-router-pending router)))
-        (progn
-          (remhash request-id (protocol-router-pending router))
-          (values record :response))
-        (values record :event))))
+    (let ((route (if (and request-id (gethash request-id (protocol-router-pending router)))
+                     (progn (remhash request-id (protocol-router-pending router)) :response)
+                     :event)))
+      (emit-transport-log :protocol.route :record record :request-id request-id :route route)
+      (values record route))))
 
 (defun decode-jsonl-record (record)
   "Decode a complete JSONL record; blank records are ignored."
@@ -65,5 +65,8 @@ Chunks are never trimmed before line assembly."
                                   return character)))
             (unless (and (eq trailing :eof) (hash-table-p decoded))
               (error "JSONL record must be one object with no trailing data"))
+            (emit-transport-log :jsonl.record :raw-record record :record decoded)
             decoded))
-      (error () (signal-cli-json-error record)))))
+      (error ()
+        (emit-transport-log :jsonl.decode-error :raw-record record)
+        (signal-cli-json-error record)))))

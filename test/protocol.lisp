@@ -38,6 +38,21 @@
       (is (eq :event route))
       (is (string= "assistant" (gethash "type" record))))))
 
+(test protocol-logger-captures-full-record-and-route
+  (let* ((events '())
+         (claude-agent-sdk-cl::*transport-log-function*
+           (lambda (event) (push event events)))
+         (router (claude-agent-sdk-cl::make-protocol-router))
+         (raw "{\"request_id\":\"request-9\",\"type\":\"result\",\"payload\":\"raw value\"}"))
+    (claude-agent-sdk-cl::register-request router "request-9")
+    (claude-agent-sdk-cl::route-protocol-record router
+                                                 (claude-agent-sdk-cl::decode-jsonl-record raw))
+    (setf events (nreverse events))
+    (is (equal '(:jsonl.record :protocol.route)
+               (mapcar (lambda (event) (getf event :event)) events)))
+    (is (string= raw (getf (first events) :raw-record)))
+    (is (eq :response (getf (second events) :route)))))
+
 (test jsonl-decoder-rejects-trailing-or-nonobject-data
   (signals claude-agent-sdk-cl::cli-json-error
     (claude-agent-sdk-cl::decode-jsonl-record "{\"type\":\"result\"} trailing"))
