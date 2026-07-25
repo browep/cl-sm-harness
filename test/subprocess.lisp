@@ -14,6 +14,13 @@
     (is (= 23 (getf result :exit-code)))
     (is (search "fake cli failed" (getf result :stderr)))))
 
+(test subprocess-drains-large-and-interleaved-output
+  (dolist (mode '("large-output" "interleaved-output"))
+    (let ((result (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh" (list mode) :timeout 2)))
+      (is (= 0 (getf result :exit-code)))
+      (is (= 131072 (length (getf result :stdout))))
+      (is (= 131072 (length (getf result :stderr)))))))
+
 (test transport-logger-keeps-full-lifecycle-payloads
   (let* ((events '())
          (claude-agent-sdk-cl::*transport-log-function*

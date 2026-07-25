@@ -42,20 +42,33 @@
 
 (defun run-cli (cli-path arguments &key timeout input)
   (let* ((transport (make-subprocess-transport cli-path arguments))
-         (process (progn (start-subprocess transport) (subprocess-transport-process transport))))
+         (process (progn (start-subprocess transport) (subprocess-transport-process transport)))
+         (stdout nil)
+         (stderr nil))
     (when input
       (write-string input (uiop:process-info-input process))
       (terpri (uiop:process-info-input process)))
     (close (uiop:process-info-input process))
     (emit-transport-log :cli.stdin.closed :input input)
-    (handler-case
-        (let ((exit-code (if timeout
-                             (sb-ext:with-timeout timeout (uiop:wait-process process))
-                             (uiop:wait-process process))))
-          (let ((stdout (uiop:slurp-stream-string (uiop:process-info-output process)))
-                (stderr (uiop:slurp-stream-string (uiop:process-info-error-output process))))
+    ;; Drain both pipes while the child runs; waiting first can deadlock once
+    ;; either OS pipe fills.
+    (let ((stdout-reader (sb-thread:make-thread
+                          (lambda () (setf stdout (uiop:slurp-stream-string
+                                                   (uiop:process-info-output process))))))
+          (stderr-reader (sb-thread:make-thread
+                          (lambda () (setf stderr (uiop:slurp-stream-string
+                                                   (uiop:process-info-error-output process)))))))
+      (handler-case
+          (let ((exit-code (if timeout
+                               (sb-ext:with-timeout timeout (uiop:wait-process process))
+                               (uiop:wait-process process))))
+            (sb-thread:join-thread stdout-reader)
+            (sb-thread:join-thread stderr-reader)
             (emit-transport-log :cli.exit :exit-code exit-code :stdout stdout :stderr stderr)
-            (list :exit-code exit-code :stdout stdout :stderr stderr)))
-      (sb-ext:timeout ()
-        (close-subprocess transport)
-        (signal-process-error "Claude CLI timed out" 124 "timeout")))))
+            (list :exit-code exit-code :stdout stdout :stderr stderr))
+        (sb-ext:timeout ()
+          (close-subprocess transport)
+          (sb-thread:join-thread stdout-reader)
+          (sb-thread:join-thread stderr-reader)
+          (emit-transport-log :cli.timeout :timeout timeout :stdout stdout :stderr stderr)
+          (signal-process-error "Claude CLI timed out" 124 "timeout"))))))

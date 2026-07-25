@@ -7,6 +7,15 @@ case "${1:-ok}" in
     printf '%s\n' 'fake cli failed' >&2
     exit 23
     ;;
+  large-output)
+    head -c 131072 /dev/zero | tr '\\000' x
+    head -c 131072 /dev/zero | tr '\\000' y >&2
+    ;;
+  interleaved-output)
+    (head -c 131072 /dev/zero | tr '\\000' x) &
+    (head -c 131072 /dev/zero | tr '\\000' y >&2) &
+    wait
+    ;;
   echo)
     IFS= read -r line
     printf '{"type":"echo","text":"%s"}\n' "$line"
