@@ -131,7 +131,7 @@ loads the test system and runs a known empty/bootstrap FiveAM suite. The image r
 
 **Done when:** every dependency needed to execute the selected upstream probes is pinned with hashes or immutable artifact digests; `docker compose build --pull reference` installs only that lock; the reference image reports the pinned upstream commit and dependency snapshot without credentials. The target Lisp image remains Python-free.
 
-### Phase 4 — JSONL protocol and subprocess transport
+### [x] Phase 4 — JSONL protocol and subprocess transport *(completed in `16e72be`, `b8c5631`, and `9d70394`)*
 
 **Files:** `src/transport/protocol.lisp`, `src/transport/subprocess.lisp`, protocol/subprocess tests, fake executable, and focused-test runner support.
 
