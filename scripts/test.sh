@@ -51,6 +51,19 @@ case "$mode" in
       /opt/upstream-catalog.json \
       /workspace/test/fixtures/upstream/manifest.json
     ;;
+  live)
+    # Never run a provider-backed command by accident. The separate Compose
+    # `live` service is the only service that receives this one credential.
+    if [ "${CLAUDE_SDK_LIVE_TEST:-}" != "1" ]; then
+      printf '%s\n' 'refusing live smoke: set CLAUDE_SDK_LIVE_TEST=1 explicitly' >&2
+      exit 64
+    fi
+    if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+      printf '%s\n' 'refusing live smoke: CLAUDE_CODE_OAUTH_TOKEN is required' >&2
+      exit 64
+    fi
+    exec sbcl --non-interactive --load /workspace/scripts/live-smoke.lisp
+    ;;
   *)
     printf '%s\n' "unknown test mode: $mode" >&2
     exit 64

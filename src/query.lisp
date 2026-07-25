@@ -50,12 +50,13 @@ top-level record with no nested body and uses `decode-result-message'."
       (t (signal-cli-json-error
           (format nil "unsupported query message type: ~A" type))))))
 
-(defun query (prompt &key options transport on-message)
+(defun query (prompt &key options transport on-message cli-path timeout)
   "Run a one-shot streamed query and return the ordered list of yielded messages.
 
-PROMPT must be a string. TRANSPORT is an injected `query-transport'
-(subprocess auto-provisioning arrives in a later slice). OPTIONS is reserved for
-the prompt/options-to-transport contract and is accepted but not yet consumed.
+PROMPT must be a string. With TRANSPORT supplied, query uses that injected
+transport (the deterministic-test/custom-transport path). Otherwise it provisions
+a subprocess transport for the upstream stream-json CLI protocol using CLI-PATH
+(or PATH discovery), supported AGENT-OPTIONS, and TIMEOUT.
 
 If ON-MESSAGE is supplied it is called synchronously with each yielded message
 as that message is produced; the callback returning completes the backpressure
@@ -67,13 +68,19 @@ The transport is always closed and the protocol router always cleared on every
 exit path (success/EOF, malformed JSON/error, cancellation), each exactly once."
   (unless (stringp prompt)
     (signal-sdk-input-error "query prompt must be a string"))
-  (unless transport
-    (signal-sdk-input-error "query requires an injected :transport in this slice"))
-  (let ((framer (make-jsonl-framer))
-        (router (make-protocol-router))
-        (messages '())
-        (cancelled nil)
-        (close-reason :eof))
+  (when (and (null transport) options (not (typep options 'agent-options)))
+    (signal-sdk-input-error "options must be an agent-options instance or NIL"))
+  (let* ((effective-options (if transport options (or options (make-agent-options))))
+         (effective-transport
+           (or transport
+               ;; Defined by the later-loaded subprocess-query component. The
+               ;; call occurs at runtime after ASDF has loaded that component.
+               (make-default-query-transport effective-options cli-path timeout))))
+    (let ((framer (make-jsonl-framer))
+          (router (make-protocol-router))
+          (messages '())
+          (cancelled nil)
+          (close-reason :eof))
     (labels ((yield-record (record)
                ;; Returns :cancel when the caller asked to stop; blank records
                ;; (NIL from decode-jsonl-record) are ignored.
@@ -99,8 +106,8 @@ exit path (success/EOF, malformed JSON/error, cancellation), each exactly once."
                (progn
                  ;; Inside the protected form: if start signals or partially
                  ;; allocates, cleanup still runs.
-                 (start-query-transport transport prompt options)
-                 (loop for chunk = (read-query-chunk transport)
+                 (start-query-transport effective-transport prompt effective-options)
+                 (loop for chunk = (read-query-chunk effective-transport)
                        while chunk do
                          (dolist (raw (push-jsonl-chunk framer chunk))
                            (when (process-raw raw)
@@ -118,4 +125,4 @@ exit path (success/EOF, malformed JSON/error, cancellation), each exactly once."
                (error condition)))
         ;; Sole cleanup path — runs on success/EOF, cancellation, and error.
         (clear-protocol-router router :reason close-reason)
-        (close-query-transport transport :reason close-reason)))))
+        (close-query-transport effective-transport :reason close-reason))))))

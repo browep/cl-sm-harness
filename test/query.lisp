@@ -263,6 +263,27 @@
     (is (= 1 count))
     (is (typep (first messages) 'claude-agent-sdk-cl:system-message))))
 
+(test query-default-provisions-stream-json-subprocess
+  ;; No injected transport: query resolves the CLI and provisions a one-shot
+  ;; stream-json subprocess with initialize + user JSONL input frames. The fake
+  ;; CLI exits 64 if any expected flag/frame is absent.
+  (let ((claude-agent-sdk-cl::*cli-path-resolver*
+          (lambda () +fake-cli+)))
+    (let ((messages (claude-agent-sdk-cl:query
+                     "default prompt"
+                     :options (claude-agent-sdk-cl:make-agent-options
+                               :allowed-tools '("Bash" "Read")
+                               :disallowed-tools '("Write")
+                               :permission-mode "acceptEdits"
+                               :continue-conversation t
+                               :model "fake-model"
+                               :system-prompt "system text"
+                               :resume "session-1"))))
+      (is (= 3 (length messages)))
+      (is (typep (first messages) 'claude-agent-sdk-cl:system-message))
+      (is (typep (second messages) 'claude-agent-sdk-cl:assistant-message))
+      (is (typep (third messages) 'claude-agent-sdk-cl:result-message)))))
+
 (test query-yields-system-then-assistant-then-result-in-order
   ;; Upstream emits system records before the assistant turn; they are public
   ;; messages, NOT internal :control traffic, and must be yielded in order.
@@ -285,9 +306,11 @@
       (claude-agent-sdk-cl:query 42 :transport transport))
     (is (null (fake-query-started-p transport)))
     (is (null (fake-query-close-reasons transport))))
-  ;; Missing transport: signals.
-  (signals claude-agent-sdk-cl::sdk-input-error
-    (claude-agent-sdk-cl:query "hi")))
+  ;; Missing transport now provisions the default subprocess path; make CLI
+  ;; discovery deterministic and assert its normal not-found condition.
+  (let ((claude-agent-sdk-cl::*cli-path-resolver* (lambda () nil)))
+    (signals claude-agent-sdk-cl:cli-not-found-error
+      (claude-agent-sdk-cl:query "hi"))))
 
 ;;;; Cleanup contract: every failure path inside the read loop closes the
 ;;;; transport exactly once with :error and logs :protocol.cleanup :reason :error.

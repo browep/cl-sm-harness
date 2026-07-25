@@ -11,6 +11,7 @@
   ((cli-path :initarg :cli-path :reader sqt-cli-path)
    (arguments :initarg :arguments :initform nil :reader sqt-arguments)
    (timeout :initarg :timeout :initform nil :reader sqt-timeout)
+   (protocol-input-p :initarg :protocol-input-p :initform nil :reader sqt-protocol-input-p)
    (process :initform nil :accessor sqt-process)
    (stdout :initform nil :accessor sqt-stdout)
    (read-buffer :initform (make-string 8192) :reader sqt-read-buffer)
@@ -25,11 +26,76 @@
    (exit-code :initform nil :accessor sqt-exit-code)
    (closed-p :initform nil :accessor sqt-closed-p)))
 
-(defun make-subprocess-query-transport (&key cli-path arguments timeout)
+(defun make-subprocess-query-transport (&key cli-path arguments timeout protocol-input-p)
   "Construct a streaming subprocess transport. TIMEOUT is NIL or positive seconds."
   (validate-timeout timeout)
   (make-instance 'subprocess-query-transport
-                 :cli-path cli-path :arguments arguments :timeout timeout))
+                 :cli-path cli-path :arguments arguments :timeout timeout
+                 :protocol-input-p protocol-input-p))
+
+(defun %json-line (object)
+  (with-output-to-string (stream)
+    (yason:encode object stream)))
+
+(defun %json-object (&rest pairs)
+  (let ((object (make-hash-table :test #'equal)))
+    (loop for (key value) on pairs by #'cddr
+          do (setf (gethash key object) value))
+    object))
+
+(defun one-shot-query-input (prompt)
+  "Build the upstream stream-json stdin preamble for a one-shot query.
+
+The CLI receives an initialize control request followed by the user message.
+The input is Yason-encoded rather than interpolated, so quotes, newlines, and
+non-ASCII prompt text remain valid JSON. One-shot mode does not wait for the
+initialize response before writing the user record; the router still treats that
+response as internal :control traffic."
+  ;; Use hash tables so JSON keys retain their exact snake_case wire spelling.
+  (concatenate 'string
+               (%json-line (%json-object
+                            "type" "control_request" "request_id" "request-1"
+                            "request" (%json-object "subtype" "initialize" "hooks" nil)))
+               (string #\Newline)
+               (%json-line (%json-object
+                            "type" "user" "session_id" ""
+                            "message" (%json-object "role" "user" "content" prompt)
+                            "parent_tool_use_id" nil))
+               (string #\Newline)))
+
+(defun one-shot-query-arguments (options)
+  "Map the currently-supported agent-options subset to upstream CLI flags.
+Always selects Claude Code's bidirectional stream-json protocol."
+  (unless (typep options 'agent-options)
+    (signal-sdk-input-error "options must be an agent-options instance or NIL"))
+  (let ((arguments (list "--output-format" "stream-json" "--verbose")))
+    ;; Upstream explicitly supplies an empty system prompt when absent.
+    (setf arguments (append arguments (list "--system-prompt"
+                                            (or (agent-options-system-prompt options) ""))))
+    (when (agent-options-allowed-tools options)
+      (setf arguments (append arguments (list "--allowedTools"
+                                              (format nil "~{~A~^,~}" (agent-options-allowed-tools options))))))
+    (when (agent-options-disallowed-tools options)
+      (setf arguments (append arguments (list "--disallowedTools"
+                                              (format nil "~{~A~^,~}" (agent-options-disallowed-tools options))))))
+    (when (agent-options-model options)
+      (setf arguments (append arguments (list "--model" (agent-options-model options)))))
+    (when (agent-options-permission-mode options)
+      (setf arguments (append arguments (list "--permission-mode"
+                                              (agent-options-permission-mode options)))))
+    (when (agent-options-continue-conversation options)
+      (setf arguments (append arguments (list "--continue"))))
+    ;; Equals form prevents a dash-leading resume value from being parsed as a
+    ;; separate CLI flag, matching the upstream security behavior.
+    (when (agent-options-resume options)
+      (setf arguments (append arguments (list (format nil "--resume=~A"
+                                                       (agent-options-resume options))))))
+    (append arguments (list "--input-format" "stream-json"))))
+
+(defun make-default-query-transport (options cli-path timeout)
+  (make-subprocess-query-transport
+   :cli-path cli-path :timeout timeout :protocol-input-p t
+   :arguments (one-shot-query-arguments options)))
 
 (defun %sqt-reap (transport)
   "Wait for the child once, recording its exit status."
@@ -70,6 +136,9 @@ not joined during normal close; it observes CLOSED-P and exits after its sleep."
   (setf (sqt-started-p transport) t)
   (let* ((command (cons (resolve-cli-path (sqt-cli-path transport))
                         (sqt-arguments transport)))
+         (input (if (sqt-protocol-input-p transport)
+                    (one-shot-query-input prompt)
+                    prompt))
          (process (uiop:launch-program command
                                        :input :stream :output :stream :error-output :stream)))
     (setf (sqt-process transport) process
@@ -93,12 +162,12 @@ not joined during normal close; it observes CLOSED-P and exits after its sleep."
              (let ((stream (uiop:process-info-input process)))
                (unwind-protect
                     (handler-case
-                        (when prompt
-                          (write-string prompt stream)
+                        (when input
+                          (write-string input stream)
                           (finish-output stream))
                       (error () nil))
                  (ignore-errors (close stream))
-                 (emit-transport-log :cli.stdin.closed :input prompt))))
+                 (emit-transport-log :cli.stdin.closed :input input))))
            :name "sqt-stdin-writer"))
     (%sqt-arm-timeout transport)
     transport))

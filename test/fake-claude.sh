@@ -80,6 +80,40 @@ case "${1:-ok}" in
   sleep)
     exec sleep 5
     ;;
+  --output-format)
+    # Default public query path: validate the upstream stream-json CLI shape and
+    # its two JSONL stdin frames before emitting a deterministic transcript.
+    [ "${2:-}" = "stream-json" ] || { printf '%s\n' 'missing stream-json output format' >&2; exit 64; }
+    case " $* " in
+      *" --verbose "*) ;;
+      *) printf '%s\n' 'missing --verbose' >&2; exit 64 ;;
+    esac
+    case " $* " in
+      *" --input-format stream-json "*) ;;
+      *) printf '%s\n' 'missing stream-json input format' >&2; exit 64 ;;
+    esac
+    for expected in \
+      '--system-prompt system text' \
+      '--allowedTools Bash,Read' \
+      '--disallowedTools Write' \
+      '--model fake-model' \
+      '--permission-mode acceptEdits' \
+      '--continue' \
+      '--resume=session-1'; do
+      case " $* " in
+        *" $expected "*|*" $expected --"*) ;;
+        *) printf '%s\n' "missing supported option mapping: $expected" >&2; exit 64 ;;
+      esac
+    done
+    input=$(cat)
+    printf '%s' "$input" | grep -F '"type":"control_request"' >/dev/null || { printf '%s\n' 'missing initialize control frame' >&2; exit 64; }
+    printf '%s' "$input" | grep -F '"subtype":"initialize"' >/dev/null || { printf '%s\n' 'missing initialize subtype' >&2; exit 64; }
+    printf '%s' "$input" | grep -F '"type":"user"' >/dev/null || { printf '%s\n' 'missing user frame' >&2; exit 64; }
+    printf '%s' "$input" | grep -F '"content":"default prompt"' >/dev/null || { printf '%s\n' 'missing user content' >&2; exit 64; }
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"s","cwd":"/tmp"}'
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"fake response"}]}}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","result":"done"}'
+    ;;
   *)
     printf '%s\n' "unknown fake mode: $1" >&2
     exit 64

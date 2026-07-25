@@ -163,9 +163,18 @@ Deterministic Docker-offline hardening + opt-in full-payload diagnostic logging:
 
 ### Phase 5 — One-shot `query`
 
-**Files:** `src/query.lisp`, `test/query.lisp`, one-shot transcript fixtures, `examples/one-shot.lisp`.
+**Files:** `src/query.lisp`, `src/transport/subprocess-query.lisp`, `test/query.lisp`, `examples/one-shot.lisp`.
 
-**Done when:** a fake-transport scenario validates the full ordered stream and terminal result, followed by a gated live one-prompt smoke test.
+**Deterministic implementation:** complete. `query` provisions an upstream-style
+`stream-json` subprocess by default (or accepts an injected transport); fake-CLI
+coverage validates ordered stream/result delivery, protocol framing, option mapping,
+stdin exactness, pipe deadlock prevention, errors, cancellation, timeout, and raw
+transport diagnostics.
+
+**Live evidence:** `CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live` is wired
+as a credential-scoped, fail-closed one-prompt smoke. It remains explicitly
+unexecuted until a user opts in with a valid OAuth token; a live success is evidence,
+not a replacement for deterministic coverage.
 
 ### Phase 6 — Interactive client
 

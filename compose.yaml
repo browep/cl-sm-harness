@@ -17,6 +17,25 @@ services:
       - claude-agent-sdk-cl-cache:/cache
     command: ["unit"]
 
+  live:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    image: claude-agent-sdk-cl:test
+    working_dir: /workspace
+    # Intentionally no network_mode: none: this is the sole opt-in provider
+    # smoke boundary. It mounts source/scripts only, never root .env.
+    environment:
+      CLAUDE_SDK_LIVE_TEST: ${CLAUDE_SDK_LIVE_TEST:-}
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+    volumes:
+      - ./claude-agent-sdk-cl.asd:/workspace/claude-agent-sdk-cl.asd:ro
+      - ./src:/workspace/src:ro
+      - ./scripts:/workspace/scripts:ro
+      - claude-agent-sdk-cl-cache:/cache
+    command: ["live"]
+
   reference:
     build:
       context: .
