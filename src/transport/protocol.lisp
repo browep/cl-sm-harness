@@ -74,19 +74,41 @@ top-level `request_id'."
     (emit-transport-log :protocol.route :record record :request-id request-id :route route)
     (values record route)))
 
-(defparameter +jsonl-whitespace+ '(#\Space #\Tab #\Return #\Newline))
+(defun jsonl-whitespace-p (character)
+  "True when CHARACTER is JSONL inter-record whitespace."
+  (and (characterp character)
+       (member character '(#\Space #\Tab #\Return #\Newline) :test #'char=)))
+
+(defun clear-protocol-router (router &key reason)
+  "Abandon all pending request registrations and log full cleanup context.
+Called on EOF/error/timeout so stale request ids never leak across calls.
+Returns the number of cleared pending requests."
+  (let ((request-ids '()))
+    (maphash (lambda (request-id value)
+               (declare (ignore value))
+               (push request-id request-ids))
+             (protocol-router-pending router))
+    (clrhash (protocol-router-pending router))
+    (let ((ordered-ids (reverse request-ids))
+          (count (length request-ids)))
+      (emit-transport-log :protocol.cleanup
+                          :reason reason
+                          :request-ids ordered-ids
+                          :cleared-count count)
+      count)))
 
 (defun decode-jsonl-record (record)
   "Decode a complete JSONL record; blank records are ignored."
-  (when (every (lambda (character) (member character +jsonl-whitespace+)) record)
+  (when (every #'jsonl-whitespace-p record)
     (return-from decode-jsonl-record nil))
   (let ((decoded
           (handler-case
               (with-input-from-string (stream record)
                 (let ((decoded (yason:parse stream))
+                      ;; jsonl-whitespace-p returns NIL for :eof, so :eof is
+                      ;; returned as the trailing sentinel (no infinite loop).
                       (trailing (loop for character = (read-char stream nil :eof)
-                                      unless (and (characterp character)
-                                                  (member character +jsonl-whitespace+))
+                                      unless (jsonl-whitespace-p character)
                                         return character)))
                   (unless (and (eq trailing :eof) (hash-table-p decoded))
                     (error "JSONL record must be one object with no trailing data"))

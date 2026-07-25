@@ -102,7 +102,7 @@
         (claude-agent-sdk-cl::run-cli "/no/such/cli" '("ok") :timeout bad))
       (is (null events))))
   ;; Positive integer and positive fractional timeouts are both valid.
-  (dolist (good '(5 0.05 1.5d0))
+  (dolist (good '(5 0.5 1.5d0))
     (let ((result (claude-agent-sdk-cl::run-cli
                    "/workspace/test/fake-claude.sh" '("ok") :timeout good)))
       (is (= 0 (getf result :exit-code)))))

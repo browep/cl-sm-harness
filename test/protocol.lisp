@@ -87,6 +87,34 @@
       (is (eq :event route))
       (is (string= "assistant" (gethash "type" record))))))
 
+(test protocol-router-cleanup-clears-pending-and-logs
+  (let* ((events '())
+         (claude-agent-sdk-cl::*transport-log-function*
+           (lambda (event) (push event events)))
+         (router (claude-agent-sdk-cl::make-protocol-router)))
+    (claude-agent-sdk-cl::register-request router "request-1")
+    (claude-agent-sdk-cl::register-request router "request-2")
+    ;; Cleanup clears all pending ids and reports how many were abandoned.
+    (is (= 2 (claude-agent-sdk-cl::clear-protocol-router router :reason :timeout)))
+    ;; After cleanup, a response for a previously-pending id is internal control
+    ;; traffic, never a user event.
+    (multiple-value-bind (record route)
+        (claude-agent-sdk-cl::route-protocol-record router
+          (claude-agent-sdk-cl::decode-jsonl-record
+           "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"request-1\"}}"))
+      (declare (ignore record))
+      (is (eq :control route)))
+    ;; Cleanup on an empty router is idempotent and reports zero.
+    (is (= 0 (claude-agent-sdk-cl::clear-protocol-router router :reason :eof)))
+    (setf events (nreverse events))
+    (let ((cleanup (find :protocol.cleanup events
+                         :key (lambda (event) (getf event :event)))))
+      (is-true cleanup)
+      (is (eq :timeout (getf cleanup :reason)))
+      (is (= 2 (getf cleanup :cleared-count)))
+      (is (equal '("request-1" "request-2")
+                 (sort (copy-list (getf cleanup :request-ids)) #'string<))))))
+
 (test protocol-logger-captures-full-record-and-route
   (let* ((events '())
          (claude-agent-sdk-cl::*transport-log-function*
