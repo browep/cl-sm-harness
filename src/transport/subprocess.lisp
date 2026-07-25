@@ -72,7 +72,17 @@ Explicit paths are validated directly and never routed through a shell."
                           :exit-code (subprocess-transport-exit-code transport))))
   t)
 
+(defun validate-timeout (timeout)
+  "Accept NIL (no timeout) or a positive real timeout in seconds; else signal."
+  (unless (or (null timeout)
+              (and (realp timeout) (plusp timeout)))
+    (signal-sdk-input-error "timeout must be NIL or a positive real number of seconds"))
+  timeout)
+
 (defun run-cli (cli-path arguments &key timeout input)
+  ;; Validate BEFORE any spawn/resolve/logging so a bad timeout can never leave
+  ;; a child process or partial lifecycle events behind.
+  (validate-timeout timeout)
   (let* ((transport (make-subprocess-transport cli-path arguments))
          (process (progn (start-subprocess transport)
                          (subprocess-transport-process transport)))

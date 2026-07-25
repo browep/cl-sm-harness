@@ -90,6 +90,36 @@
   (signals claude-agent-sdk-cl::process-error
     (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh" '("sleep") :timeout 0.05)))
 
+(test run-cli-validates-timeout-before-spawn
+  ;; Invalid timeouts must be rejected before CLI resolution/spawn: a bogus CLI
+  ;; path still yields sdk-input-error, not cli-not-found-error, and emits no
+  ;; lifecycle events.
+  (dolist (bad '(0 -1 "soon"))
+    (let* ((events '())
+           (claude-agent-sdk-cl::*transport-log-function*
+             (lambda (event) (push event events))))
+      (signals claude-agent-sdk-cl::sdk-input-error
+        (claude-agent-sdk-cl::run-cli "/no/such/cli" '("ok") :timeout bad))
+      (is (null events))))
+  ;; Positive integer and positive fractional timeouts are both valid.
+  (dolist (good '(5 0.05 1.5d0))
+    (let ((result (claude-agent-sdk-cl::run-cli
+                   "/workspace/test/fake-claude.sh" '("ok") :timeout good)))
+      (is (= 0 (getf result :exit-code)))))
+  ;; nil means no timeout and runs normally.
+  (let ((result (claude-agent-sdk-cl::run-cli
+                 "/workspace/test/fake-claude.sh" '("ok") :timeout nil)))
+    (is (= 0 (getf result :exit-code)))))
+
+(test run-cli-recovers-after-timeout
+  (signals claude-agent-sdk-cl::process-error
+    (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh" '("sleep") :timeout 0.05))
+  ;; A fresh call after a timeout must succeed with no lingering state.
+  (let ((result (claude-agent-sdk-cl::run-cli
+                 "/workspace/test/fake-claude.sh" '("ok") :timeout 5)))
+    (is (= 0 (getf result :exit-code)))
+    (is (search "fake response" (getf result :stdout)))))
+
 (test cli-discovery-precedence-and-validation
   ;; Explicit executable path wins even when the PATH resolver would fail.
   (let ((claude-agent-sdk-cl::*cli-path-resolver* (lambda () nil)))
