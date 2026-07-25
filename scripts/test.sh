@@ -40,6 +40,12 @@ case "$mode" in
         ;;
     esac
     ;;
+  integration)
+    exec sbcl --non-interactive \
+      --eval '(require :asdf)' \
+      --eval '(asdf:load-system :claude-agent-sdk-cl/tests)' \
+      --eval '(unless (fiveam:run! :claude-agent-sdk-cl/subprocess) (uiop:quit 1))'
+    ;;
   parity)
     node /workspace/scripts/verify-parity.mjs \
       /opt/upstream-catalog.json \
