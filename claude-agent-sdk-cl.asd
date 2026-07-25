@@ -10,6 +10,7 @@
                (:file "src/conditions")
                (:file "src/options")
                (:file "src/types")
+               (:file "src/transport/logging")
                (:file "src/transport/protocol")
                (:file "src/transport/subprocess")))
 

@@ -1,12 +1,5 @@
 (in-package #:claude-agent-sdk-cl)
 
-(defvar *transport-log-function* nil
-  "Optional callback receiving full, unredacted transport event plists.")
-
-(defun emit-transport-log (event &rest fields)
-  (when *transport-log-function*
-    (funcall *transport-log-function* (list* :event event fields))))
-
 (defun resolve-cli-path (&optional explicit-cli-path)
   "Resolve configured CLI path, otherwise PATH; no bundled-CLI packaging claim."
   (let ((candidate (or explicit-cli-path
