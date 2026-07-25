@@ -11,12 +11,15 @@ Bound in tests for deterministic discovery without mutating the process PATH.")
                  (uiop:run-program '("sh" "-c" "command -v claude") :output :string))))
 
 (defun executable-file-p (path)
-  "True only when PATH names an existing, non-directory, executable file."
+  "True only when PATH names an existing, executable, regular file.
+Uses POSIX `test -f'/`test -x' (filesystem type, not pathname syntax) and never
+routes the path through a shell, so metacharacters stay literal."
   (and path
-       (probe-file path)
-       (not (uiop:directory-pathname-p (uiop:ensure-pathname path)))
-       (zerop (nth-value 2 (uiop:run-program (list "test" "-x" (namestring path))
-                                             :ignore-error-status t)))))
+       (let ((name (namestring (uiop:ensure-pathname path))))
+         (and (zerop (nth-value 2 (uiop:run-program (list "test" "-f" name)
+                                                    :ignore-error-status t)))
+              (zerop (nth-value 2 (uiop:run-program (list "test" "-x" name)
+                                                    :ignore-error-status t)))))))
 
 (defun resolve-cli-path (&optional explicit-cli-path)
   "Resolve configured CLI path, otherwise PATH; no bundled-CLI packaging claim.

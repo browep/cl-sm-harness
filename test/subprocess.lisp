@@ -106,6 +106,10 @@
   ;; Explicit directory is rejected.
   (signals claude-agent-sdk-cl::cli-not-found-error
     (claude-agent-sdk-cl::resolve-cli-path "/workspace/test/"))
+  ;; Explicit directory WITHOUT trailing slash is rejected too (syntax-only
+  ;; directory-pathname-p would miss this).
+  (signals claude-agent-sdk-cl::cli-not-found-error
+    (claude-agent-sdk-cl::resolve-cli-path "/workspace/test"))
   ;; Explicit non-executable regular file is rejected.
   (signals claude-agent-sdk-cl::cli-not-found-error
     (claude-agent-sdk-cl::resolve-cli-path "/workspace/test/subprocess.lisp")))
