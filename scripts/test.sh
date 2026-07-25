@@ -22,7 +22,7 @@ case "$mode" in
       --suite)
         suite="${2:-}"
         case "$suite" in
-          conditions|options|types)
+          conditions|options|types|protocol)
             exec sbcl --non-interactive \
               --eval '(require :asdf)' \
               --eval '(asdf:load-system :claude-agent-sdk-cl/tests)' \
@@ -35,7 +35,7 @@ case "$mode" in
         esac
         ;;
       *)
-        printf '%s\n' "usage: unit [--suite conditions|options|types]" >&2
+        printf '%s\n' "usage: unit [--suite conditions|options|types|protocol]" >&2
         exit 64
         ;;
     esac

@@ -3,12 +3,14 @@
   :author "Paul Brower"
   :license "MIT"
   :version "0.1.0"
+  :depends-on (#:yason)
   :serial t
   :components ((:file "src/packages")
                (:file "src/bootstrap")
                (:file "src/conditions")
                (:file "src/options")
-               (:file "src/types")))
+               (:file "src/types")
+               (:file "src/transport/protocol")))
 
 (asdf:defsystem #:claude-agent-sdk-cl/tests
   :description "Tests for claude-agent-sdk-cl"
@@ -18,7 +20,8 @@
                (:file "test/bootstrap")
                (:file "test/conditions")
                (:file "test/options")
-               (:file "test/types"))
+               (:file "test/types")
+               (:file "test/protocol"))
   :perform (asdf:test-op (operation component)
              (declare (ignore operation component))
              (unless (uiop:symbol-call '#:fiveam '#:run! :claude-agent-sdk-cl/tests)

@@ -1,0 +1,39 @@
+(in-package #:claude-agent-sdk-cl/tests)
+
+(def-suite :claude-agent-sdk-cl/protocol :in :claude-agent-sdk-cl/tests)
+(in-suite :claude-agent-sdk-cl/protocol)
+
+(test jsonl-framer-preserves-partial-records
+  (let ((framer (claude-agent-sdk-cl::make-jsonl-framer)))
+    (is (null (claude-agent-sdk-cl::push-jsonl-chunk framer "{\"id\":\"a")))
+    (is (equal '("{\"id\":\"a\"}")
+               (claude-agent-sdk-cl::push-jsonl-chunk framer
+                                                        (concatenate 'string "\"}" (string #\Newline)))))
+    (is (equal '("{\"id\":\"b\"}")
+               (claude-agent-sdk-cl::push-jsonl-chunk framer
+                                                        (concatenate 'string "{\"id\":\"b\"}" (string #\Return) (string #\Newline)))))
+    (is (null (claude-agent-sdk-cl::flush-jsonl-framer framer)))))
+
+(test protocol-router-allocates-and-routes-request-ids
+  (let ((router (claude-agent-sdk-cl::make-protocol-router)))
+    (is (string= "request-1" (claude-agent-sdk-cl::next-request-id router)))
+    (is (string= "request-2" (claude-agent-sdk-cl::next-request-id router)))
+    (claude-agent-sdk-cl::register-request router "request-2")
+    (multiple-value-bind (record route)
+        (claude-agent-sdk-cl::route-protocol-record router
+                                                     (claude-agent-sdk-cl::decode-jsonl-record "{\"request_id\":\"request-2\",\"type\":\"result\"}"))
+      (is (eq :response route))
+      (is (string= "result" (gethash "type" record))))
+    (multiple-value-bind (record route)
+        (claude-agent-sdk-cl::route-protocol-record router
+                                                     (claude-agent-sdk-cl::decode-jsonl-record "{\"type\":\"assistant\"}"))
+      (is (eq :event route))
+      (is (string= "assistant" (gethash "type" record))))))
+
+(test jsonl-decoder-skips-blank-and-signals-malformed-records
+  (is (null (claude-agent-sdk-cl::decode-jsonl-record "  ")))
+  (let ((record (claude-agent-sdk-cl::decode-jsonl-record "{\"type\":\"result\",\"ok\":true}")))
+    (is (string= "result" (gethash "type" record)))
+    (is (eq t (gethash "ok" record))))
+  (signals claude-agent-sdk-cl::cli-json-error
+    (claude-agent-sdk-cl::decode-jsonl-record "{bad")))
