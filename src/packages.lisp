@@ -16,6 +16,7 @@
            #:session-key #:make-session-key #:session-key-project-key #:session-key-session-id #:session-key-subpath
            #:session-store #:in-memory-session-store #:make-in-memory-session-store
            #:session-store-append #:session-store-load #:session-store-list-sessions #:session-store-list-subkeys
+           #:filesystem-session-store #:make-filesystem-session-store #:filesystem-session-store-root
            #:session-store-mirror-message
            #:message #:user-message #:assistant-message #:message-extra
            #:assistant-message-content #:assistant-message-model

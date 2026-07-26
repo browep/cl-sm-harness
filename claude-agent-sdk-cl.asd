@@ -15,6 +15,7 @@
                (:file "src/transport/subprocess")
                (:file "src/query")
                (:file "src/session-store")
+               (:file "src/filesystem-session-store")
                (:file "src/client")
                (:file "src/transport/subprocess-query")
                (:file "src/transport/subprocess-client")))

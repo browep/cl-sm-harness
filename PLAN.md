@@ -257,7 +257,11 @@ Ship linked child issues and documented slices in this order:
    before adding a backend. Mirror only typed public records after client routing;
    never make a store write block the transport control path without an explicit
    bounded policy.
-4. **Filesystem session-store adapter.** Implement one local filesystem-backed
+4. **Filesystem session-store adapter.** **Complete as Phase 7D/#16:** local
+   JSONL filesystem persistence implementing the generic protocol, UUID
+   idempotency, deterministic listing, and root-bound traversal checks.
+   Provenance: Phase 7C store contract plus upstream session key semantics.
+   Implement one local filesystem-backed
    adapter only after generic store conformance is stable. It uses a configured,
    traversal-safe root and deterministic fixture directories; it is the sole
    Phase 7D backend and requires no service container or credentials.

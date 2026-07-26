@@ -184,6 +184,10 @@ is preserved, and an entry UUID is idempotent per session key.
 `session-store-mirror-message` accepts only typed public messages and isolates
 store errors via transport logging; filesystem persistence is Phase 7D.
 
+Filesystem persistence is Phase 7D via `make-filesystem-session-store :root`.
+It stores JSONL only beneath the configured root and rejects traversal-unsafe
+project/session/subpath components. Remote adapters are outside Phase 7 (#14).
+
 ### Session configuration (Phase 7B)
 
 `make-agent-options` validates session configuration before default transport
