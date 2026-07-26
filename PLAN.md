@@ -209,7 +209,45 @@ smoke is evidence only, run after lower layers pass.
 
 ### Phase 7 — Advanced parity slices
 
-Ship MCP tools/callbacks/hooks, then sessions/session stores/mirroring, as separate documented slices. Each must repeat the manifest → fixture → failing test → implementation → Docker verification loop.
+**Phase 6 carry-forward:** advanced features must build on the persistent client's
+control plane, not bypass it with a second reader or a background stdout mailbox.
+MCP/tool permission/hook callbacks arrive while a turn is being received, so the
+first child slice is an **inbound control-request dispatcher**: decode a CLI
+control request, invoke the registered synchronous Lisp handler, serialize its
+correlated control response through the Phase 6 write lock, and retain
+consumer-driven stdout/backpressure. Handler failures, cancellation, missing
+handlers, and duplicate/unknown IDs require deterministic terminal responses and
+router cleanup. A generic transport inactivity timeout must never close stdin
+while an MCP server or hook callback is active; any deadline is an explicit
+turn/control policy with a deterministic fake-clock/fixture test.
+
+Ship linked child issues and documented slices in this order:
+
+1. **Control-plane foundation, SDK MCP/custom tools, permission callbacks, and
+   hooks.** Add typed inbound-control and callback-result models, source
+   provenance, fake CLI request/response fixtures, reentrancy/serialized-write
+   tests, callback-error tests, and forward-compatible unknown control/event
+   handling. Public task/context/rate-limit records must remain ordered relative
+   to turns; unknown future events continue to log/skip rather than tear down a
+   persistent client.
+2. **Read-only sessions plus resume/import/mutation helpers.** Validate every
+   session-store option combination before spawning a subprocess. In particular,
+   `continue` without explicit `resume` requires a store that implements session
+   listing, and session-store mirroring cannot be combined with file
+   checkpointing. Session IDs/paths must be normalized and traversal-safe.
+3. **Session-store protocol, in-memory conformance, and transcript mirroring.**
+   Define the generic store API and deterministic batch/ordering/error semantics
+   before adding a backend. Mirror only typed public records after client routing;
+   never make a store write block the transport control path without an explicit
+   bounded policy.
+4. **Docker-local Redis, Postgres, and MinIO adapters** only after generic store
+   conformance is stable. They are opt-in Compose services with deterministic
+   fixtures; no real external stores or live credentials in offline CI.
+
+Each child repeats manifest → provenance fixture → failing FiveAM test →
+implementation → Docker verification. A separately gated live check is evidence
+only after the corresponding deterministic slice passes; it prints no raw
+transport diagnostics or credentials.
 
 ## Planned command interface
 
