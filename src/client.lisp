@@ -33,18 +33,19 @@
 State transitions are :NEW -> :CONNECTED -> :CLOSING -> :CLOSED. A result
 record closes a response boundary, not this persistent client connection."))
 
-(defun make-claude-sdk-client (&key options transport)
-  "Construct an interactive client over a persistent TRANSPORT.
+(defun make-claude-sdk-client (&key options transport cli-path timeout)
+  "Construct an interactive client.
 
-Automatic subprocess provisioning is deliberately deferred until the persistent
-transport exists; this keeps lifecycle behavior independently testable."
-  (unless transport
-    (signal-sdk-input-error "interactive client requires a persistent :transport in this slice"))
+With no injected TRANSPORT, provision Claude Code's persistent stream-json
+subprocess using explicit CLI-PATH first and PATH discovery second."
   (unless (or (null options) (typep options 'agent-options))
     (signal-sdk-input-error "client options must be an agent-options instance or NIL"))
-  (make-instance 'claude-sdk-client
-                 :options (or options (make-agent-options))
-                 :transport transport))
+  (let ((effective-options (or options (make-agent-options))))
+    (make-instance 'claude-sdk-client
+                   :options effective-options
+                   :transport (or transport
+                                  (make-default-client-transport
+                                   effective-options cli-path timeout)))))
 
 (defun %require-client-state (client operation allowed)
   (unless (member (client-state client) allowed)

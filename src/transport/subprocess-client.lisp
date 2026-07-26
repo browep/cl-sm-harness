@@ -17,8 +17,16 @@
    (waited-p :initform nil :accessor sct-waited-p)
    (exit-code :initform nil :accessor sct-exit-code)))
 
-(defun make-subprocess-client-transport (&key cli-path arguments)
+(defun make-subprocess-client-transport (&key cli-path arguments timeout)
+  "Construct a persistent subprocess client transport.
+TIMEOUT is validated now; watchdog behavior is added with the client timeout slice."
+  (validate-timeout timeout)
   (make-instance 'subprocess-client-transport :cli-path cli-path :arguments arguments))
+
+(defun make-default-client-transport (options cli-path timeout)
+  "Provision the public persistent stream-json CLI transport."
+  (make-subprocess-client-transport
+   :cli-path cli-path :timeout timeout :arguments (one-shot-query-arguments options)))
 
 (defun %sct-reap (transport)
   (let ((process (sct-process transport)))

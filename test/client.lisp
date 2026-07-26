@@ -69,6 +69,38 @@
 (defparameter +unknown-event+
   "{\"type\":\"future_cli_event\",\"payload\":\"ignored but logged\"}")
 
+(test client-default-provisions-stream-json-transport
+  (let* ((options (claude-agent-sdk-cl:make-agent-options
+                   :model "fake-model" :allowed-tools '("Read")))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client
+                  :options options :cli-path "/workspace/test/fake-claude.sh" :timeout 1.5))
+         (transport (claude-agent-sdk-cl::client-transport-instance client))
+         (arguments (claude-agent-sdk-cl::sct-arguments transport)))
+    (is (typep transport 'claude-agent-sdk-cl::subprocess-client-transport))
+    (is (string= "/workspace/test/fake-claude.sh" (claude-agent-sdk-cl::sct-cli-path transport)))
+    (is (equal '("--output-format" "stream-json" "--verbose") (subseq arguments 0 3)))
+    (is (member "--input-format" arguments :test #'string=))
+    (is (member "stream-json" arguments :test #'string=))
+    (is (member "fake-model" arguments :test #'string=))
+    (is (member "Read" arguments :test #'string=)))
+  (dolist (bad '(0 -1 "soon"))
+    (signals claude-agent-sdk-cl:sdk-input-error
+      (claude-agent-sdk-cl:make-claude-sdk-client :timeout bad))))
+
+(test client-default-transport-runs-persistent-subprocess
+  (let ((client (claude-agent-sdk-cl:make-claude-sdk-client
+                 :cli-path "/workspace/test/fake-client-cli.sh")))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl:connect client)
+           (claude-agent-sdk-cl:send client "public default")
+           (let ((response (claude-agent-sdk-cl:receive-response client)))
+             (is (= 2 (length response)))
+             (is (string= "turn 1 done"
+                          (claude-agent-sdk-cl:result-message-result (second response)))))
+           (is (eq :connected (claude-agent-sdk-cl:client-state client))))
+      (claude-agent-sdk-cl:disconnect client))))
+
 (test client-serializes-concurrent-writes
   (let* ((transport (make-instance 'overlap-detecting-client-transport))
          (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
