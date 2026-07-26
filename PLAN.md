@@ -171,10 +171,11 @@ coverage validates ordered stream/result delivery, protocol framing, option mapp
 stdin exactness, pipe deadlock prevention, errors, cancellation, timeout, and raw
 transport diagnostics.
 
-**Live evidence:** `CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live` is wired
-as a credential-scoped, fail-closed one-prompt smoke. It remains explicitly
-unexecuted until a user opts in with a valid OAuth token; a live success is evidence,
-not a replacement for deterministic coverage.
+**Live evidence:** verified on 2026-07-26 through the credential-scoped,
+fail-closed `CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live` smoke. The
+installed CLI returned a successful terminal result (exit 0) after a four-message
+stream. The run also exposed and validated typed `rate_limit_event` decoding.
+Live evidence complements—never replaces—the deterministic coverage above.
 
 ### Phase 6 — Interactive client
 

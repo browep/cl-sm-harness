@@ -128,7 +128,7 @@ Pytest itself will not run against the Lisp implementation; Python test harness 
 
 ## Status
 
-Phases 1–4.1 are implemented. Phase 5 provides one-shot streamed `query`, deterministic fake-CLI process coverage, a runnable `examples/one-shot.lisp`, and an opt-in live smoke command; the live provider run remains deliberately unexecuted until explicitly authorized. See GitHub [issue #1](https://github.com/browep/claude-agent-sdk-cl/issues/1) and [PLAN.md](PLAN.md).
+Phases 1–4.1 and Phase 5 are implemented. Phase 5 provides one-shot streamed `query`, deterministic fake-CLI process coverage, a runnable `examples/one-shot.lisp`, and a successfully verified opt-in live smoke. See GitHub [issue #1](https://github.com/browep/claude-agent-sdk-cl/issues/1) and [PLAN.md](PLAN.md).
 
 ## License
 
