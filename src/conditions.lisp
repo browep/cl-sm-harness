@@ -8,6 +8,19 @@
 (define-condition cli-connection-error (sdk-error) ())
 (define-condition cli-not-found-error (sdk-error) ())
 
+(define-condition client-lifecycle-error (sdk-error)
+  ((operation :initarg :operation :reader client-lifecycle-error-operation)
+   (state :initarg :state :reader client-lifecycle-error-state))
+  (:report (lambda (condition stream)
+             (format stream "Cannot ~A while client is ~A."
+                     (client-lifecycle-error-operation condition)
+                     (client-lifecycle-error-state condition)))))
+
+(defun signal-client-lifecycle-error (operation state)
+  (error 'client-lifecycle-error
+         :message (format nil "Invalid client lifecycle: ~A in ~A" operation state)
+         :operation operation :state state))
+
 (define-condition cli-json-error (sdk-error)
   ((line :initarg :line :reader cli-json-error-line))
   (:report (lambda (condition stream)

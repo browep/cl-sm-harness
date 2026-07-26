@@ -2,6 +2,7 @@
   (:use #:cl)
   (:export #:sdk-version
            #:sdk-error #:sdk-input-error #:cli-connection-error #:cli-not-found-error
+           #:client-lifecycle-error #:client-lifecycle-error-operation #:client-lifecycle-error-state
            #:cli-json-error #:process-error #:process-error-exit-code #:process-error-stderr
            #:signal-sdk-input-error #:signal-cli-json-error #:signal-process-error
            #:agent-options #:make-agent-options #:agent-options-allowed-tools
@@ -29,4 +30,8 @@
            #:rate-limit-info #:rate-limit-info-status #:rate-limit-info-resets-at
            #:rate-limit-info-rate-limit-type #:rate-limit-info-utilization
            #:rate-limit-info-overage-status #:rate-limit-info-overage-resets-at
-           #:rate-limit-info-overage-disabled-reason #:rate-limit-info-raw))
+           #:rate-limit-info-overage-disabled-reason #:rate-limit-info-raw
+           #:claude-sdk-client #:make-claude-sdk-client #:client-state
+           #:client-transport #:start-client-transport #:read-client-chunk
+           #:write-client-input #:close-client-transport
+           #:connect #:send #:receive-message #:receive-response #:interrupt #:disconnect))

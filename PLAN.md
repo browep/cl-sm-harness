@@ -179,9 +179,22 @@ Live evidence complements—never replaces—the deterministic coverage above.
 
 ### Phase 6 — Interactive client
 
-**Files:** `src/client.lisp`, `test/client.lisp`, two-turn and interrupt fixtures, `examples/interactive.lisp`.
+**Files:** `src/client.lisp`, `src/transport/subprocess-client.lisp`,
+`test/client.lisp`, two-turn/interrupt fixtures, `examples/interactive.lisp`.
 
-**Done when:** connect, send, receive, interrupt, disconnect, invalid lifecycle calls, and cleanup all pass deterministically; the gated live two-turn test is evidence only.
+**Carry-forward design (post-Phase 5 live evidence):** use a dedicated persistent
+stream-json transport—never the one-shot transport, which closes stdin. `connect`
+performs a correlated initialize handshake and buffers ordinary events observed
+during it; writes are serialized; `result` ends a response but not the connection;
+and `interrupt` is a correlated control request rather than OS process termination.
+The public client has explicit `:new`, `:connected`, `:closing`, and `:closed`
+states with typed invalid-lifecycle conditions. Known `rate_limit_event` records
+are typed, and unknown future top-level events must not tear down a live session.
+
+**Done when:** deterministic fake/custom-transport tests cover connect handshake,
+two-turn order, response boundaries, interrupt correlation, process exit, cleanup,
+invalid lifecycle calls, and serialized writes. The credential-scoped live two-turn
+smoke is evidence only, run after lower layers pass.
 
 ### Phase 7 — Advanced parity slices
 
