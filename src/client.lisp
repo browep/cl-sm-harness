@@ -28,6 +28,10 @@
    ;; request object and return a JSON object or :CANCEL.
    (control-handlers :initarg :control-handlers :initform nil
                      :reader client-control-handlers)
+   ;; Inbound request IDs are one-shot. Retaining them for this connection makes
+   ;; duplicate CLI deliveries deterministic instead of rerunning callbacks.
+   (handled-control-requests :initform (make-hash-table :test #'equal)
+                            :reader client-handled-control-requests)
    ;; All control and user JSONL writes share this lock; an interactive child
    ;; must never receive interleaved frames from concurrent callers.
    (write-lock :initform (sb-thread:make-mutex :name "claude-client-write")
@@ -143,6 +147,11 @@ an error response, while a handler returning a JSON object emits success."
          (entry (and (stringp subtype)
                      (assoc subtype (client-control-handlers client) :test #'equal)))
          (handler (cdr entry)))
+    (when (stringp request-id)
+      (when (gethash request-id (client-handled-control-requests client))
+        (%client-control-response client request-id "error" :error "duplicate control request")
+        (return-from %client-handle-control-request nil))
+      (setf (gethash request-id (client-handled-control-requests client)) t))
     (cond
       ((not (stringp request-id))
        (emit-transport-log :client.control.invalid :record record :reason :missing-request-id))

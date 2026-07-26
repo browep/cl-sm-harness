@@ -120,6 +120,57 @@
       (is (search "\"behavior\":\"allow\"" (second wires))))
     (claude-agent-sdk-cl:disconnect client)))
 
+(test client-control-dispatch-errors-and-duplicates-are-terminal
+  (labels ((run-case (handlers expected)
+             (let* ((transport
+                      (make-instance 'fake-client-transport
+                                     :chunks (list
+                                              (concatenate 'string +initialize-response+ +client-nl+)
+                                              (concatenate 'string +inbound-permission-request+ +client-nl+
+                                                           +turn-one-assistant+ +client-nl+
+                                                           +client-result+ +client-nl+))))
+                    (client (claude-agent-sdk-cl:make-claude-sdk-client
+                             :transport transport :control-handlers handlers)))
+               (unwind-protect
+                    (progn
+                      (claude-agent-sdk-cl:connect client)
+                      (is (= 2 (length (claude-agent-sdk-cl:receive-response client))))
+                      (is (search "\"subtype\":\"error\""
+                                  (second (reverse (fake-client-writes transport)))))
+                      (is (search expected
+                                  (second (reverse (fake-client-writes transport))))))
+                 (claude-agent-sdk-cl:disconnect client)))))
+    (run-case nil "No control handler")
+    (run-case (list (cons "can_use_tool" (lambda (request) (declare (ignore request)) (error "boom"))))
+              "boom")
+    (run-case (list (cons "can_use_tool" (lambda (request) (declare (ignore request)) :cancel)))
+              "cancelled"))
+  (let* ((calls 0)
+         (transport
+          (make-instance 'fake-client-transport
+                         :chunks (list
+                                  (concatenate 'string +initialize-response+ +client-nl+)
+                                  (concatenate 'string +inbound-permission-request+ +client-nl+
+                                               +inbound-permission-request+ +client-nl+
+                                               +turn-one-assistant+ +client-nl+
+                                               +client-result+ +client-nl+))))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client
+                  :transport transport
+                  :control-handlers
+                  (list (cons "can_use_tool"
+                              (lambda (request)
+                                (declare (ignore request)) (incf calls)
+                                (make-hash-table :test #'equal)))))))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl:connect client)
+           (is (= 2 (length (claude-agent-sdk-cl:receive-response client))))
+           (is (= 1 calls))
+           (let ((wires (reverse (fake-client-writes transport))))
+             (is (= 3 (length wires)))
+             (is (search "duplicate control request" (third wires)))))
+      (claude-agent-sdk-cl:disconnect client))))
+
 (test client-default-transport-runs-persistent-subprocess
   (let ((client (claude-agent-sdk-cl:make-claude-sdk-client
                  :cli-path "/workspace/test/fake-client-cli.sh")))
