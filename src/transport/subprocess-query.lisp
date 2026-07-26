@@ -126,7 +126,7 @@ not joined during normal close; it observes CLOSED-P and exits after its sleep."
                  (setf (sqt-timed-out-p transport) t)
                  (let ((process (sqt-process transport)))
                    (when (and process (uiop:process-alive-p process))
-                     (ignore-errors (uiop:terminate-process process))))))
+                     (ignore-errors (terminate-cli-process-tree process))))))
              :name "sqt-timeout-watchdog")))))
 
 (defmethod start-query-transport ((transport subprocess-query-transport) prompt options)
@@ -134,8 +134,8 @@ not joined during normal close; it observes CLOSED-P and exits after its sleep."
   (when (sqt-started-p transport)
     (return-from start-query-transport transport))
   (setf (sqt-started-p transport) t)
-  (let* ((command (cons (resolve-cli-path (sqt-cli-path transport))
-                        (sqt-arguments transport)))
+  (let* ((command (cli-process-command (resolve-cli-path (sqt-cli-path transport))
+                                     (sqt-arguments transport)))
          (input (if (sqt-protocol-input-p transport)
                     (one-shot-query-input prompt)
                     prompt))
@@ -218,7 +218,7 @@ unterminated output and lets the JSONL framer own record-boundary handling."
         ;; Critical ordering: killing the child first breaks any blocked stdin
         ;; write. Joining first can hang forever on a full pipe.
         (when alive-before
-          (ignore-errors (uiop:terminate-process process)))
+          (ignore-errors (terminate-cli-process-tree process)))
         (%sqt-reap transport))
       (%sqt-join-thread (sqt-stdin-thread transport))
       (%sqt-join-thread (sqt-stderr-thread transport))

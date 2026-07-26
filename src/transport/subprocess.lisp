@@ -42,16 +42,43 @@ Explicit paths are validated directly and never routed through a shell."
                                        :resolved-path resolved)
       resolved)))
 
+(defun transport-reproducibility-context (&optional cli-path)
+  "Collect non-secret runtime context for transport diagnostics."
+  (labels ((command-output (command)
+             (handler-case
+                 (string-trim '(#\Space #\Newline #\Return)
+                              (uiop:run-program command :output :string :ignore-error-status t))
+               (error () nil))))
+    (list :sdk-version (sdk-version)
+          :sbcl-version (lisp-implementation-version)
+          :os (software-type)
+          :architecture (machine-type)
+          :git-commit (command-output '("git" "rev-parse" "HEAD"))
+          :cli-version (and cli-path (command-output (list cli-path "--version")))
+          :mode (if (string= (or (uiop:getenv "CLAUDE_SDK_LIVE_TEST") "") "1") :live :offline))))
+
+(defun cli-process-command (resolved-cli arguments)
+  "Return the direct CLI command. Process-group isolation requires a verified
+platform-specific launcher and is deliberately not enabled until #11 proves it."
+  (cons resolved-cli arguments))
+
+(defun terminate-cli-process-tree (process)
+  "Terminate the direct child; descendant-group cleanup remains #11 work."
+  (ignore-errors (uiop:terminate-process process)))
+
 (defstruct (subprocess-transport (:constructor make-subprocess-transport (cli-path arguments)))
   cli-path arguments process (closed-p nil) (waited-p nil) exit-code)
 
 (defun start-subprocess (transport)
   (unless (subprocess-transport-process transport)
-    (let ((command (cons (resolve-cli-path (subprocess-transport-cli-path transport))
-                         (subprocess-transport-arguments transport))))
+    (let* ((resolved (resolve-cli-path (subprocess-transport-cli-path transport)))
+           (command (cli-process-command resolved
+                                         (subprocess-transport-arguments transport)))
+           (context (transport-reproducibility-context resolved)))
       (setf (subprocess-transport-process transport)
             (uiop:launch-program command :input :stream :output :stream :error-output :stream))
-      (emit-transport-log :cli.spawn :command command :arguments (subprocess-transport-arguments transport))))
+      (emit-transport-log :cli.spawn :command command :arguments (subprocess-transport-arguments transport)
+                           :reproducibility context)))
   transport)
 
 (defun close-subprocess (transport)
@@ -62,7 +89,7 @@ Explicit paths are validated directly and never routed through a shell."
       (when (and process (not waited-before))
         (setf alive-before (uiop:process-alive-p process))
         (when alive-before
-          (uiop:terminate-process process))
+          (terminate-cli-process-tree process))
         (setf (subprocess-transport-exit-code transport) (uiop:wait-process process)
               (subprocess-transport-waited-p transport) t))
       (setf (subprocess-transport-closed-p transport) t)
@@ -133,7 +160,7 @@ Explicit paths are validated directly and never routed through a shell."
             ;; on a child that never drains stdin. Only ensure stdin is closed.
             (close-stdin-once)
             (when (uiop:process-alive-p process)
-              (uiop:terminate-process process))
+              (terminate-cli-process-tree process))
             (setf (subprocess-transport-exit-code transport) (uiop:wait-process process)
                   (subprocess-transport-waited-p transport) t)
             (join-readers)

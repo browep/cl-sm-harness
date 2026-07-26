@@ -44,8 +44,8 @@ TIMEOUT is validated now; watchdog behavior is added with the client timeout sli
   (declare (ignore options))
   (unless (sct-started-p transport)
     (setf (sct-started-p transport) t)
-    (let* ((command (cons (resolve-cli-path (sct-cli-path transport))
-                          (sct-arguments transport)))
+    (let* ((command (cli-process-command (resolve-cli-path (sct-cli-path transport))
+                                        (sct-arguments transport)))
            (process (uiop:launch-program command :input :stream :output :stream :error-output :stream)))
       (setf (sct-process transport) process
             (sct-stdout transport) (uiop:process-info-output process))
@@ -111,7 +111,7 @@ TIMEOUT is validated now; watchdog behavior is added with the client timeout sli
     (let ((process (sct-process transport)))
       ;; Terminate first: that unblocks stdout/stderr readers before join/wait.
       (when (and process (uiop:process-alive-p process))
-        (ignore-errors (uiop:terminate-process process)))
+        (ignore-errors (terminate-cli-process-tree process)))
       (when process (%sct-reap transport))
       (%sct-join-stderr transport)
       (ignore-errors (close (uiop:process-info-input process)))
