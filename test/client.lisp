@@ -120,6 +120,33 @@
       (is (search "\"behavior\":\"allow\"" (second wires))))
     (claude-agent-sdk-cl:disconnect client)))
 
+(test client-typed-permission-results-use-upstream-wire-shape
+  (labels ((response-wire (result)
+             (let* ((transport
+                     (make-instance 'fake-client-transport
+                                    :chunks (list
+                                             (concatenate 'string +initialize-response+ +client-nl+)
+                                             (concatenate 'string +inbound-permission-request+ +client-nl+
+                                                          +turn-one-assistant+ +client-nl+
+                                                          +client-result+ +client-nl+))))
+                    (client (claude-agent-sdk-cl:make-claude-sdk-client
+                             :transport transport
+                             :control-handlers (list (cons "can_use_tool" (lambda (request) (declare (ignore request)) result))))))
+               (unwind-protect
+                    (progn
+                      (claude-agent-sdk-cl:connect client)
+                      (claude-agent-sdk-cl:receive-response client)
+                      (second (reverse (fake-client-writes transport))))
+                 (claude-agent-sdk-cl:disconnect client)))))
+    (let ((allow (response-wire (claude-agent-sdk-cl:make-permission-result-allow))))
+      (is (search "\"behavior\":\"allow\"" allow))
+      ;; With no update, upstream preserves the original tool input.
+      (is (search "\"updatedInput\":{\"command\":\"pwd\"}" allow)))
+    (let ((deny (response-wire (claude-agent-sdk-cl:make-permission-result-deny :message "no" :interrupt t))))
+      (is (search "\"behavior\":\"deny\"" deny))
+      (is (search "\"message\":\"no\"" deny))
+      (is (search "\"interrupt\":true" deny)))))
+
 (test client-control-dispatch-errors-and-duplicates-are-terminal
   (labels ((run-case (handlers expected)
              (let* ((transport

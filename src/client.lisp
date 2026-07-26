@@ -136,6 +136,28 @@ applies only after a valid object has been framed and routed as an ordinary even
                                                       "request_id" request-id
                                                       "response" response)))))
 
+(defun %client-normalize-control-result (request result)
+  "Map typed permission results or raw JSON objects to CLI response data."
+  (cond
+    ((permission-result-allow-p result)
+     (let ((data (%client-json-object
+                  "behavior" "allow"
+                  "updatedInput" (or (permission-result-allow-updated-input result)
+                                      (gethash "input" request)))))
+       (when (permission-result-allow-updated-permissions result)
+         (setf (gethash "updatedPermissions" data)
+               (mapcar #'permission-update->wire
+                       (permission-result-allow-updated-permissions result))))
+       data))
+    ((permission-result-deny-p result)
+     (let ((data (%client-json-object "behavior" "deny"
+                                     "message" (permission-result-deny-message result))))
+       (when (permission-result-deny-interrupt result)
+         (setf (gethash "interrupt" data) t))
+       data))
+    ((hash-table-p result) result)
+    (t nil)))
+
 (defun %client-handle-control-request (client record)
   "Synchronously service one inbound CLI control request.
 
@@ -164,13 +186,14 @@ an error response, while a handler returning a JSON object emits success."
                                  :error (format nil "No control handler for subtype: ~A" subtype)))
       (t
        (handler-case
-           (let ((response (funcall handler request)))
+           (let* ((response (funcall handler request))
+                  (wire-response (%client-normalize-control-result request response)))
              (if (eq response :cancel)
                  (%client-control-response client request-id "error" :error "control request cancelled")
-                 (if (hash-table-p response)
-                     (%client-control-response client request-id "success" :response response)
+                 (if wire-response
+                     (%client-control-response client request-id "success" :response wire-response)
                      (%client-control-response client request-id "error"
-                                               :error "control handler must return a hash table or :cancel"))))
+                                               :error "control handler must return a permission result, hash table, or :cancel"))))
          (error (condition)
            (%client-control-response client request-id "error" :error (princ-to-string condition))))))))
 

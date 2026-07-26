@@ -12,6 +12,16 @@
 (defclass unknown-content-block () ((raw :initarg :raw :reader unknown-content-block-raw)))
 (defclass permission-update () ((type :initarg :type :reader permission-update-type) (wire :initarg :wire :reader permission-update-wire)))
 
+(defstruct permission-result-allow
+  "Typed result for an inbound `can_use_tool` control request."
+  updated-input
+  updated-permissions)
+
+(defstruct permission-result-deny
+  "Typed denial result for an inbound `can_use_tool` control request."
+  (message "" :type string)
+  (interrupt nil))
+
 (defclass system-message (message)
   ((subtype :initarg :subtype :reader system-message-subtype)
    (data :initarg :data :reader system-message-data)))

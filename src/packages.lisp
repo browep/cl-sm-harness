@@ -31,6 +31,10 @@
            #:rate-limit-info-rate-limit-type #:rate-limit-info-utilization
            #:rate-limit-info-overage-status #:rate-limit-info-overage-resets-at
            #:rate-limit-info-overage-disabled-reason #:rate-limit-info-raw
+           #:permission-result-allow #:make-permission-result-allow
+           #:permission-result-allow-updated-input #:permission-result-allow-updated-permissions
+           #:permission-result-deny #:make-permission-result-deny
+           #:permission-result-deny-message #:permission-result-deny-interrupt
            #:claude-sdk-client #:make-claude-sdk-client #:client-state
            #:client-transport #:start-client-transport #:read-client-chunk
            #:write-client-input #:close-client-transport
