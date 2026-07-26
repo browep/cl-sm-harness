@@ -27,7 +27,7 @@
    ;; Alist of (subtype . synchronous function). Functions receive the decoded
    ;; request object and return a JSON object or :CANCEL.
    (control-handlers :initarg :control-handlers :initform nil
-                     :reader client-control-handlers)
+                     :accessor client-control-handlers)
    ;; Inbound request IDs are one-shot. Retaining them for this connection makes
    ;; duplicate CLI deliveries deterministic instead of rerunning callbacks.
    (handled-control-requests :initform (make-hash-table :test #'equal)
@@ -41,6 +41,30 @@
 State transitions are :NEW -> :CONNECTED -> :CLOSING -> :CLOSED. A result
 record closes a response boundary, not this persistent client connection."))
 
+(defun %validate-control-handlers (handlers)
+  (unless (listp handlers)
+    (signal-sdk-input-error "control handlers must be an alist"))
+  (dolist (entry handlers)
+    (unless (and (consp entry) (stringp (car entry)) (functionp (cdr entry)))
+      (signal-sdk-input-error "each control handler must be (string . function)")))
+  handlers)
+
+(defun register-control-handler (client subtype function)
+  "Register or replace FUNCTION for inbound control SUBTYPE before connect.
+
+The persistent session freezes callback configuration at connect time so a
+handler cannot change while its request is being synchronously serviced."
+  (unless (stringp subtype)
+    (signal-sdk-input-error "control handler subtype must be a string"))
+  (unless (functionp function)
+    (signal-sdk-input-error "control handler must be a function"))
+  (%require-client-state client :register-control-handler '(:new))
+  (setf (client-control-handlers client)
+        (acons subtype function
+               (remove subtype (client-control-handlers client)
+                       :key #'car :test #'equal)))
+  client)
+
 (defun make-claude-sdk-client (&key options transport cli-path timeout control-handlers)
   "Construct an interactive client.
 
@@ -49,6 +73,7 @@ subprocess using explicit CLI-PATH first and PATH discovery second."
   (unless (or (null options) (typep options 'agent-options))
     (signal-sdk-input-error "client options must be an agent-options instance or NIL"))
   (let ((effective-options (or options (make-agent-options))))
+    (%validate-control-handlers control-handlers)
     (make-instance 'claude-sdk-client
                    :options effective-options
                    :control-handlers control-handlers

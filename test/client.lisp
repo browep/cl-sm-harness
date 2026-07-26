@@ -99,6 +99,22 @@
     (signals claude-agent-sdk-cl:sdk-input-error
       (claude-agent-sdk-cl:make-claude-sdk-client :timeout bad))))
 
+(test client-control-handler-registration-is-validated-and-frozen
+  (signals claude-agent-sdk-cl:sdk-input-error
+    (claude-agent-sdk-cl:make-claude-sdk-client :control-handlers '(("can_use_tool" . not-a-function))))
+  (let* ((transport (make-instance 'fake-client-transport))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport))
+         (first (lambda (request) (declare (ignore request)) (make-hash-table :test #'equal)))
+         (second (lambda (request) (declare (ignore request)) (make-hash-table :test #'equal))))
+    (claude-agent-sdk-cl:register-control-handler client "can_use_tool" first)
+    (claude-agent-sdk-cl:register-control-handler client "can_use_tool" second)
+    (is (= 1 (length (claude-agent-sdk-cl:client-control-handlers client))))
+    (is (eq second (cdr (assoc "can_use_tool" (claude-agent-sdk-cl:client-control-handlers client) :test #'equal))))
+    (claude-agent-sdk-cl:connect client)
+    (signals claude-agent-sdk-cl:client-lifecycle-error
+      (claude-agent-sdk-cl:register-control-handler client "hook_callback" first))
+    (claude-agent-sdk-cl:disconnect client)))
+
 (test client-inbound-control-request-dispatches-mid-turn
   (let* ((transport
            (make-instance 'fake-client-transport
