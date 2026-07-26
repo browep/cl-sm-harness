@@ -69,6 +69,9 @@
 (defparameter +unknown-event+
   "{\"type\":\"future_cli_event\",\"payload\":\"ignored but logged\"}")
 
+(defparameter +inbound-permission-request+
+  "{\"type\":\"control_request\",\"request_id\":\"cli-request-1\",\"request\":{\"subtype\":\"can_use_tool\",\"tool_name\":\"Bash\",\"input\":{\"command\":\"pwd\"}}}")
+
 (test client-default-provisions-stream-json-transport
   (let* ((options (claude-agent-sdk-cl:make-agent-options
                    :model "fake-model" :allowed-tools '("Read")))
@@ -86,6 +89,36 @@
   (dolist (bad '(0 -1 "soon"))
     (signals claude-agent-sdk-cl:sdk-input-error
       (claude-agent-sdk-cl:make-claude-sdk-client :timeout bad))))
+
+(test client-inbound-control-request-dispatches-mid-turn
+  (let* ((transport
+           (make-instance 'fake-client-transport
+                          :chunks (list
+                                   (concatenate 'string +initialize-response+ +client-nl+)
+                                   (concatenate 'string +inbound-permission-request+ +client-nl+
+                                                +turn-one-assistant+ +client-nl+
+                                                +client-result+ +client-nl+))))
+         (seen nil)
+         (client (claude-agent-sdk-cl:make-claude-sdk-client
+                  :transport transport
+                  :control-handlers
+                  (list (cons "can_use_tool"
+                              (lambda (request)
+                                (setf seen request)
+                                (let ((response (make-hash-table :test #'equal)))
+                                  (setf (gethash "behavior" response) "allow")
+                                  response)))))))
+    (claude-agent-sdk-cl:connect client)
+    (let ((response (claude-agent-sdk-cl:receive-response client)))
+      (is (= 2 (length response)))
+      (is (typep (first response) 'claude-agent-sdk-cl:assistant-message)))
+    (is (hash-table-p seen))
+    (let ((wires (reverse (fake-client-writes transport))))
+      (is (= 2 (length wires)))
+      (is (search "\"type\":\"control_response\"" (second wires)))
+      (is (search "\"request_id\":\"cli-request-1\"" (second wires)))
+      (is (search "\"behavior\":\"allow\"" (second wires))))
+    (claude-agent-sdk-cl:disconnect client)))
 
 (test client-default-transport-runs-persistent-subprocess
   (let ((client (claude-agent-sdk-cl:make-claude-sdk-client

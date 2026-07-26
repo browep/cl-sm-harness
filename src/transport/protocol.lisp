@@ -53,9 +53,18 @@ Chunks are never trimmed before line assembly."
     (when (hash-table-p response)
       (gethash "request_id" response))))
 
+(defun control-request-p (record)
+  "True when RECORD is an inbound CLI `control_request'."
+  (equal "control_request" (gethash "type" record)))
+
+(defun control-request-request-id (record)
+  (gethash "request_id" record))
+
 (defun route-protocol-record (router record)
   "Classify RECORD and return (values record route). Route keywords:
   :response  matched pending control response (consumed from the router)
+  :request   inbound CLI control request; client must service it before reading
+             another public record
   :control   internal control traffic that must NOT be yielded as a user event
              (unmatched/duplicate/unknown control responses; upstream drops
              these with `continue')
@@ -70,6 +79,7 @@ top-level `request_id'."
                    (remhash request-id (protocol-router-pending router))
                    :response)
                   (control-p :control)
+                  ((control-request-p record) :request)
                   (t :event))))
     (emit-transport-log :protocol.route :record record :request-id request-id :route route)
     (values record route)))

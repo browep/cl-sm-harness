@@ -24,6 +24,10 @@
    ;; FIFO queues: raw complete JSON objects, then decoded public messages.
    (raw-records :initform '() :accessor client-raw-records)
    (messages :initform '() :accessor client-messages)
+   ;; Alist of (subtype . synchronous function). Functions receive the decoded
+   ;; request object and return a JSON object or :CANCEL.
+   (control-handlers :initarg :control-handlers :initform nil
+                     :reader client-control-handlers)
    ;; All control and user JSONL writes share this lock; an interactive child
    ;; must never receive interleaved frames from concurrent callers.
    (write-lock :initform (sb-thread:make-mutex :name "claude-client-write")
@@ -33,7 +37,7 @@
 State transitions are :NEW -> :CONNECTED -> :CLOSING -> :CLOSED. A result
 record closes a response boundary, not this persistent client connection."))
 
-(defun make-claude-sdk-client (&key options transport cli-path timeout)
+(defun make-claude-sdk-client (&key options transport cli-path timeout control-handlers)
   "Construct an interactive client.
 
 With no injected TRANSPORT, provision Claude Code's persistent stream-json
@@ -43,6 +47,7 @@ subprocess using explicit CLI-PATH first and PATH discovery second."
   (let ((effective-options (or options (make-agent-options))))
     (make-instance 'claude-sdk-client
                    :options effective-options
+                   :control-handlers control-handlers
                    :transport (or transport
                                   (make-default-client-transport
                                    effective-options cli-path timeout)))))
@@ -115,6 +120,51 @@ applies only after a valid object has been framed and routed as an ordinary even
           (emit-transport-log :client.unknown-event :record record :type type)
           nil))))
 
+(defun %client-control-response (client request-id subtype &key response error)
+  (%client-write client
+                 (%client-json-object
+                  "type" "control_response"
+                  "response" (if error
+                                 (%client-json-object "subtype" "error"
+                                                      "request_id" request-id
+                                                      "error" error)
+                                 (%client-json-object "subtype" subtype
+                                                      "request_id" request-id
+                                                      "response" response)))))
+
+(defun %client-handle-control-request (client record)
+  "Synchronously service one inbound CLI control request.
+
+All outcomes are terminal on the wire: a missing/failed/cancelled handler emits
+an error response, while a handler returning a JSON object emits success."
+  (let* ((request-id (control-request-request-id record))
+         (request (gethash "request" record))
+         (subtype (and (hash-table-p request) (gethash "subtype" request)))
+         (entry (and (stringp subtype)
+                     (assoc subtype (client-control-handlers client) :test #'equal)))
+         (handler (cdr entry)))
+    (cond
+      ((not (stringp request-id))
+       (emit-transport-log :client.control.invalid :record record :reason :missing-request-id))
+      ((not (hash-table-p request))
+       (%client-control-response client request-id "error" :error "control request is missing object request"))
+      ((not (stringp subtype))
+       (%client-control-response client request-id "error" :error "control request is missing subtype"))
+      ((not (functionp handler))
+       (%client-control-response client request-id "error"
+                                 :error (format nil "No control handler for subtype: ~A" subtype)))
+      (t
+       (handler-case
+           (let ((response (funcall handler request)))
+             (if (eq response :cancel)
+                 (%client-control-response client request-id "error" :error "control request cancelled")
+                 (if (hash-table-p response)
+                     (%client-control-response client request-id "success" :response response)
+                     (%client-control-response client request-id "error"
+                                               :error "control handler must return a hash table or :cancel"))))
+         (error (condition)
+           (%client-control-response client request-id "error" :error (princ-to-string condition))))))))
+
 (defun %client-await-response (client request-id operation)
   "Wait synchronously for a registered control response, buffering public events."
   (declare (ignore request-id))
@@ -129,6 +179,8 @@ applies only after a valid object has been framed and routed as an ordinary even
          ;; ROUTE only yields :response for a currently registered request. The
          ;; router removes it atomically, so this record belongs to the current request.
          (return record))
+        (:request
+         (%client-handle-control-request client record))
         (:event
          ;; System/rate-limit events may legitimately arrive before initialize
          ;; finishes; preserve them for receive-message.
@@ -182,9 +234,11 @@ Returns NIL only at terminal stream EOF (and transitions the client to :CLOSED).
       (unless record
         (%client-terminal-eof client)
         (return nil))
-      (when (eq route :event)
-        (let ((message (%client-decode-event record)))
-          (when message (return message)))))))
+      (case route
+        (:request (%client-handle-control-request client record))
+        (:event
+         (let ((message (%client-decode-event record)))
+           (when message (return message))))))))
 
 (defun receive-response (client)
   "Return ordered public messages through and including the next result record.
