@@ -175,6 +175,15 @@ Handlers may return a JSON hash table, `permission-result-allow`,
 duplicate inbound request IDs receive deterministic correlated error responses;
 the enclosing public turn continues when the CLI does.
 
+### Session store (Phase 7C)
+
+Use `make-in-memory-session-store` as the deterministic reference backend with
+`session-store-append`, `session-store-load`, `session-store-list-sessions`,
+and `session-store-list-subkeys`. Entries are opaque JSON objects, append order
+is preserved, and an entry UUID is idempotent per session key.
+`session-store-mirror-message` accepts only typed public messages and isolates
+store errors via transport logging; filesystem persistence is Phase 7D.
+
 ### Session configuration (Phase 7B)
 
 `make-agent-options` validates session configuration before default transport

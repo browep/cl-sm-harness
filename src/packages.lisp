@@ -13,6 +13,10 @@
            #:session-import-plan #:make-session-import-plan #:session-import-plan-session-id #:session-import-plan-path
            #:session-mutation-plan #:make-session-mutation-plan #:session-mutation-plan-operation
            #:session-mutation-plan-session-id #:session-mutation-plan-value #:session-mutation-plan-target-id
+           #:session-key #:make-session-key #:session-key-project-key #:session-key-session-id #:session-key-subpath
+           #:session-store #:in-memory-session-store #:make-in-memory-session-store
+           #:session-store-append #:session-store-load #:session-store-list-sessions #:session-store-list-subkeys
+           #:session-store-mirror-message
            #:message #:user-message #:assistant-message #:message-extra
            #:assistant-message-content #:assistant-message-model
            #:text-block #:text-block-text #:thinking-block #:tool-use-block #:tool-result-block

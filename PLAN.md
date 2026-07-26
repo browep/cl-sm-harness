@@ -250,7 +250,10 @@ Ship linked child issues and documented slices in this order:
    listing, and session-store mirroring cannot be combined with file
    checkpointing. Session IDs/paths must be normalized and traversal-safe.
 3. **Session-store protocol, in-memory conformance, and transcript mirroring.**
-   Define the generic store API and deterministic batch/ordering/error semantics
+   **Complete as Phase 7C/#15:** generic key/store API, deterministic
+   in-memory append/load/list/subkey conformance, UUID idempotency, and typed
+   public-message mirror hook with best-effort error isolation. Provenance:
+   upstream `types.py:1366-1474` and transcript mirror semantics. Define the generic store API and deterministic batch/ordering/error semantics
    before adding a backend. Mirror only typed public records after client routing;
    never make a store write block the transport control path without an explicit
    bounded policy.
