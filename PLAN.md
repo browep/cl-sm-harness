@@ -254,9 +254,14 @@ Ship linked child issues and documented slices in this order:
    before adding a backend. Mirror only typed public records after client routing;
    never make a store write block the transport control path without an explicit
    bounded policy.
-4. **Docker-local Redis, Postgres, and MinIO adapters** only after generic store
-   conformance is stable. They are opt-in Compose services with deterministic
-   fixtures; no real external stores or live credentials in offline CI.
+4. **Filesystem session-store adapter.** Implement one local filesystem-backed
+   adapter only after generic store conformance is stable. It uses a configured,
+   traversal-safe root and deterministic fixture directories; it is the sole
+   Phase 7D backend and requires no service container or credentials.
+
+Redis, Postgres, MinIO/S3-compatible, and other remote adapters are explicitly
+out of Phase 7. They belong to a separately tracked future integration ticket
+and must not expand the Phase 7 acceptance scope.
 
 Each child repeats manifest → provenance fixture → failing FiveAM test →
 implementation → Docker verification. A separately gated live check is evidence
