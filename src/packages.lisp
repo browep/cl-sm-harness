@@ -38,6 +38,7 @@
            #:hook-callback-result #:make-hook-callback-result #:hook-callback-result-data
            #:mcp-control-result #:make-mcp-control-result #:mcp-control-result-response
            #:register-control-handler #:client-control-handlers
+           #:register-hook-callback #:register-sdk-mcp-handler
            #:claude-sdk-client #:make-claude-sdk-client #:client-state
            #:client-transport #:start-client-transport #:read-client-chunk
            #:write-client-input #:close-client-transport

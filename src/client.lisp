@@ -28,6 +28,10 @@
    ;; request object and return a JSON object or :CANCEL.
    (control-handlers :initarg :control-handlers :initform nil
                      :accessor client-control-handlers)
+   ;; Named registries power the upstream hook_callback and mcp_message
+   ;; subtypes without requiring applications to parse raw control envelopes.
+   (hook-callbacks :initform nil :accessor client-hook-callbacks)
+   (mcp-handlers :initform nil :accessor client-mcp-handlers)
    ;; Inbound request IDs are one-shot. Retaining them for this connection makes
    ;; duplicate CLI deliveries deterministic instead of rerunning callbacks.
    (handled-control-requests :initform (make-hash-table :test #'equal)
@@ -64,6 +68,34 @@ handler cannot change while its request is being synchronously serviced."
                (remove subtype (client-control-handlers client)
                        :key #'car :test #'equal)))
   client)
+
+(defun %register-named-control-handler (client registry-accessor name function operation)
+  (unless (stringp name)
+    (signal-sdk-input-error "control callback name must be a string"))
+  (unless (functionp function)
+    (signal-sdk-input-error "control callback must be a function"))
+  (%require-client-state client operation '(:new))
+  (let ((updated (acons name function
+                        (remove name (funcall registry-accessor client)
+                                :key #'car :test #'equal))))
+    (ecase operation
+      (:register-hook-callback (setf (client-hook-callbacks client) updated))
+      (:register-sdk-mcp-handler (setf (client-mcp-handlers client) updated))))
+  client)
+
+(defun register-hook-callback (client callback-id function)
+  "Register FUNCTION for a CLI hook callback ID before CLIENT connects.
+FUNCTION receives INPUT, TOOL-USE-ID, and a context plist, and returns a
+HOOK-CALLBACK-RESULT, a JSON hash table, or :CANCEL."
+  (%register-named-control-handler client #'client-hook-callbacks callback-id function
+                                   :register-hook-callback))
+
+(defun register-sdk-mcp-handler (client server-name function)
+  "Register FUNCTION for SDK MCP messages addressed to SERVER-NAME.
+FUNCTION receives the decoded JSON-RPC message and returns an MCP-CONTROL-RESULT
+or raw JSON object."
+  (%register-named-control-handler client #'client-mcp-handlers server-name function
+                                   :register-sdk-mcp-handler))
 
 (defun make-claude-sdk-client (&key options transport cli-path timeout control-handlers)
   "Construct an interactive client.
@@ -188,6 +220,29 @@ applies only after a valid object has been framed and routed as an ordinary even
     ((hash-table-p result) result)
     (t nil)))
 
+(defun %client-registered-handler (client subtype request)
+  "Return a direct handler or resolve a named hook/MCP handler from REQUEST."
+  (or (cdr (assoc subtype (client-control-handlers client) :test #'equal))
+      (cond
+        ((equal subtype "hook_callback")
+         (let ((callback (cdr (assoc (gethash "callback_id" request)
+                                     (client-hook-callbacks client) :test #'equal))))
+           (when callback
+             (lambda (ignored)
+               (declare (ignore ignored))
+               (funcall callback (gethash "input" request)
+                        (gethash "tool_use_id" request) '(:signal nil))))))
+        ((equal subtype "mcp_message")
+         (let ((handler (cdr (assoc (gethash "server_name" request)
+                                    (client-mcp-handlers client) :test #'equal))))
+           (when handler
+             (lambda (ignored)
+               (declare (ignore ignored))
+               (let ((result (funcall handler (gethash "message" request))))
+                 (if (mcp-control-result-p result)
+                     result
+                     (make-mcp-control-result :response result))))))))))
+
 (defun %client-handle-control-request (client record)
   "Synchronously service one inbound CLI control request.
 
@@ -196,9 +251,8 @@ an error response, while a handler returning a JSON object emits success."
   (let* ((request-id (control-request-request-id record))
          (request (gethash "request" record))
          (subtype (and (hash-table-p request) (gethash "subtype" request)))
-         (entry (and (stringp subtype)
-                     (assoc subtype (client-control-handlers client) :test #'equal)))
-         (handler (cdr entry)))
+         (handler (and (hash-table-p request) (stringp subtype)
+                       (%client-registered-handler client subtype request))))
     (when (stringp request-id)
       (when (gethash request-id (client-handled-control-requests client))
         (%client-control-response client request-id "error" :error "duplicate control request")

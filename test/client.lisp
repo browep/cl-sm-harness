@@ -145,6 +145,47 @@
       (is (search "\"behavior\":\"allow\"" (second wires))))
     (claude-agent-sdk-cl:disconnect client)))
 
+(test client-named-hook-and-mcp-registries-dispatch-typed-requests
+  (let* ((transport (make-instance 'fake-client-transport
+                                   :chunks (list
+                                            (concatenate 'string +initialize-response+ +client-nl+)
+                                            (concatenate 'string +inbound-hook-request+ +client-nl+
+                                                         +turn-one-assistant+ +client-nl+ +client-result+ +client-nl+))))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
+    (claude-agent-sdk-cl:register-hook-callback
+     client "cb-1"
+     (lambda (input tool-use-id context)
+       (declare (ignore input tool-use-id context))
+       (claude-agent-sdk-cl:make-hook-callback-result
+        :data (let ((value (make-hash-table :test #'equal)))
+                (setf (gethash "continue" value) t) value))))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl:connect client)
+           (claude-agent-sdk-cl:receive-response client)
+           (is (search "\"continue\":true" (second (reverse (fake-client-writes transport))))))
+      (claude-agent-sdk-cl:disconnect client)))
+  (let* ((transport (make-instance 'fake-client-transport
+                                   :chunks (list
+                                            (concatenate 'string +initialize-response+ +client-nl+)
+                                            (concatenate 'string +inbound-mcp-request+ +client-nl+
+                                                         +turn-one-assistant+ +client-nl+ +client-result+ +client-nl+))))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
+    (claude-agent-sdk-cl:register-sdk-mcp-handler
+     client "tools"
+     (lambda (message)
+       (declare (ignore message))
+       (let ((value (make-hash-table :test #'equal)))
+         (setf (gethash "result" value) "ok") value)))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl:connect client)
+           (claude-agent-sdk-cl:receive-response client)
+           (let ((wire (second (reverse (fake-client-writes transport)))))
+             (is (search "\"mcp_response\"" wire))
+             (is (search "\"result\":\"ok\"" wire))))
+      (claude-agent-sdk-cl:disconnect client))))
+
 (test client-consumes-late-control-cancellation-without-ending-turn
   (let* ((events '())
          (claude-agent-sdk-cl::*transport-log-function* (lambda (event) (push event events)))

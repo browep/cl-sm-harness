@@ -224,7 +224,15 @@ turn/control policy with a deterministic fake-clock/fixture test.
 Ship linked child issues and documented slices in this order:
 
 1. **Control-plane foundation, SDK MCP/custom tools, permission callbacks, and
-   hooks.** Add typed inbound-control and callback-result models, source
+   hooks.** **Complete as Phase 7A/#12:** inbound `control_request` and late
+   `control_cancel_request` routing; consumer-driven synchronous dispatch;
+   serialized correlated replies; typed permission/hook/MCP results; named hook
+   and MCP registration; deterministic injected and subprocess fixtures; and
+   Docker verification. Source behavior is ported from upstream
+   `Query._handle_control_request` (baseline `3145cc637778b23cb3caff7556ab76a10028b084`,
+   `src/claude_agent_sdk/_internal/query.py:420-544). Future MCP server
+   conveniences expand this stable control plane rather than replacing it.
+   Acceptance included typed inbound-control and callback-result models, source
    provenance, fake CLI request/response fixtures, reentrancy/serialized-write
    tests, callback-error tests, and forward-compatible unknown control/event
    handling. Public task/context/rate-limit records must remain ordered relative

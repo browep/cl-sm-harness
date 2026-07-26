@@ -164,6 +164,11 @@ client writes; no background stdout reader is used.
                (make-mcp-control-result :response (make-hash-table))))))
 ```
 
+For named CLI registrations, use `register-hook-callback` (callback ID; function
+receives input, tool-use ID, and context) or `register-sdk-mcp-handler` (server
+name; function receives JSON-RPC message). Both registrations are validated and
+frozen once `connect` succeeds.
+
 Handlers may return a JSON hash table, `permission-result-allow`,
 `permission-result-deny`, `hook-callback-result`, `mcp-control-result`, or
 `:cancel`. Missing handlers, invalid results, cancellation, exceptions, and
