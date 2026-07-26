@@ -1,10 +1,6 @@
 (in-package #:claude-agent-sdk-cl)
 
-;;;; Phase 6 public interactive client — lifecycle foundation.
-;;;;
-;;;; This file intentionally starts with an injected persistent transport. The
-;;;; subprocess-backed implementation arrives in a subsequent slice; it cannot
-;;;; reuse the one-shot transport because it must retain stdin across turns.
+;;;; Phase 6 public interactive client — persistent protocol layer.
 
 (defclass client-transport ()
   ()
@@ -12,24 +8,26 @@
 
 (defgeneric start-client-transport (transport options)
   (:documentation "Start TRANSPORT once for OPTIONS and retain it for later writes."))
-
 (defgeneric read-client-chunk (transport)
   (:documentation "Return the next persistent stdout chunk, or NIL at stream EOF."))
-
 (defgeneric write-client-input (transport input)
   (:documentation "Serialize INPUT onto the persistent stdin stream."))
-
 (defgeneric close-client-transport (transport &key reason)
   (:documentation "Close TRANSPORT idempotently with terminal REASON."))
 
 (defclass claude-sdk-client ()
   ((options :initarg :options :reader client-options)
    (transport :initarg :transport :reader client-transport-instance)
-   (state :initform :new :accessor client-state))
+   (state :initform :new :accessor client-state)
+   (framer :initform (make-jsonl-framer) :reader client-framer)
+   (router :initform (make-protocol-router) :reader client-router)
+   ;; FIFO queues: raw complete JSON objects, then decoded public messages.
+   (raw-records :initform '() :accessor client-raw-records)
+   (messages :initform '() :accessor client-messages))
   (:documentation "Stateful interactive Claude Code client.
 
-State transitions are :NEW -> :CONNECTED -> :CLOSING -> :CLOSED. A closed
-client is terminal; create a new client to start another underlying process."))
+State transitions are :NEW -> :CONNECTED -> :CLOSING -> :CLOSED. A result
+record closes a response boundary, not this persistent client connection."))
 
 (defun make-claude-sdk-client (&key options transport)
   "Construct an interactive client over a persistent TRANSPORT.
@@ -38,6 +36,8 @@ Automatic subprocess provisioning is deliberately deferred until the persistent
 transport exists; this keeps lifecycle behavior independently testable."
   (unless transport
     (signal-sdk-input-error "interactive client requires a persistent :transport in this slice"))
+  (unless (or (null options) (typep options 'agent-options))
+    (signal-sdk-input-error "client options must be an agent-options instance or NIL"))
   (make-instance 'claude-sdk-client
                  :options (or options (make-agent-options))
                  :transport transport))
@@ -46,42 +46,156 @@ transport exists; this keeps lifecycle behavior independently testable."
   (unless (member (client-state client) allowed)
     (signal-client-lifecycle-error operation (client-state client))))
 
+(defun %client-json-object (&rest pairs)
+  (let ((object (make-hash-table :test #'equal)))
+    (loop for (key value) on pairs by #'cddr
+          do (setf (gethash key object) value))
+    object))
+
+(defun %client-json-line (object)
+  (concatenate 'string
+               (with-output-to-string (stream) (yason:encode object stream))
+               (string #\Newline)))
+
+(defun %client-write (client object)
+  (let ((wire (%client-json-line object)))
+    (emit-transport-log :client.stdin :input wire)
+    (write-client-input (client-transport-instance client) wire)))
+
+(defun %client-enqueue-message (client message)
+  (setf (client-messages client) (nconc (client-messages client) (list message))))
+
+(defun %client-next-record (client)
+  "Return the next complete decoded JSON object, or NIL at transport EOF."
+  (loop
+    (when (client-raw-records client)
+      (return (pop (client-raw-records client))))
+    (let ((chunk (read-client-chunk (client-transport-instance client))))
+      (unless chunk
+        (let ((final (flush-jsonl-framer (client-framer client))))
+          (when final
+            (return (decode-jsonl-record final)))
+          (return nil)))
+      (let ((records (push-jsonl-chunk (client-framer client) chunk)))
+        (setf (client-raw-records client)
+              (nconc (client-raw-records client)
+                     (remove nil (mapcar #'decode-jsonl-record records))))))))
+
+(defun %client-route-next (client)
+  "Read/rout one record. Returns (values payload route), NIL/NIL at EOF."
+  (let ((record (%client-next-record client)))
+    (if record
+        (route-protocol-record (client-router client) record)
+        (values nil nil))))
+
+(defun %client-terminal-eof (client)
+  (when (eq (client-state client) :connected)
+    (setf (client-state client) :closing)
+    (unwind-protect
+         (close-client-transport (client-transport-instance client) :reason :eof)
+      (clear-protocol-router (client-router client) :reason :eof)
+      (setf (client-state client) :closed))))
+
+(defun %client-decode-event (record)
+  "Decode known public stream events; log and skip unknown future event types.
+
+Protocol framing/JSON validity remains strict. This forward-compatibility policy
+applies only after a valid object has been framed and routed as an ordinary event."
+  (let ((type (gethash "type" record)))
+    (if (member type '("assistant" "user" "system" "result" "rate_limit_event")
+                :test #'equal)
+        (decode-query-event record)
+        (progn
+          (emit-transport-log :client.unknown-event :record record :type type)
+          nil))))
+
+(defun %client-await-response (client request-id operation)
+  "Wait synchronously for a registered control response, buffering public events."
+  (declare (ignore request-id))
+  (loop
+    (multiple-value-bind (record route) (%client-route-next client)
+      (unless record
+        (%client-terminal-eof client)
+        (error 'cli-connection-error
+               :message (format nil "CLI stream ended waiting for ~A" operation)))
+      (case route
+        (:response
+         ;; ROUTE only yields :response for a currently registered request. The
+         ;; router removes it atomically, so this record belongs to the current request.
+         (return record))
+        (:event
+         ;; System/rate-limit events may legitimately arrive before initialize
+         ;; finishes; preserve them for receive-message.
+         (let ((message (%client-decode-event record)))
+           (when message (%client-enqueue-message client message))))))))
+
+(defun %client-send-control (client subtype)
+  (let* ((router (client-router client))
+         (request-id (next-request-id router)))
+    (register-request router request-id)
+    (%client-write client
+                   (%client-json-object
+                    "type" "control_request" "request_id" request-id
+                    "request" (%client-json-object "subtype" subtype "hooks" nil)))
+    (%client-await-response client request-id subtype)))
+
 (defun connect (client)
-  "Start CLIENT's persistent transport and transition :NEW to :CONNECTED."
+  "Start CLIENT and complete its initialize control handshake."
   (%require-client-state client :connect '(:new))
-  (start-client-transport (client-transport-instance client) (client-options client))
-  (setf (client-state client) :connected)
-  client)
+  (handler-case
+      (progn
+        (start-client-transport (client-transport-instance client) (client-options client))
+        (setf (client-state client) :connected)
+        (%client-send-control client "initialize")
+        client)
+    (error (condition)
+      (unless (eq (client-state client) :closed)
+        (disconnect client))
+      (error condition))))
 
-(defun send (client input)
-  "Send INPUT through a connected client.
-
-The first slice delegates raw input to the injected transport. The next protocol
-slice will encode the upstream user JSONL envelope under a serialized write lock."
+(defun send (client input &key (session-id "default"))
+  "Send string INPUT as an upstream stream-json user envelope."
   (%require-client-state client :send '(:connected))
   (unless (stringp input)
     (signal-sdk-input-error "client input must be a string"))
-  (write-client-input (client-transport-instance client) input)
+  (%client-write client
+                 (%client-json-object
+                  "type" "user" "session_id" session-id
+                  "message" (%client-json-object "role" "user" "content" input)
+                  "parent_tool_use_id" nil))
   client)
 
 (defun receive-message (client)
-  "Receive one raw chunk from a connected client's persistent transport.
-
-Incremental framing and typed message decoding are added in the next client
-protocol slice; this function establishes lifecycle guarding first."
+  "Return the next public typed message, skipping internal control traffic.
+Returns NIL only at terminal stream EOF (and transitions the client to :CLOSED)."
   (%require-client-state client :receive-message '(:connected))
-  (read-client-chunk (client-transport-instance client)))
+  (when (client-messages client)
+    (return-from receive-message (pop (client-messages client))))
+  (loop
+    (multiple-value-bind (record route) (%client-route-next client)
+      (unless record
+        (%client-terminal-eof client)
+        (return nil))
+      (when (eq route :event)
+        (let ((message (%client-decode-event record)))
+          (when message (return message)))))))
 
 (defun receive-response (client)
-  "Receive one response boundary from CLIENT (protocol implementation pending)."
+  "Return ordered public messages through and including the next result record.
+The client remains :CONNECTED after the result, ready for another `send`."
   (%require-client-state client :receive-response '(:connected))
-  (receive-message client))
+  (let ((messages '()))
+    (loop for message = (receive-message client)
+          while message do
+            (push message messages)
+            (when (typep message 'result-message)
+              (return (nreverse messages)))
+          finally (return (nreverse messages)))))
 
 (defun interrupt (client)
-  "Validate a connected client for interrupt.
-
-The next protocol slice writes/correlates the upstream interrupt control request."
+  "Send/correlate the upstream interrupt control request."
   (%require-client-state client :interrupt '(:connected))
+  (%client-send-control client "interrupt")
   client)
 
 (defun disconnect (client)
@@ -93,5 +207,6 @@ The next protocol slice writes/correlates the upstream interrupt control request
      (setf (client-state client) :closing)
      (unwind-protect
           (close-client-transport (client-transport-instance client) :reason :disconnect)
+       (clear-protocol-router (client-router client) :reason :disconnect)
        (setf (client-state client) :closed))
      client)))
