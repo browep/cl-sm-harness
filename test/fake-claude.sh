@@ -79,6 +79,19 @@ case "${1:-ok}" in
     sleep 0.01
     printf '"num_turns":1,"session_id":"s","result":"fragmented done"}\n'
     ;;
+  client-control)
+    # Handshake, emit an inbound permission request, wait for its correlated
+    # control response, then finish a normal assistant/result turn.
+    IFS= read -r line || exit 0
+    request_id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+    printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s"}}\n' "$request_id"
+    printf '%s\n' '{"type":"control_request","request_id":"cli-request-1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"pwd"}}}'
+    IFS= read -r line || exit 0
+    printf '%s' "$line" | grep -F '"request_id":"cli-request-1"' >/dev/null || exit 64
+    printf '%s' "$line" | grep -F '"behavior":"allow"' >/dev/null || exit 64
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"permission accepted"}]}}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","result":"control done"}'
+    ;;
   query)
     printf '%s\n' '{"type":"system","subtype":"init","session_id":"s","cwd":"/tmp"}'
     printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"fake response"}]}}'

@@ -231,6 +231,26 @@
            (is (= 1 (overlap-max-active-writes transport))))
       (claude-agent-sdk-cl:disconnect client))))
 
+(test subprocess-client-dispatches-inbound-control-request
+  (let* ((transport (claude-agent-sdk-cl::make-subprocess-client-transport
+                     :cli-path "/workspace/test/fake-claude.sh" :arguments '("client-control")))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client
+                  :transport transport
+                  :control-handlers
+                  (list (cons "can_use_tool"
+                              (lambda (request)
+                                (declare (ignore request))
+                                (claude-agent-sdk-cl:make-permission-result-allow)))))))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl:connect client)
+           (let ((response (claude-agent-sdk-cl:receive-response client)))
+             (is (= 2 (length response)))
+             (is (string= "control done"
+                          (claude-agent-sdk-cl:result-message-result (second response)))))
+           (is (eq :connected (claude-agent-sdk-cl:client-state client))))
+      (claude-agent-sdk-cl:disconnect client))))
+
 (test subprocess-client-retains-stdin-across-two-turns
   (let* ((transport (claude-agent-sdk-cl::make-subprocess-client-transport
                      :cli-path "/workspace/test/fake-claude.sh" :arguments '("client")))
