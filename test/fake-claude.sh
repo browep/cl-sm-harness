@@ -62,6 +62,23 @@ case "${1:-ok}" in
     printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"stderr drained"}]}}'
     printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","result":"done"}'
     ;;
+  client-fragmented)
+    # Deliberately split JSON records across writes while keeping the pipe open.
+    # This exercises the transport's first-character/listen drain and the
+    # client's JSONL framer independently of child EOF.
+    IFS= read -r line || exit 0
+    request_id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+    printf '{"type":"control_res'
+    sleep 0.01
+    printf 'ponse","response":{"subtype":"success","request_id":"%s"}}\n' "$request_id"
+    IFS= read -r line || exit 0
+    printf '{"type":"assistant","message":{"role":"assistant",'
+    sleep 0.01
+    printf '"content":[{"type":"text","text":"fragmented"}]}}\n'
+    printf '{"type":"result","subtype":"success","is_error":false,'
+    sleep 0.01
+    printf '"num_turns":1,"session_id":"s","result":"fragmented done"}\n'
+    ;;
   query)
     printf '%s\n' '{"type":"system","subtype":"init","session_id":"s","cwd":"/tmp"}'
     printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"fake response"}]}}'
