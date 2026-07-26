@@ -140,6 +140,36 @@ Phases 1–4.1 and Phase 5 are implemented. Phase 6 supplies a persistent intera
     (claude-agent-sdk-cl:disconnect client)))
 ```
 
+### Inbound control callbacks
+
+Pass `:control-handlers` as an alist from upstream control subtype to a
+synchronous function. A handler receives the decoded request object while the
+client is consuming the current turn. Its reply is serialized with all normal
+client writes; no background stdout reader is used.
+
+```lisp
+(make-claude-sdk-client
+ :control-handlers
+ (list (cons "can_use_tool"
+             (lambda (request)
+               (declare (ignore request))
+               (make-permission-result-allow)))
+       (cons "hook_callback"
+             (lambda (request)
+               (declare (ignore request))
+               (make-hook-callback-result :data (make-hash-table))))
+       (cons "mcp_message"
+             (lambda (request)
+               (declare (ignore request))
+               (make-mcp-control-result :response (make-hash-table))))))
+```
+
+Handlers may return a JSON hash table, `permission-result-allow`,
+`permission-result-deny`, `hook-callback-result`, `mcp-control-result`, or
+`:cancel`. Missing handlers, invalid results, cancellation, exceptions, and
+duplicate inbound request IDs receive deterministic correlated error responses;
+the enclosing public turn continues when the CLI does.
+
 Offline tests remain credential-free and network-isolated. The one-shot smoke is `test.sh live`; the separately gated interactive two-turn smoke is `test.sh live-client`. Both require `CLAUDE_SDK_LIVE_TEST=1` and run only in the credential-scoped `live` Compose service. The interactive smoke was verified on 2026-07-26 with two exact fixed replies and two terminal `success` results.
 
 See GitHub [issue #1](https://github.com/browep/claude-agent-sdk-cl/issues/1) and [PLAN.md](PLAN.md).
