@@ -22,6 +22,14 @@
   (message "" :type string)
   (interrupt nil))
 
+(defstruct hook-callback-result
+  "Typed response body for an inbound `hook_callback` control request."
+  data)
+
+(defstruct mcp-control-result
+  "Typed SDK MCP payload; it is wrapped as `mcp_response` on the wire."
+  response)
+
 (defclass system-message (message)
   ((subtype :initarg :subtype :reader system-message-subtype)
    (data :initarg :data :reader system-message-data)))

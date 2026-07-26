@@ -155,6 +155,11 @@ applies only after a valid object has been framed and routed as an ordinary even
        (when (permission-result-deny-interrupt result)
          (setf (gethash "interrupt" data) t))
        data))
+    ((hook-callback-result-p result)
+     (let ((data (hook-callback-result-data result)))
+       (if (hash-table-p data) data nil)))
+    ((mcp-control-result-p result)
+     (%client-json-object "mcp_response" (mcp-control-result-response result)))
     ((hash-table-p result) result)
     (t nil)))
 

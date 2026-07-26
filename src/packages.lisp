@@ -35,6 +35,8 @@
            #:permission-result-allow-updated-input #:permission-result-allow-updated-permissions
            #:permission-result-deny #:make-permission-result-deny
            #:permission-result-deny-message #:permission-result-deny-interrupt
+           #:hook-callback-result #:make-hook-callback-result #:hook-callback-result-data
+           #:mcp-control-result #:make-mcp-control-result #:mcp-control-result-response
            #:claude-sdk-client #:make-claude-sdk-client #:client-state
            #:client-transport #:start-client-transport #:read-client-chunk
            #:write-client-input #:close-client-transport

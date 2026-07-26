@@ -72,6 +72,12 @@
 (defparameter +inbound-permission-request+
   "{\"type\":\"control_request\",\"request_id\":\"cli-request-1\",\"request\":{\"subtype\":\"can_use_tool\",\"tool_name\":\"Bash\",\"input\":{\"command\":\"pwd\"}}}")
 
+(defparameter +inbound-hook-request+
+  "{\"type\":\"control_request\",\"request_id\":\"hook-1\",\"request\":{\"subtype\":\"hook_callback\",\"callback_id\":\"cb-1\",\"input\":{}}}")
+
+(defparameter +inbound-mcp-request+
+  "{\"type\":\"control_request\",\"request_id\":\"mcp-1\",\"request\":{\"subtype\":\"mcp_message\",\"server_name\":\"tools\",\"message\":{\"method\":\"tools/list\"}}}")
+
 (test client-default-provisions-stream-json-transport
   (let* ((options (claude-agent-sdk-cl:make-agent-options
                    :model "fake-model" :allowed-tools '("Read")))
@@ -146,6 +152,39 @@
       (is (search "\"behavior\":\"deny\"" deny))
       (is (search "\"message\":\"no\"" deny))
       (is (search "\"interrupt\":true" deny)))))
+
+(test client-typed-hook-and-mcp-results-use-control-envelope
+  (labels ((response-wire (request subtype result)
+             (let* ((transport
+                     (make-instance 'fake-client-transport
+                                    :chunks (list
+                                             (concatenate 'string +initialize-response+ +client-nl+)
+                                             (concatenate 'string request +client-nl+
+                                                          +turn-one-assistant+ +client-nl+
+                                                          +client-result+ +client-nl+))))
+                    (client (claude-agent-sdk-cl:make-claude-sdk-client
+                             :transport transport
+                             :control-handlers
+                             (list (cons subtype (lambda (control) (declare (ignore control)) result))))))
+               (unwind-protect
+                    (progn
+                      (claude-agent-sdk-cl:connect client)
+                      (claude-agent-sdk-cl:receive-response client)
+                      (second (reverse (fake-client-writes transport))))
+                 (claude-agent-sdk-cl:disconnect client)))))
+    (let* ((data (let ((object (make-hash-table :test #'equal)))
+                   (setf (gethash "continue" object) t) object))
+           (wire (response-wire +inbound-hook-request+ "hook_callback"
+                                (claude-agent-sdk-cl:make-hook-callback-result :data data))))
+      (is (search "\"request_id\":\"hook-1\"" wire))
+      (is (search "\"continue\":true" wire)))
+    (let* ((payload (let ((object (make-hash-table :test #'equal)))
+                      (setf (gethash "jsonrpc" object) "2.0") object))
+           (wire (response-wire +inbound-mcp-request+ "mcp_message"
+                                (claude-agent-sdk-cl:make-mcp-control-result :response payload))))
+      (is (search "\"request_id\":\"mcp-1\"" wire))
+      (is (search "\"mcp_response\"" wire))
+      (is (search "\"jsonrpc\":\"2.0\"" wire)))))
 
 (test client-control-dispatch-errors-and-duplicates-are-terminal
   (labels ((run-case (handlers expected)
