@@ -46,6 +46,11 @@ case "$mode" in
       --eval '(asdf:load-system :claude-agent-sdk-cl/tests)' \
       --eval '(unless (fiveam:run! :claude-agent-sdk-cl/subprocess) (uiop:quit 1))'
     ;;
+  examples)
+    # Source is mounted read-only; invoke through sh instead of relying on its
+    # executable bit surviving the host mount.
+    exec sh /workspace/scripts/check-harness-examples.sh
+    ;;
   parity)
     node /workspace/scripts/verify-parity.mjs \
       /opt/upstream-catalog.json \
@@ -70,7 +75,7 @@ case "$mode" in
     exit 1
     ;;
   *)
-    printf '%s\n' "unknown test mode: $mode" >&2
+    printf '%s\n' "unknown test mode: $mode (expected unit, integration, examples, parity, live, or live-client)" >&2
     exit 64
     ;;
 esac
