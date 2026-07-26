@@ -41,6 +41,8 @@
   "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"s\",\"result\":\"done\"}")
 (defparameter +control-line+
   "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"unknown\"}}")
+(defparameter +rate-limit-line+
+  "{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"allowed_warning\",\"resetsAt\":1700000000,\"rateLimitType\":\"five_hour\",\"utilization\":0.85},\"uuid\":\"u\",\"session_id\":\"s\"}")
 (defparameter +nl+ (string #\Newline))
 
 (test query-streams-assistant-then-result-in-order
@@ -63,6 +65,21 @@
     (is (eq :opts (fake-query-options transport)))
     ;; closed exactly once with :eof.
     (is (equal '(:eof) (fake-query-close-reasons transport)))))
+
+(test query-yields-rate-limit-events-in-wire-order
+  (let* ((transport (make-fake-transport
+                     (concatenate 'string +rate-limit-line+ +nl+)
+                     (concatenate 'string +assistant-line+ +nl+)
+                     (concatenate 'string +result-line+ +nl+)))
+         (messages (claude-agent-sdk-cl:query "hi" :transport transport))
+         (event (first messages)))
+    (is (= 3 (length messages)))
+    (is (typep event 'claude-agent-sdk-cl:rate-limit-event))
+    (is (string= "allowed_warning"
+                 (claude-agent-sdk-cl:rate-limit-info-status
+                  (claude-agent-sdk-cl:rate-limit-event-rate-limit-info event))))
+    (is (typep (second messages) 'claude-agent-sdk-cl:assistant-message))
+    (is (typep (third messages) 'claude-agent-sdk-cl:result-message))))
 
 (test query-reassembles-records-split-across-chunks
   ;; Assistant line arrives in three fragments; result in one — the framer must

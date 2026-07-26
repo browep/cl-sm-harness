@@ -88,6 +88,29 @@
     (is (typep message 'claude-agent-sdk-cl:result-message))
     (is (string= "success" (claude-agent-sdk-cl:result-message-subtype message)))))
 
+(test decode-rate-limit-event-preserves-modeled-and-raw-fields
+  (let* ((info (make-wire-object
+                "status" "allowed_warning" "resetsAt" 1700000000
+                "rateLimitType" "five_hour" "utilization" 0.85d0
+                "isUsingOverage" nil))
+         (wire (make-wire-object
+                "type" "rate_limit_event" "rate_limit_info" info
+                "uuid" "u" "session_id" "s" "futureField" "keep"))
+         (event (claude-agent-sdk-cl:decode-rate-limit-event wire))
+         (decoded-info (claude-agent-sdk-cl:rate-limit-event-rate-limit-info event)))
+    (is (typep event 'claude-agent-sdk-cl:rate-limit-event))
+    (is (typep event 'claude-agent-sdk-cl::message))
+    (is (string= "u" (claude-agent-sdk-cl:rate-limit-event-uuid event)))
+    (is (string= "s" (claude-agent-sdk-cl:rate-limit-event-session-id event)))
+    (is (string= "allowed_warning" (claude-agent-sdk-cl:rate-limit-info-status decoded-info)))
+    (is (= 1700000000 (claude-agent-sdk-cl:rate-limit-info-resets-at decoded-info)))
+    (is (string= "five_hour" (claude-agent-sdk-cl:rate-limit-info-rate-limit-type decoded-info)))
+    (is (= 0.85d0 (claude-agent-sdk-cl:rate-limit-info-utilization decoded-info)))
+    (is (eq info (claude-agent-sdk-cl:rate-limit-info-raw decoded-info)))
+    (is (string= "keep" (gethash "futureField" (claude-agent-sdk-cl::message-extra event)))))
+  (signals claude-agent-sdk-cl::cli-json-error
+    (claude-agent-sdk-cl:decode-rate-limit-event (make-wire-object "type" "rate_limit_event"))))
+
 (test decode-system-message-preserves-subtype-and-raw-fields
   (let* ((wire (make-wire-object
                 "type" "system" "subtype" "init"

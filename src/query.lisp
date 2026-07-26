@@ -46,6 +46,7 @@ top-level record with no nested body and uses `decode-result-message'."
     (cond
       ((equal type "result") (decode-result-message record))
       ((equal type "system") (decode-system-message record))
+      ((equal type "rate_limit_event") (decode-rate-limit-event record))
       ((or (equal type "assistant") (equal type "user")) (decode-message record))
       (t (signal-cli-json-error
           (format nil "unsupported query message type: ~A" type))))))

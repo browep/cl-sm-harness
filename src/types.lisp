@@ -16,6 +16,21 @@
   ((subtype :initarg :subtype :reader system-message-subtype)
    (data :initarg :data :reader system-message-data)))
 
+(defclass rate-limit-info ()
+  ((status :initarg :status :reader rate-limit-info-status)
+   (resets-at :initarg :resets-at :reader rate-limit-info-resets-at)
+   (rate-limit-type :initarg :rate-limit-type :reader rate-limit-info-rate-limit-type)
+   (utilization :initarg :utilization :reader rate-limit-info-utilization)
+   (overage-status :initarg :overage-status :reader rate-limit-info-overage-status)
+   (overage-resets-at :initarg :overage-resets-at :reader rate-limit-info-overage-resets-at)
+   (overage-disabled-reason :initarg :overage-disabled-reason :reader rate-limit-info-overage-disabled-reason)
+   (raw :initarg :raw :reader rate-limit-info-raw)))
+
+(defclass rate-limit-event (message)
+  ((rate-limit-info :initarg :rate-limit-info :reader rate-limit-event-rate-limit-info)
+   (uuid :initarg :uuid :reader rate-limit-event-uuid)
+   (session-id :initarg :session-id :reader rate-limit-event-session-id)))
+
 (defclass result-message (message)
   ((subtype :initarg :subtype :reader result-message-subtype)
    (duration-ms :initarg :duration-ms :reader result-message-duration-ms)
@@ -85,6 +100,31 @@ later parity slice; a generic system-message is enough to not crash live streams
                  :subtype (gethash "subtype" wire)
                  :data wire
                  :extra (%extra-fields wire '("type" "subtype"))))
+
+(defun decode-rate-limit-event (wire)
+  "Decode a top-level CLI `rate_limit_event` into its typed public model.
+The upstream CLI emits it whenever subscription quota status changes."
+  (%object wire "rate limit event must be an object")
+  (unless (equal "rate_limit_event" (gethash "type" wire))
+    (signal-cli-json-error "rate limit event type must be \"rate_limit_event\""))
+  (let ((info (%object (gethash "rate_limit_info" wire)
+                       "rate limit event missing object \"rate_limit_info\"")))
+    (unless (gethash "status" info)
+      (signal-cli-json-error "rate limit info missing \"status\""))
+    (make-instance 'rate-limit-event
+                   :rate-limit-info
+                   (make-instance 'rate-limit-info
+                                  :status (gethash "status" info)
+                                  :resets-at (gethash "resetsAt" info)
+                                  :rate-limit-type (gethash "rateLimitType" info)
+                                  :utilization (gethash "utilization" info)
+                                  :overage-status (gethash "overageStatus" info)
+                                  :overage-resets-at (gethash "overageResetsAt" info)
+                                  :overage-disabled-reason (gethash "overageDisabledReason" info)
+                                  :raw info)
+                   :uuid (gethash "uuid" wire)
+                   :session-id (gethash "session_id" wire)
+                   :extra (%extra-fields wire '("type" "rate_limit_info" "uuid" "session_id")))))
 
 (defparameter +result-message-known-fields+
   '("type" "subtype" "duration_ms" "duration_api_ms" "is_error"

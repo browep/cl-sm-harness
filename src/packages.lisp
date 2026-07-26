@@ -23,4 +23,10 @@
            #:query #:query-transport #:read-query-chunk
            #:start-query-transport #:close-query-transport
            #:system-message #:decode-system-message
-           #:system-message-subtype #:system-message-data))
+           #:system-message-subtype #:system-message-data
+           #:rate-limit-event #:decode-rate-limit-event #:rate-limit-event-rate-limit-info
+           #:rate-limit-event-uuid #:rate-limit-event-session-id
+           #:rate-limit-info #:rate-limit-info-status #:rate-limit-info-resets-at
+           #:rate-limit-info-rate-limit-type #:rate-limit-info-utilization
+           #:rate-limit-info-overage-status #:rate-limit-info-overage-resets-at
+           #:rate-limit-info-overage-disabled-reason #:rate-limit-info-raw))
