@@ -128,7 +128,21 @@ Pytest itself will not run against the Lisp implementation; Python test harness 
 
 ## Status
 
-Phases 1–4.1 and Phase 5 are implemented. Phase 5 provides one-shot streamed `query`, deterministic fake-CLI process coverage, a runnable `examples/one-shot.lisp`, and a successfully verified opt-in live smoke. See GitHub [issue #1](https://github.com/browep/claude-agent-sdk-cl/issues/1) and [PLAN.md](PLAN.md).
+Phases 1–4.1 and Phase 5 are implemented. Phase 6 supplies a persistent interactive `claude-sdk-client`: connect once, send multiple user turns, consume each response through its `result` boundary, optionally interrupt a turn, then disconnect. It defaults to a stream-json Claude Code subprocess when no injected transport is supplied. See `examples/interactive.lisp`.
+
+```lisp
+(let ((client (claude-agent-sdk-cl:make-claude-sdk-client)))
+  (unwind-protect
+       (progn
+         (claude-agent-sdk-cl:connect client)
+         (claude-agent-sdk-cl:send client "Hello")
+         (claude-agent-sdk-cl:receive-response client))
+    (claude-agent-sdk-cl:disconnect client)))
+```
+
+Offline tests remain credential-free and network-isolated. The one-shot smoke is `test.sh live`; the separately gated interactive two-turn smoke is `test.sh live-client`. Both require `CLAUDE_SDK_LIVE_TEST=1` and run only in the credential-scoped `live` Compose service. The interactive smoke was verified on 2026-07-26 with two exact fixed replies and two terminal `success` results.
+
+See GitHub [issue #1](https://github.com/browep/claude-agent-sdk-cl/issues/1) and [PLAN.md](PLAN.md).
 
 ## License
 

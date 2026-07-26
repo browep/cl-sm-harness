@@ -191,6 +191,17 @@ The public client has explicit `:new`, `:connected`, `:closing`, and `:closed`
 states with typed invalid-lifecycle conditions. Known `rate_limit_event` records
 are typed, and unknown future top-level events must not tear down a live session.
 
+**Status:** complete. Deterministic fake/custom-transport coverage verifies connect
+handshake, two-turn order, result response boundaries, interrupt correlation,
+process EOF/nonzero cleanup, invalid lifecycle calls, serialized writes, large
+stderr drainage, fragmented open-pipe JSONL, and default CLI provisioning.
+
+**Live evidence:** on 2026-07-26 the credential-scoped `live-client` smoke
+completed two turns (exit 0). Fixed prompts received exact responses `SDK
+interactive turn one OK` and `SDK interactive turn two OK`; both terminal
+results had subtype `success`. This evidence complements—not replaces—the
+offline Docker matrix.
+
 **Done when:** deterministic fake/custom-transport tests cover connect handshake,
 two-turn order, response boundaries, interrupt correlation, process exit, cleanup,
 invalid lifecycle calls, and serialized writes. The credential-scoped live two-turn
