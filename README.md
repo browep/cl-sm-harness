@@ -175,6 +175,17 @@ Handlers may return a JSON hash table, `permission-result-allow`,
 duplicate inbound request IDs receive deterministic correlated error responses;
 the enclosing public turn continues when the CLI does.
 
+### Session configuration (Phase 7B)
+
+`make-agent-options` validates session configuration before default transport
+provisioning can spawn Claude: a store-backed `:continue-conversation` needs
+`:session-store-list-sessions-p t` unless `:resume` is explicit, and a
+`:session-store` cannot be combined with `:enable-file-checkpointing t`.
+`normalize-session-id` and `normalize-session-path` reject empty/control or
+traversal-unsafe values. `make-session-import-plan` and
+`make-session-mutation-plan` create validated, side-effect-free plans; actual
+store persistence and transcript mirroring are Phase 7C.
+
 Offline tests remain credential-free and network-isolated. The one-shot smoke is `test.sh live`; the separately gated interactive two-turn smoke is `test.sh live-client`. Both require `CLAUDE_SDK_LIVE_TEST=1` and run only in the credential-scoped `live` Compose service. The interactive smoke was verified on 2026-07-26 with two exact fixed replies and two terminal `success` results.
 
 See GitHub [issue #1](https://github.com/browep/claude-agent-sdk-cl/issues/1) and [PLAN.md](PLAN.md).

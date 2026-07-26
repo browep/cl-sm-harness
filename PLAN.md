@@ -238,7 +238,13 @@ Ship linked child issues and documented slices in this order:
    handling. Public task/context/rate-limit records must remain ordered relative
    to turns; unknown future events continue to log/skip rather than tear down a
    persistent client.
-2. **Read-only sessions plus resume/import/mutation helpers.** Validate every
+2. **Read-only sessions plus resume/import/mutation helpers.** **Complete as
+   Phase 7B/#13:** pre-spawn session option validation and safe opaque
+   identifiers/paths; validated side-effect-free import and mutation plans.
+   Provenance: upstream `session_store_validation.py:18-45`,
+   `session_import.py:28-104`, and `session_mutations.py:53-179` at baseline
+   `3145cc637778b23cb3caff7556ab76a10028b084`. Actual store persistence is
+   intentionally deferred to the next slice. Validate every
    session-store option combination before spawning a subprocess. In particular,
    `continue` without explicit `resume` requires a store that implements session
    listing, and session-store mirroring cannot be combined with file

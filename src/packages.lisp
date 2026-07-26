@@ -5,9 +5,14 @@
            #:client-lifecycle-error #:client-lifecycle-error-operation #:client-lifecycle-error-state
            #:cli-json-error #:process-error #:process-error-exit-code #:process-error-stderr
            #:signal-sdk-input-error #:signal-cli-json-error #:signal-process-error
-           #:agent-options #:make-agent-options #:agent-options-allowed-tools
-           #:agent-options-disallowed-tools #:agent-options-continue-conversation
-           #:agent-options->wire
+           #:make-agent-options #:agent-options #:agent-options-allowed-tools
+           #:agent-options-disallowed-tools #:agent-options-permission-mode
+           #:agent-options-continue-conversation #:agent-options-model
+           #:agent-options-system-prompt #:agent-options-resume
+           #:normalize-session-id #:normalize-session-path
+           #:session-import-plan #:make-session-import-plan #:session-import-plan-session-id #:session-import-plan-path
+           #:session-mutation-plan #:make-session-mutation-plan #:session-mutation-plan-operation
+           #:session-mutation-plan-session-id #:session-mutation-plan-value #:session-mutation-plan-target-id
            #:message #:user-message #:assistant-message #:message-extra
            #:assistant-message-content #:assistant-message-model
            #:text-block #:text-block-text #:thinking-block #:tool-use-block #:tool-result-block
