@@ -59,11 +59,11 @@ Explicit paths are validated directly and never routed through a shell."
 
 (defun cli-process-command (resolved-cli arguments)
   "Return the direct CLI command. Process-group isolation requires a verified
-platform-specific launcher and is deliberately not enabled until #11 proves it."
+platform-specific launcher and is deliberately not enabled until #17 proves it."
   (cons resolved-cli arguments))
 
 (defun terminate-cli-process-tree (process)
-  "Terminate the direct child; descendant-group cleanup remains #11 work."
+  "Terminate the direct child; descendant-group cleanup remains #17 work."
   (ignore-errors (uiop:terminate-process process)))
 
 (defstruct (subprocess-transport (:constructor make-subprocess-transport (cli-path arguments)))
