@@ -108,6 +108,24 @@
            (is (eq :connected (claude-agent-sdk-cl:client-state client))))
       (claude-agent-sdk-cl:disconnect client))))
 
+(test subprocess-client-interrupt-is-correlated-and-session-remains-usable
+  (let* ((transport (claude-agent-sdk-cl::make-subprocess-client-transport
+                     :cli-path "/workspace/test/fake-claude.sh" :arguments '("client")))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl:connect client)
+           (claude-agent-sdk-cl:interrupt client)
+           ;; The fake responds to the nested request id and retains stdin; a
+           ;; following user turn proves interrupt did not terminate the child.
+           (claude-agent-sdk-cl:send client "after interrupt")
+           (let ((response (claude-agent-sdk-cl:receive-response client)))
+             (is (= 2 (length response)))
+             (is (search "turn 1 done"
+                         (claude-agent-sdk-cl:result-message-result (second response)))))
+           (is (eq :connected (claude-agent-sdk-cl:client-state client))))
+      (claude-agent-sdk-cl:disconnect client))))
+
 (test client-lifecycle-states-and-idempotent-disconnect
   (let* ((transport (make-instance 'fake-client-transport))
          (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
