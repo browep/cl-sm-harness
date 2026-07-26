@@ -158,8 +158,9 @@ Deterministic Docker-offline hardening + opt-in full-payload diagnostic logging:
   (explicit paths never shell-interpreted); timeout validation before spawn and
   post-timeout recovery
 - multi-megabyte (2 MiB) stdout/stderr and interleaved drains under concurrent readers
-- deferred live-only items (signal termination semantics, descendant/process-group
-  cleanup, reproducibility context, live Claude CLI drift diagnostics) tracked in #11
+- deferred live-only items: reproducibility context and live Claude CLI drift
+  diagnostics remain in #11; verified Linux descendant/process-group cleanup is
+  independently tracked in #17
 
 ### Phase 5 — One-shot `query`
 
