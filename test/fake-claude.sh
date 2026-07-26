@@ -126,11 +126,23 @@ case "${1:-ok}" in
     exit 23
     ;;
   query-cancel-wait)
-    # Emit one public system record then replace the shell with sleep. This keeps
-    # one directly managed child alive for cancellation tests (no descendants /
-    # process-group semantics, which are tracked separately in Phase 4.2/#11).
+    # Emit one public system record then replace the shell with sleep.
     printf '%s\n' '{"type":"system","subtype":"init","session_id":"s","cwd":"/tmp"}'
     exec sleep 5
+    ;;
+  query-cancel-descendant)
+    # Write the synthetic child PID before the public record: the callback may
+    # cancel immediately when it receives that record.
+    pid_file=${2:?descendant PID file is required}
+    sh -c 'trap "" TERM; exec sleep 60' >/dev/null 2>&1 &
+    descendant=$!
+    printf '%s\n' "$descendant" >"$pid_file"
+    # SBCL's stream read needs enough pipe progress while the child remains
+    # open. The valid JSONL record is first; trailing spaces stay pending in
+    # the framer but cause the callback to receive the system record now.
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"s","cwd":"/tmp"}'
+    head -c 8192 /dev/zero | tr '\000' ' '
+    wait "$descendant"
     ;;
   query-large-stderr)
     # Large stderr concurrent with stdout JSON: proves stderr is drained
@@ -149,6 +161,34 @@ case "${1:-ok}" in
     ;;
   sleep)
     exec sleep 5
+    ;;
+  process-identity-wait)
+    # The supervisor must exec this script as a session and process-group leader.
+    identity_file=${2:?process identity file is required}
+    printf '%s %s %s %s\n' "$$" \
+      "$(ps -o ppid= -p "$$" | tr -d ' ')" \
+      "$(ps -o pgid= -p "$$" | tr -d ' ')" \
+      "$(ps -o sid= -p "$$" | tr -d ' ')" >"$identity_file"
+    exec sleep 60
+    ;;
+  descendant-wait|client-descendant-wait)
+    # Spawn a pipe-detached synthetic descendant and record only its PID. The
+    # parent waits forever, so transport timeout/close must terminate both.
+    pid_file=${2:?descendant PID file is required}
+    mode=${3:-term}
+    if [ "$1" = client-descendant-wait ]; then
+      IFS= read -r line || exit 0
+      request_id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+      printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s"}}\n' "$request_id"
+    fi
+    if [ "$mode" = ignore-term ]; then
+      sh -c 'trap "" TERM; exec sleep 60' >/dev/null 2>&1 &
+    else
+      sleep 60 >/dev/null 2>&1 &
+    fi
+    descendant=$!
+    printf '%s\n' "$descendant" >"$pid_file"
+    wait "$descendant"
     ;;
   --output-format)
     # Default public query path: validate the upstream stream-json CLI shape and

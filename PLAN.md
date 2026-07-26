@@ -158,9 +158,13 @@ Deterministic Docker-offline hardening + opt-in full-payload diagnostic logging:
   (explicit paths never shell-interpreted); timeout validation before spawn and
   post-timeout recovery
 - multi-megabyte (2 MiB) stdout/stderr and interleaved drains under concurrent readers
-- deferred live-only items: reproducibility context and live Claude CLI drift
-  diagnostics remain in #11; verified Linux descendant/process-group cleanup is
-  independently tracked in #17
+- remaining live Claude CLI protocol-drift diagnostics and optional stress profiles remain in #11
+- **Phase 4.2A/#17 complete:** Linux/Docker process-tree cleanup uses a
+  package-owned, UIOP-reapable supervisor at
+  `/usr/local/libexec/claude-agent-sdk-cl-supervisor`, a dedicated CLI
+  session/process group, TERM→KILL escalation, and subreaper descendant
+  collection. Deterministic timeout/close/cancel/disconnect fixtures plus an
+  opt-in real-CLI cancellation smoke provide evidence.
 
 ### Phase 5 — One-shot `query`
 
@@ -291,8 +295,10 @@ docker compose run --rm test integration
 # Upstream-contract manifest and vector verification
 docker compose run --rm test parity
 
-# Explicit live smoke test; compose reads CLAUDE_CODE_OAUTH_TOKEN from root .env
-CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm test live
+# Explicit live smoke tests; only the credential-scoped `live` service receives OAuth
+CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live
+CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-client
+CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-terminate
 ```
 
 These are the required target commands; the Docker harness will introduce them in Phase 1.

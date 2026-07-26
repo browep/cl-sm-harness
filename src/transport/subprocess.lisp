@@ -57,13 +57,21 @@ Explicit paths are validated directly and never routed through a shell."
           :cli-version (and cli-path (command-output (list cli-path "--version")))
           :mode (if (string= (or (uiop:getenv "CLAUDE_SDK_LIVE_TEST") "") "1") :live :offline))))
 
+(defparameter +cli-process-supervisor+
+  "/usr/local/libexec/claude-agent-sdk-cl-supervisor"
+  "UIOP-owned launcher that creates and reaps the dedicated CLI process group.")
+
 (defun cli-process-command (resolved-cli arguments)
-  "Return the direct CLI command. Process-group isolation requires a verified
-platform-specific launcher and is deliberately not enabled until #17 proves it."
-  (cons resolved-cli arguments))
+  "Run CLI under the reapable process-group supervisor."
+  (append (list +cli-process-supervisor+ resolved-cli) arguments))
 
 (defun terminate-cli-process-tree (process)
-  "Terminate the direct child; descendant-group cleanup remains #17 work."
+  "Terminate the UIOP-owned supervisor.
+
+The installed supervisor owns the real CLI's dedicated session/process group,
+performs bounded TERM→KILL escalation, and reaps its direct child. Keeping
+UIOP attached to only the supervisor avoids competing tree walkers and preserves
+one direct process wait/reap point in Lisp."
   (ignore-errors (uiop:terminate-process process)))
 
 (defstruct (subprocess-transport (:constructor make-subprocess-transport (cli-path arguments)))

@@ -26,6 +26,16 @@ ENV PYTHONPATH=/opt/upstream/src
 COPY docker/reference/export_contracts.py /usr/local/bin/export-contracts.py
 ENTRYPOINT ["python", "/usr/local/bin/export-contracts.py"]
 
+FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS supervisor-builder
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends build-essential \
+    && rm --recursive --force /var/lib/apt/lists/*
+COPY docker/claude-agent-sdk-cl-supervisor.c /tmp/claude-agent-sdk-cl-supervisor.c
+RUN mkdir --parents /usr/local/libexec \
+    && cc -std=c11 -O2 -Wall -Wextra -Werror \
+       /tmp/claude-agent-sdk-cl-supervisor.c \
+       -o /usr/local/libexec/claude-agent-sdk-cl-supervisor
+
 FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS test
 ARG UPSTREAM_COMMIT
 
@@ -42,6 +52,7 @@ RUN apt-get update \
         "cl-yason=${YASON_VERSION}" \
         "cl-trivial-gray-streams=${TRIVIAL_GRAY_STREAMS_VERSION}" \
         ca-certificates \
+        procps \
     && npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && useradd --create-home --uid 10001 --shell /usr/sbin/nologin sdk \
     && mkdir --parents /cache \
@@ -57,8 +68,12 @@ RUN apt-get update \
     && rm --recursive --force /var/lib/apt/lists/*
 
 COPY --from=catalog /opt/catalog/upstream-catalog.json /opt/upstream-catalog.json
+COPY --from=supervisor-builder \
+     /usr/local/libexec/claude-agent-sdk-cl-supervisor \
+     /usr/local/libexec/claude-agent-sdk-cl-supervisor
 COPY docker/entrypoint.sh /usr/local/bin/claude-agent-sdk-cl-entrypoint
-RUN chmod 0755 /usr/local/bin/claude-agent-sdk-cl-entrypoint
+RUN chmod 0755 /usr/local/bin/claude-agent-sdk-cl-entrypoint \
+    /usr/local/libexec/claude-agent-sdk-cl-supervisor
 
 WORKDIR /workspace
 ENV HOME=/home/sdk \

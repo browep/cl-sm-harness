@@ -268,10 +268,37 @@
                       internal-time-units-per-second)))
       (is (< elapsed 4) "timeout should bound elapsed (~,2Fs)" elapsed))))
 
+(defun query-descendant-pid-from-file (path)
+  (loop repeat 50
+        do (when (probe-file path)
+             (with-open-file (stream path :direction :input)
+               (let ((line (read-line stream nil nil)))
+                 (when (and line (> (length line) 0))
+                   (return (parse-integer line))))))
+           (sleep 0.02)
+        finally (error "Query fake descendant did not write PID file: ~A" path)))
+
+(defun query-descendant-running-p (pid)
+  ;; A zombie is terminated even if the container init has not reaped it yet.
+  (let ((stat (format nil "/proc/~D/stat" pid)))
+    (and (probe-file stat)
+         (with-open-file (stream stat :direction :input)
+           (let ((line (read-line stream nil "")))
+             (not (search ") Z " line)))))))
+
+(defun wait-for-query-descendant-exit (pid)
+  (loop repeat 50
+        unless (query-descendant-running-p pid) do (return t)
+        do (sleep 0.02)
+        finally (return nil)))
+
+(defun kill-query-fixture-pid (pid)
+  (when (and pid (query-descendant-running-p pid))
+    (ignore-errors
+      (uiop:run-program (list "/usr/bin/kill" "-KILL" (princ-to-string pid))
+                        :ignore-error-status t))))
+
 (test subprocess-query-cancellation-closes-cleanly
-  ;; Cancel after the first message while a directly managed `exec sleep` child
-  ;; remains alive. This proves transport cancellation without testing descendant
-  ;; process-group semantics (the separate Phase 4.2/#11 concern).
   (let* ((count 0)
          (messages (run-subprocess-query
                     '("query-cancel-wait")
@@ -279,6 +306,26 @@
     (is (= 1 (length messages)))
     (is (= 1 count))
     (is (typep (first messages) 'claude-agent-sdk-cl:system-message))))
+
+(test subprocess-query-cancellation-kills-descendant-tree
+  (let* ((pid-file (format nil "/tmp/claude-sdk-query-descendant-~D.pid"
+                           (random most-positive-fixnum)))
+         (pid nil)
+         (count 0))
+    (unwind-protect
+         (progn
+           (let ((messages (run-subprocess-query
+                            (list "query-cancel-descendant" pid-file)
+                            :on-message (lambda (message)
+                                          (declare (ignore message))
+                                          (incf count)
+                                          :cancel))))
+             (is (= 1 (length messages)))
+             (is (= 1 count)))
+           (setf pid (query-descendant-pid-from-file pid-file))
+           (is-true (wait-for-query-descendant-exit pid)))
+      (kill-query-fixture-pid pid)
+      (ignore-errors (delete-file pid-file)))))
 
 (test query-default-provisions-stream-json-subprocess
   ;; No injected transport: query resolves the CLI and provisions a one-shot

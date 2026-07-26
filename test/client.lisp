@@ -81,6 +81,35 @@
 (defparameter +inbound-control-cancel+
   "{\"type\":\"control_cancel_request\",\"request_id\":\"cli-request-1\"}")
 
+(defun client-descendant-pid-from-file (path)
+  (loop repeat 50
+        do (when (probe-file path)
+             (with-open-file (stream path :direction :input)
+               (let ((line (read-line stream nil nil)))
+                 (when (and line (> (length line) 0))
+                   (return (parse-integer line))))))
+           (sleep 0.02)
+        finally (error "Persistent fake descendant did not write PID file: ~A" path)))
+
+(defun client-descendant-running-p (pid)
+  (let ((stat (format nil "/proc/~D/stat" pid)))
+    (and (probe-file stat)
+         (with-open-file (stream stat :direction :input)
+           (let ((line (read-line stream nil "")))
+             (not (search ") Z " line)))))))
+
+(defun wait-for-client-descendant-exit (pid)
+  (loop repeat 50
+        unless (client-descendant-running-p pid) do (return t)
+        do (sleep 0.02)
+        finally (return nil)))
+
+(defun kill-client-fixture-pid (pid)
+  (when (and pid (client-descendant-running-p pid))
+    (ignore-errors
+      (uiop:run-program (list "/usr/bin/kill" "-KILL" (princ-to-string pid))
+                        :ignore-error-status t))))
+
 (test client-default-provisions-stream-json-transport
   (let* ((options (claude-agent-sdk-cl:make-agent-options
                    :model "fake-model" :allowed-tools '("Read")))
@@ -367,6 +396,26 @@
                           (claude-agent-sdk-cl:result-message-result (second response)))))
            (is (eq :connected (claude-agent-sdk-cl:client-state client))))
       (claude-agent-sdk-cl:disconnect client))))
+
+(test subprocess-client-disconnect-kills-descendant-tree
+  ;; Persistent disconnect uses the same shared tree terminator as query timeout.
+  (let* ((pid-file (format nil "/tmp/claude-sdk-client-descendant-~D.pid"
+                           (random most-positive-fixnum)))
+         (transport (claude-agent-sdk-cl::make-subprocess-client-transport
+                     :cli-path "/workspace/test/fake-claude.sh"
+                     :arguments (list "client-descendant-wait" pid-file "ignore-term")))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport))
+         (pid nil))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl:connect client)
+           (setf pid (client-descendant-pid-from-file pid-file))
+           (claude-agent-sdk-cl:disconnect client)
+           (is-true (wait-for-client-descendant-exit pid))
+           ;; Cleanup remains idempotent after the process tree was reaped.
+           (claude-agent-sdk-cl:disconnect client))
+      (kill-client-fixture-pid pid)
+      (ignore-errors (delete-file pid-file)))))
 
 (test subprocess-client-retains-stdin-across-two-turns
   (let* ((transport (claude-agent-sdk-cl::make-subprocess-client-transport

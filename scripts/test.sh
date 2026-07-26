@@ -51,7 +51,7 @@ case "$mode" in
       /opt/upstream-catalog.json \
       /workspace/test/fixtures/upstream/manifest.json
     ;;
-  live|live-client)
+  live|live-client|live-terminate)
     # Never run a provider-backed command by accident. The separate Compose
     # `live` service is the only service that receives this one credential.
     if [ "${CLAUDE_SDK_LIVE_TEST:-}" != "1" ]; then
@@ -65,6 +65,7 @@ case "$mode" in
     case "$mode" in
       live) exec sbcl --non-interactive --load /workspace/scripts/live-smoke.lisp ;;
       live-client) exec sbcl --non-interactive --load /workspace/scripts/live-client-smoke.lisp ;;
+      live-terminate) exec sbcl --non-interactive --load /workspace/scripts/live-terminate-smoke.lisp ;;
     esac
     # The exec above never returns; reaching here is an internal routing error.
     exit 1

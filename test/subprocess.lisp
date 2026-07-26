@@ -3,6 +3,80 @@
 (def-suite :claude-agent-sdk-cl/subprocess :in :claude-agent-sdk-cl/tests)
 (in-suite :claude-agent-sdk-cl/subprocess)
 
+(defun descendant-pid-from-file (path)
+  (loop repeat 50
+        do (when (probe-file path)
+             (with-open-file (stream path :direction :input)
+               (let ((line (read-line stream nil nil)))
+                 (when (and line (> (length line) 0))
+                   (return (parse-integer line))))))
+           (sleep 0.02)
+        finally (error "Fake descendant did not write PID file: ~A" path)))
+
+(defun descendant-running-p (pid)
+  ;; A zombie is terminated even if its container init has not reaped it yet.
+  (let ((stat (format nil "/proc/~D/stat" pid)))
+    (and (probe-file stat)
+         (with-open-file (stream stat :direction :input)
+           (let ((line (read-line stream nil "")))
+             (not (search ") Z " line)))))))
+
+(defun wait-for-descendant-exit (pid)
+  (loop repeat 50
+        unless (descendant-running-p pid) do (return t)
+        do (sleep 0.02)
+        finally (return nil)))
+
+(defun kill-fixture-pid (pid)
+  (when (and pid (descendant-running-p pid))
+    (ignore-errors
+      (uiop:run-program (list "/usr/bin/kill" "-KILL" (princ-to-string pid))
+                        :ignore-error-status t))))
+
+(defun process-identity-from-file (path)
+  (loop repeat 50
+        do (when (probe-file path)
+             (with-open-file (stream path :direction :input)
+               (let ((line (read-line stream nil nil)))
+                 (when (and line (> (length line) 0))
+                   (let ((fields (uiop:split-string line :separator '(#\Space #\Tab))))
+                     (when (= 4 (length fields))
+                       (return (mapcar #'parse-integer fields))))))))
+           (sleep 0.02)
+        finally (error "Fake CLI did not write process identity: ~A" path)))
+
+(test cli-command-uses-reapable-process-supervisor
+  (let ((command (claude-agent-sdk-cl::cli-process-command
+                  "/workspace/test/fake-claude.sh" '("ok"))))
+    (is (string= claude-agent-sdk-cl::+cli-process-supervisor+ (first command)))
+    (is (string= "/workspace/test/fake-claude.sh" (second command)))
+    (is (equal '("ok") (cddr command)))))
+
+(test supervisor-creates-dedicated-cli-session-and-group
+  (let* ((identity-file (format nil "/tmp/claude-sdk-process-identity-~D.txt"
+                                (random most-positive-fixnum)))
+         (transport (claude-agent-sdk-cl::make-subprocess-transport
+                     "/workspace/test/fake-claude.sh"
+                     (list "process-identity-wait" identity-file)))
+         (identity nil))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl::start-subprocess transport)
+           (setf identity (process-identity-from-file identity-file))
+           (destructuring-bind (cli-pid parent-pid process-group session) identity
+             (let ((supervisor-pid
+                     (uiop:process-info-pid
+                      (claude-agent-sdk-cl::subprocess-transport-process transport))))
+               (is (= cli-pid process-group))
+               (is (= cli-pid session))
+               (is (= supervisor-pid parent-pid))
+               (is (/= cli-pid supervisor-pid))
+               (is-true (claude-agent-sdk-cl::close-subprocess transport))
+               (is-true (wait-for-descendant-exit cli-pid))
+               (is-true (claude-agent-sdk-cl::close-subprocess transport)))))
+      (ignore-errors (claude-agent-sdk-cl::close-subprocess transport))
+      (ignore-errors (delete-file identity-file)))))
+
 (test explicit-cli-path-runs-the-fake-cli
   (let ((result (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh" '("ok"))))
     (is (= 0 (getf result :exit-code)))
@@ -90,6 +164,41 @@ of stdout and stderr. Kept in sync with test/fake-claude.sh (which hardcodes
       (is (= 1 (count :cli.close names)))
       (is (eq :cli.close (car (last names))))
       (is (< (position :cli.timeout names) (position :cli.close names))))))
+
+(test subprocess-timeout-kills-descendant-tree
+  ;; RED for #17: direct-child-only cleanup leaves this synthetic descendant alive.
+  ;; The second case ignores TERM, proving the bounded KILL escalation.
+  (dolist (mode '("term" "ignore-term"))
+    (let* ((pid-file (format nil "/tmp/claude-sdk-descendant-~D.pid"
+                             (random most-positive-fixnum)))
+           (pid nil))
+      (unwind-protect
+           (progn
+             (signals claude-agent-sdk-cl::process-error
+               (claude-agent-sdk-cl::run-cli "/workspace/test/fake-claude.sh"
+                                              (list "descendant-wait" pid-file mode)
+                                              :timeout 0.5))
+             (setf pid (descendant-pid-from-file pid-file))
+             (is-true (wait-for-descendant-exit pid)))
+        (kill-fixture-pid pid)
+        (ignore-errors (delete-file pid-file))))))
+
+(test subprocess-close-kills-descendant-tree
+  (let* ((pid-file (format nil "/tmp/claude-sdk-close-descendant-~D.pid"
+                           (random most-positive-fixnum)))
+         (transport (claude-agent-sdk-cl::make-subprocess-transport
+                     "/workspace/test/fake-claude.sh"
+                     (list "descendant-wait" pid-file "ignore-term")))
+         (pid nil))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl::start-subprocess transport)
+           (setf pid (descendant-pid-from-file pid-file))
+           (is-true (claude-agent-sdk-cl::close-subprocess transport))
+           (is-true (wait-for-descendant-exit pid))
+           (is-true (claude-agent-sdk-cl::close-subprocess transport)))
+      (kill-fixture-pid pid)
+      (ignore-errors (delete-file pid-file)))))
 
 (test subprocess-timeout-signals-process-error
   (signals claude-agent-sdk-cl::process-error

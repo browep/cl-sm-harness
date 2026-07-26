@@ -81,8 +81,10 @@ docker compose run --rm test unit --suite protocol --test decode-assistant-messa
 # Deterministic fake-CLI subprocess integration
 docker compose run --rm test integration
 
-# Opt-in live Claude Code smoke test
-CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm test live
+# Opt-in live Claude Code smoke tests (credential-scoped service only)
+CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live
+CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-client
+CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-terminate
 ```
 
 Phase 1 implements the offline `unit` command. Phase 2 adds `parity`: it compares the checked-in classification manifest with a catalog generated from the pinned upstream Python source in a separate credential-free Docker stage. It builds a pinned Node base image with SBCL, FiveAM, and Claude Code CLI `2.1.219`; exact resolved runtime versions are retained in `/usr/local/share/claude-agent-sdk-cl/runtime-versions.txt` in the image. The `test` service has network disabled, mounts source read-only, and uses a named `/cache` volume for compiled artifacts.
