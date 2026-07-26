@@ -43,6 +43,9 @@
   (push reason (fake-client-close-reasons transport))
   t)
 
+(defparameter +interrupt-response+
+  "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"request-2\"}}")
+
 (defparameter +unknown-event+
   "{\"type\":\"future_cli_event\",\"payload\":\"ignored but logged\"}")
 
@@ -119,6 +122,22 @@
       (is (= 3 (length writes)))
       (is (search "\"content\":\"first prompt\"" (second writes)))
       (is (search "\"content\":\"second prompt\"" (third writes))))
+    (claude-agent-sdk-cl:disconnect client)))
+
+(test client-interrupt-uses-correlated-control-request
+  (let* ((transport
+           (make-instance 'fake-client-transport
+                          :chunks (list
+                                   (concatenate 'string +initialize-response+ +client-nl+)
+                                   (concatenate 'string +interrupt-response+ +client-nl+))))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
+    (claude-agent-sdk-cl:connect client)
+    (claude-agent-sdk-cl:interrupt client)
+    (let ((interrupt-wire (second (reverse (fake-client-writes transport)))))
+      (is (search "\"type\":\"control_request\"" interrupt-wire))
+      (is (search "\"request_id\":\"request-2\"" interrupt-wire))
+      (is (search "\"subtype\":\"interrupt\"" interrupt-wire)))
+    (is (eq :connected (claude-agent-sdk-cl:client-state client)))
     (claude-agent-sdk-cl:disconnect client)))
 
 (test client-skips-unknown-events-without-ending-the-turn
