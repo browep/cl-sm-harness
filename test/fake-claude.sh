@@ -41,6 +41,16 @@ case "${1:-ok}" in
       esac
     done
     ;;
+  client-eof)
+    # Complete initialization then terminate cleanly without a user response.
+    IFS= read -r line || exit 0
+    request_id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+    printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s"}}\n' "$request_id"
+    ;;
+  client-nonzero)
+    printf '%s\n' 'fake persistent client failed' >&2
+    exit 23
+    ;;
   query)
     printf '%s\n' '{"type":"system","subtype":"init","session_id":"s","cwd":"/tmp"}'
     printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"fake response"}]}}'

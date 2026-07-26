@@ -126,6 +126,26 @@
            (is (eq :connected (claude-agent-sdk-cl:client-state client))))
       (claude-agent-sdk-cl:disconnect client))))
 
+(test subprocess-client-eof-closes-session-and-rejects-later-writes
+  (let* ((transport (claude-agent-sdk-cl::make-subprocess-client-transport
+                     :cli-path "/workspace/test/fake-claude.sh" :arguments '("client-eof")))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
+    (claude-agent-sdk-cl:connect client)
+    (is (null (claude-agent-sdk-cl:receive-message client)))
+    (is (eq :closed (claude-agent-sdk-cl:client-state client)))
+    (signals claude-agent-sdk-cl:client-lifecycle-error
+      (claude-agent-sdk-cl:send client "after eof"))
+    (claude-agent-sdk-cl:disconnect client)))
+
+(test subprocess-client-nonzero-exit-closes-connect-and-preserves-typed-error
+  (let* ((transport (claude-agent-sdk-cl::make-subprocess-client-transport
+                     :cli-path "/workspace/test/fake-claude.sh" :arguments '("client-nonzero")))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
+    (signals claude-agent-sdk-cl:process-error
+      (claude-agent-sdk-cl:connect client))
+    (is (eq :closed (claude-agent-sdk-cl:client-state client)))
+    (claude-agent-sdk-cl:disconnect client)))
+
 (test client-lifecycle-states-and-idempotent-disconnect
   (let* ((transport (make-instance 'fake-client-transport))
          (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
