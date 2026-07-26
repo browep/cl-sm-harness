@@ -12,6 +12,26 @@
    (writes :initform '() :accessor fake-client-writes)
    (chunks :initarg :chunks :initform '() :accessor fake-client-chunks)))
 
+(defclass overlap-detecting-client-transport (fake-client-transport)
+  ((active-writes :initform 0 :accessor overlap-active-writes)
+   (max-active-writes :initform 0 :accessor overlap-max-active-writes)
+   (counter-lock :initform (sb-thread:make-mutex :name "test-write-counter")
+                 :reader overlap-counter-lock)))
+
+(defmethod claude-agent-sdk-cl:write-client-input ((transport overlap-detecting-client-transport) input)
+  ;; Holding ACTIVE-WRITES across SLEEP makes a missing client write mutex fail
+  ;; reliably when a second sender enters the generic write concurrently.
+  (sb-thread:with-mutex ((overlap-counter-lock transport))
+    (incf (overlap-active-writes transport))
+    (setf (overlap-max-active-writes transport)
+          (max (overlap-max-active-writes transport)
+               (overlap-active-writes transport))))
+  (unwind-protect
+       (progn (sleep 0.05)
+              (call-next-method))
+    (sb-thread:with-mutex ((overlap-counter-lock transport))
+      (decf (overlap-active-writes transport)))))
+
 (defparameter +client-nl+ (string #\Newline))
 (defparameter +initialize-response+
   "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"request-1\"}}")
@@ -48,6 +68,25 @@
 
 (defparameter +unknown-event+
   "{\"type\":\"future_cli_event\",\"payload\":\"ignored but logged\"}")
+
+(test client-serializes-concurrent-writes
+  (let* ((transport (make-instance 'overlap-detecting-client-transport))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl:connect client)
+           (let ((first (sb-thread:make-thread
+                         (lambda () (claude-agent-sdk-cl:send client "first"))))
+                 (second nil))
+             ;; FIRST is deliberately inside WRITE-CLIENT-INPUT before SECOND
+             ;; starts, so this is deterministic even on a lightly loaded VM.
+             (sleep 0.01)
+             (setf second (sb-thread:make-thread
+                           (lambda () (claude-agent-sdk-cl:send client "second"))))
+             (sb-thread:join-thread first)
+             (sb-thread:join-thread second))
+           (is (= 1 (overlap-max-active-writes transport))))
+      (claude-agent-sdk-cl:disconnect client))))
 
 (test subprocess-client-retains-stdin-across-two-turns
   (let* ((transport (claude-agent-sdk-cl::make-subprocess-client-transport

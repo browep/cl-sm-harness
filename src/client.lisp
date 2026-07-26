@@ -23,7 +23,11 @@
    (router :initform (make-protocol-router) :reader client-router)
    ;; FIFO queues: raw complete JSON objects, then decoded public messages.
    (raw-records :initform '() :accessor client-raw-records)
-   (messages :initform '() :accessor client-messages))
+   (messages :initform '() :accessor client-messages)
+   ;; All control and user JSONL writes share this lock; an interactive child
+   ;; must never receive interleaved frames from concurrent callers.
+   (write-lock :initform (sb-thread:make-mutex :name "claude-client-write")
+               :reader client-write-lock))
   (:documentation "Stateful interactive Claude Code client.
 
 State transitions are :NEW -> :CONNECTED -> :CLOSING -> :CLOSED. A result
@@ -59,8 +63,9 @@ transport exists; this keeps lifecycle behavior independently testable."
 
 (defun %client-write (client object)
   (let ((wire (%client-json-line object)))
-    (emit-transport-log :client.stdin :input wire)
-    (write-client-input (client-transport-instance client) wire)))
+    (sb-thread:with-mutex ((client-write-lock client))
+      (emit-transport-log :client.stdin :input wire)
+      (write-client-input (client-transport-instance client) wire))))
 
 (defun %client-enqueue-message (client message)
   (setf (client-messages client) (nconc (client-messages client) (list message))))
