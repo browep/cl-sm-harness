@@ -78,6 +78,9 @@
 (defparameter +inbound-mcp-request+
   "{\"type\":\"control_request\",\"request_id\":\"mcp-1\",\"request\":{\"subtype\":\"mcp_message\",\"server_name\":\"tools\",\"message\":{\"method\":\"tools/list\"}}}")
 
+(defparameter +inbound-control-cancel+
+  "{\"type\":\"control_cancel_request\",\"request_id\":\"cli-request-1\"}")
+
 (test client-default-provisions-stream-json-transport
   (let* ((options (claude-agent-sdk-cl:make-agent-options
                    :model "fake-model" :allowed-tools '("Read")))
@@ -125,6 +128,24 @@
       (is (search "\"request_id\":\"cli-request-1\"" (second wires)))
       (is (search "\"behavior\":\"allow\"" (second wires))))
     (claude-agent-sdk-cl:disconnect client)))
+
+(test client-consumes-late-control-cancellation-without-ending-turn
+  (let* ((events '())
+         (claude-agent-sdk-cl::*transport-log-function* (lambda (event) (push event events)))
+         (transport (make-instance 'fake-client-transport
+                                   :chunks (list
+                                            (concatenate 'string +initialize-response+ +client-nl+)
+                                            (concatenate 'string +inbound-control-cancel+ +client-nl+
+                                                         +turn-one-assistant+ +client-nl+
+                                                         +client-result+ +client-nl+))))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl:connect client)
+           (is (= 2 (length (claude-agent-sdk-cl:receive-response client))))
+           (is (= 1 (length (fake-client-writes transport))))
+           (is (find :client.control.cancel events :key (lambda (event) (getf event :event)))))
+      (claude-agent-sdk-cl:disconnect client))))
 
 (test client-typed-permission-results-use-upstream-wire-shape
   (labels ((response-wire (result)

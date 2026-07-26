@@ -60,11 +60,17 @@ Chunks are never trimmed before line assembly."
 (defun control-request-request-id (record)
   (gethash "request_id" record))
 
+(defun control-cancel-request-p (record)
+  "True when RECORD cancels a CLI-originated control request."
+  (equal "control_cancel_request" (gethash "type" record)))
+
 (defun route-protocol-record (router record)
   "Classify RECORD and return (values record route). Route keywords:
   :response  matched pending control response (consumed from the router)
   :request   inbound CLI control request; client must service it before reading
              another public record
+  :cancel    inbound cancellation for a CLI control request; synchronous
+             clients log/consume it because no handler is concurrently running
   :control   internal control traffic that must NOT be yielded as a user event
              (unmatched/duplicate/unknown control responses; upstream drops
              these with `continue')
@@ -80,6 +86,7 @@ top-level `request_id'."
                    :response)
                   (control-p :control)
                   ((control-request-p record) :request)
+                  ((control-cancel-request-p record) :cancel)
                   (t :event))))
     (emit-transport-log :protocol.route :record record :request-id request-id :route route)
     (values record route)))

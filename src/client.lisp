@@ -202,6 +202,11 @@ an error response, while a handler returning a JSON object emits success."
          (error (condition)
            (%client-control-response client request-id "error" :error (princ-to-string condition))))))))
 
+(defun %client-handle-control-cancel (record)
+  "Consume a late control cancellation in the synchronous client model."
+  (emit-transport-log :client.control.cancel :record record
+                       :request-id (gethash "request_id" record)))
+
 (defun %client-await-response (client request-id operation)
   "Wait synchronously for a registered control response, buffering public events."
   (declare (ignore request-id))
@@ -218,6 +223,8 @@ an error response, while a handler returning a JSON object emits success."
          (return record))
         (:request
          (%client-handle-control-request client record))
+        (:cancel
+         (%client-handle-control-cancel record))
         (:event
          ;; System/rate-limit events may legitimately arrive before initialize
          ;; finishes; preserve them for receive-message.
@@ -273,6 +280,7 @@ Returns NIL only at terminal stream EOF (and transitions the client to :CLOSED).
         (return nil))
       (case route
         (:request (%client-handle-control-request client record))
+        (:cancel (%client-handle-control-cancel record))
         (:event
          (let ((message (%client-decode-event record)))
            (when message (return message))))))))
