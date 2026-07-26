@@ -51,6 +51,17 @@ case "${1:-ok}" in
     printf '%s\n' 'fake persistent client failed' >&2
     exit 23
     ;;
+  client-large-stderr)
+    # Fill stderr before answering initialize. The client must already be
+    # draining stderr or the child will block and handshake will deadlock.
+    IFS= read -r line || exit 0
+    head -c 262144 /dev/zero | tr '\000' e >&2
+    request_id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+    printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s"}}\n' "$request_id"
+    IFS= read -r line || exit 0
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"stderr drained"}]}}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","result":"done"}'
+    ;;
   query)
     printf '%s\n' '{"type":"system","subtype":"init","session_id":"s","cwd":"/tmp"}'
     printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"fake response"}]}}'

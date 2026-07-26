@@ -158,6 +158,21 @@
            (is (eq :connected (claude-agent-sdk-cl:client-state client))))
       (claude-agent-sdk-cl:disconnect client))))
 
+(test subprocess-client-drains-large-stderr-during-handshake
+  (let* ((transport (claude-agent-sdk-cl::make-subprocess-client-transport
+                     :cli-path "/workspace/test/fake-claude.sh" :arguments '("client-large-stderr")))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl:connect client)
+           (claude-agent-sdk-cl:send client "after stderr")
+           (let ((response (claude-agent-sdk-cl:receive-response client)))
+             (is (= 2 (length response)))
+             (is (string= "done"
+                          (claude-agent-sdk-cl:result-message-result (second response)))))
+           (is (eq :connected (claude-agent-sdk-cl:client-state client))))
+      (claude-agent-sdk-cl:disconnect client))))
+
 (test subprocess-client-eof-closes-session-and-rejects-later-writes
   (let* ((transport (claude-agent-sdk-cl::make-subprocess-client-transport
                      :cli-path "/workspace/test/fake-claude.sh" :arguments '("client-eof")))
