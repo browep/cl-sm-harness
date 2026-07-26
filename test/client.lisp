@@ -49,6 +49,26 @@
 (defparameter +unknown-event+
   "{\"type\":\"future_cli_event\",\"payload\":\"ignored but logged\"}")
 
+(test subprocess-client-retains-stdin-across-two-turns
+  (let* ((transport (claude-agent-sdk-cl::make-subprocess-client-transport
+                     :cli-path "/workspace/test/fake-claude.sh" :arguments '("client")))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl:connect client)
+           (claude-agent-sdk-cl:send client "first")
+           (let ((response (claude-agent-sdk-cl:receive-response client)))
+             (is (= 2 (length response)))
+             (is (search "turn 1 done"
+                         (claude-agent-sdk-cl:result-message-result (second response)))))
+           (claude-agent-sdk-cl:send client "second")
+           (let ((response (claude-agent-sdk-cl:receive-response client)))
+             (is (= 2 (length response)))
+             (is (search "turn 2 done"
+                         (claude-agent-sdk-cl:result-message-result (second response)))))
+           (is (eq :connected (claude-agent-sdk-cl:client-state client))))
+      (claude-agent-sdk-cl:disconnect client))))
+
 (test client-lifecycle-states-and-idempotent-disconnect
   (let* ((transport (make-instance 'fake-client-transport))
          (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))

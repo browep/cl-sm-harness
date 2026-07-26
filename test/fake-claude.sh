@@ -22,6 +22,25 @@ case "${1:-ok}" in
   raw-stdin)
     cat
     ;;
+  client)
+    # Persistent stream-json fixture: acknowledge initialize/interrupt controls
+    # and produce a complete assistant/result turn for each user frame without
+    # closing stdin between turns.
+    turn=0
+    while IFS= read -r line; do
+      case "$line" in
+        *'"type":"control_request"'*)
+          request_id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+          printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s"}}\n' "$request_id"
+          ;;
+        *'"type":"user"'*)
+          turn=$((turn + 1))
+          printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"client turn %s"}]}}\n' "$turn"
+          printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","result":"turn %s done"}\n' "$turn"
+          ;;
+      esac
+    done
+    ;;
   query)
     printf '%s\n' '{"type":"system","subtype":"init","session_id":"s","cwd":"/tmp"}'
     printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"fake response"}]}}'

@@ -15,6 +15,7 @@
                (:file "src/transport/subprocess")
                (:file "src/query")
                (:file "src/client")
+               (:file "src/transport/subprocess-client")
                (:file "src/transport/subprocess-query")))
 
 (asdf:defsystem #:claude-agent-sdk-cl/tests
