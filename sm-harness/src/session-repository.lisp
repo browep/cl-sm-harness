@@ -43,15 +43,46 @@
               (yason:parse raw))))
       (error () nil))))
 
+(defun %current-boot-id ()
+  (let ((path #P"/proc/sys/kernel/random/boot_id"))
+    (when (probe-file path)
+      (string-trim '(#\Space #\Tab #\Newline #\Return)
+                   (uiop:read-file-string path)))))
+
+(defun %lock-boot-id (path)
+  (when (probe-file path)
+    (let* ((raw (uiop:read-file-string path))
+           (prefix "boot_id=")
+           (start (search prefix raw)))
+      (when start
+        (let* ((value-start (+ start (length prefix)))
+               (end (or (position #\Newline raw :start value-start)
+                        (length raw))))
+          (subseq raw value-start end))))))
+
+(defun %stale-lock-from-prior-boot-p (path)
+  (let ((owner-boot-id (%lock-boot-id path))
+        (current-boot-id (%current-boot-id)))
+    (and owner-boot-id current-boot-id
+         (not (string= owner-boot-id current-boot-id)))))
+
 (defun %acquire-data-lock (root)
-  "Best-effort exclusive lock via exclusive create of lock file held open."
+  "Fail closed for a current-boot lock; recover only a lock from a prior boot."
   (ensure-directories-exist root)
   (let ((path (merge-pathnames ".harness.lock" root)))
-    (handler-case
-        (open path :direction :output :if-exists :error :if-does-not-exist :create)
-      (file-error ()
-        (error 'harness-state-error
-               :message "data root is locked by another sm-harness process")))))
+    (labels ((acquire ()
+               (handler-case
+                   (let ((stream (open path :direction :output :if-exists :error
+                                             :if-does-not-exist :create)))
+                     (format stream "boot_id=~A~%" (%current-boot-id))
+                     (finish-output stream)
+                     stream)
+                 (file-error ()
+                   (if (%stale-lock-from-prior-boot-p path)
+                       (progn (delete-file path) (acquire))
+                       (error 'harness-state-error
+                              :message "data root is locked by another sm-harness process"))))))
+      (acquire))))
 
 (defun open-session-repository (&key root project-key)
   (let* ((root (uiop:ensure-directory-pathname (pathname root)))

@@ -32,3 +32,17 @@
            (is (null (sm-harness::repository-list-sessions repo))))
       (sm-harness::close-session-repository repo)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test repository-recovers-stale-lock-from-prior-boot
+  (let ((root (temp-data-root)))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist root)
+           (with-open-file (out (merge-pathnames ".harness.lock" root)
+                                :direction :output :if-does-not-exist :create
+                                :if-exists :supersede)
+             (write-string "boot_id=previous-boot\n" out))
+           (let ((repo (sm-harness::open-session-repository :root root :project-key "p1")))
+             (is (not (null repo)))
+             (sm-harness::close-session-repository repo)))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

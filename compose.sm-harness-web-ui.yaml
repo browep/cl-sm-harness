@@ -55,6 +55,7 @@ services:
     environment:
       BASE_URL: http://web-ui-e2e-app:8080
       ARTIFACTS: /artifacts
+      E2E_SCENARIO: ${E2E_SCENARIO:-}
     depends_on:
       - web-ui-e2e-app
     networks:

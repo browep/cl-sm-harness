@@ -34,6 +34,19 @@
       (error "WEB_UI_E2E requires the sm-harness-web-ui/e2e ASDF system"))
     (symbol-function symbol)))
 
+(defun %run-until-shutdown ()
+  "Block until Docker's TERM/INT request is received, then release durable state."
+  (let ((shutdown-requested nil))
+    (flet ((request-shutdown ()
+             (setf shutdown-requested t)))
+      (sb-sys:enable-interrupt sb-unix:sigterm
+                               (lambda () (request-shutdown)))
+      (sb-sys:enable-interrupt sb-unix:sigint
+                               (lambda () (request-shutdown)))
+      (unwind-protect
+           (loop until shutdown-requested do (sleep 0.1))
+        (stop-web-ui)))))
+
 (defun main ()
   "Docker entrypoint helper."
   (let* ((data (or (uiop:getenv "SM_HARNESS_DATA") "/data"))
@@ -53,4 +66,4 @@
     (start-web-ui :harness harness
                   :config (make-web-ui-config :host host :port port
                                               :static-root #P"/app/static/"))
-    (loop (sleep 3600))))
+    (%run-until-shutdown)))
