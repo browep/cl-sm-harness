@@ -15,9 +15,16 @@
                  (:file "ui/chat")
                  (:file "application")))))
 
+(asdf:defsystem #:sm-harness-web-ui/e2e-contract
+  :description "Pure Lisp browser-E2E contract, independent of CLOG"
+  :depends-on (#:sm-harness)
+  :serial t
+  :components ((:file "src/packages")
+               (:file "e2e/contract")))
+
 (asdf:defsystem #:sm-harness-web-ui/e2e
   :description "Test-only deterministic SDK transport for browser E2E"
-  :depends-on (#:sm-harness-web-ui)
+  :depends-on (#:sm-harness-web-ui #:sm-harness-web-ui/e2e-contract)
   :serial t
   :components ((:file "e2e/fixture-transport")))
 

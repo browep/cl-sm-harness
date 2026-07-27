@@ -45,6 +45,11 @@
                 :project-key "web"
                 :transport-factory (when fixture (%fixture-transport-factory))))
          (harness (sm-harness:make-harness :config hcfg)))
+    (when fixture
+      (let ((writer (find-symbol "WRITE-E2E-CONTRACT" :sm-harness-web-ui)))
+        (unless (and writer (fboundp writer))
+          (error "WEB_UI_E2E requires the sm-harness-web-ui/e2e-contract ASDF system"))
+        (funcall (symbol-function writer))))
     (start-web-ui :harness harness
                   :config (make-web-ui-config :host host :port port
                                               :static-root #P"/app/static/"))
