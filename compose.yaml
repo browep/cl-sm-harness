@@ -14,6 +14,7 @@ services:
       - ./src:/workspace/src:ro
       - ./test:/workspace/test:ro
       - ./scripts:/workspace/scripts:ro
+      - ./examples:/workspace/examples:ro
       - claude-agent-sdk-cl-cache:/cache
     command: ["unit"]
 

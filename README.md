@@ -9,7 +9,7 @@ Provide an idiomatic Common Lisp interface to the installed **Claude Code CLI**:
 - one-shot, streamed `query` requests;
 - stateful interactive conversations through a client API;
 - typed messages, options, result/error conditions, and deterministic resource cleanup;
-- in-process SDK MCP tools, callbacks/hooks, and session helpers.
+- in-process SDK MCP tools, callbacks/hooks, and local session-store helpers.
 
 This project is **not** a direct Anthropic Messages API client and does not reimplement Claude Code. The runtime boundary is Common Lisp ↔ Claude Code CLI over the CLI's JSONL/control protocol.
 
@@ -81,6 +81,9 @@ docker compose run --rm test unit --suite protocol --test decode-assistant-messa
 # Deterministic fake-CLI subprocess integration
 docker compose run --rm test integration
 
+# Load-safe harness examples (no Claude / no credentials)
+docker compose run --rm test examples
+
 # Opt-in live Claude Code smoke tests (credential-scoped service only)
 CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live
 CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-client
@@ -132,6 +135,11 @@ Pytest itself will not run against the Lisp implementation; Python test harness 
 ## Status
 
 Phases 1–4.1 and Phase 5 are implemented. Phase 6 supplies a persistent interactive `claude-sdk-client`: connect once, send multiple user turns, consume each response through its `result` boundary, optionally interrupt a turn, then disconnect. It defaults to a stream-json Claude Code subprocess when no injected transport is supplied. See `examples/interactive.lisp`.
+
+For harness integration—one-shot and persistent clients, event mapping, control
+handlers, session-store seams, error handling, and deterministic test
+transports—start with [the harness integration guide](docs/harness-integration.md)
+and its [load-safe examples](examples/harness/README.md).
 
 ```lisp
 (let ((client (claude-agent-sdk-cl:make-claude-sdk-client)))

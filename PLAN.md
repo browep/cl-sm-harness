@@ -306,6 +306,9 @@ docker compose run --rm test unit --suite protocol --test decode-assistant-messa
 # Fake-CLI subprocess suite
 docker compose run --rm test integration
 
+# Load-safe harness examples (no credentials / no Claude launch)
+docker compose run --rm test examples
+
 # Upstream-contract manifest and vector verification
 docker compose run --rm test parity
 
