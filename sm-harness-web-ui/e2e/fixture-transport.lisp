@@ -27,7 +27,8 @@
 
 (defun %e2e-transport-factory (options)
   (declare (ignore options))
-  (let ((nl (string #\Newline)))
+  (let ((nl (string #\Newline))
+        (long-token (concatenate 'string "unbroken-" (make-string 512 :initial-element #\x))))
     (make-instance 'e2e-fake-transport
                    :chunks
                    (list
@@ -36,6 +37,10 @@
                      nl)
                     (concatenate 'string
                      "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"e2e hello\"}],\"model\":\"fixture\"}}"
+                     nl
+                     "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"stream two: Unicode ✓\\nsecond line\"}],\"model\":\"fixture\"}}"
+                     nl
+                     (format nil "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"~A\"}],\"model\":\"fixture\"}}" long-token)
                      nl
                      "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"e2e-canon\",\"result\":\"ok\"}"
                      nl)))))
