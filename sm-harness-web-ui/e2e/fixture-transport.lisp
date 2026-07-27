@@ -3,12 +3,20 @@
 ;;;; Test/E2E-only deterministic SDK transport.  Never loaded by production UI.
 (defclass e2e-fake-transport (claude-agent-sdk-cl:client-transport)
   ((chunks :initarg :chunks :accessor e2e-chunks)
-   (writes :initform '() :accessor e2e-writes)))
+   (writes :initform '() :accessor e2e-writes)
+   (read-count :initform 0 :accessor e2e-read-count)
+   ;; Lets browser E2E observe the real busy/responding transition without
+   ;; arbitrary test-side sleeps.
+   (delay-before-second-read-seconds :initarg :delay-before-second-read-seconds
+                                     :initform 1
+                                     :accessor e2e-delay-before-second-read-seconds)))
 
 (defmethod claude-agent-sdk-cl:start-client-transport ((tport e2e-fake-transport) options)
   (declare (ignore options))
   tport)
 (defmethod claude-agent-sdk-cl:read-client-chunk ((tport e2e-fake-transport))
+  (when (= (incf (e2e-read-count tport)) 2)
+    (sleep (e2e-delay-before-second-read-seconds tport)))
   (pop (e2e-chunks tport)))
 (defmethod claude-agent-sdk-cl:write-client-input ((tport e2e-fake-transport) input)
   (push input (e2e-writes tport))
