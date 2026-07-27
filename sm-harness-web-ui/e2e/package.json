@@ -1,0 +1,7 @@
+{
+  "name": "sm-harness-web-ui-e2e",
+  "private": true,
+  "dependencies": {
+    "playwright": "1.49.1"
+  }
+}
