@@ -35,11 +35,13 @@
 
 (defun %json-decode-file (path)
   (when (probe-file path)
-    (with-open-file (in path :direction :input)
-      (let ((raw (make-string (file-length in))))
-        (read-sequence raw in)
-        (when (plusp (length raw))
-          (yason:parse raw))))))
+    (handler-case
+        (with-open-file (in path :direction :input)
+          (let ((raw (make-string (file-length in))))
+            (read-sequence raw in)
+            (when (plusp (length raw))
+              (yason:parse raw))))
+      (error () nil))))
 
 (defun %acquire-data-lock (root)
   "Best-effort exclusive lock via exclusive create of lock file held open."

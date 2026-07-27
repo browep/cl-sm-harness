@@ -19,3 +19,16 @@
              (is (string= "A" (sm-harness::session-record-title loaded)))))
       (sm-harness::close-session-repository repo)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test repository-recovers-from-corrupt-index
+  (let* ((root (temp-data-root))
+         (repo (sm-harness::open-session-repository :root root :project-key "p1")))
+    (unwind-protect
+         (progn
+           (with-open-file (out (sm-harness::%repo-index-path repo)
+                                :direction :output :if-does-not-exist :create
+                                :if-exists :supersede)
+             (write-string "{ broken json" out))
+           (is (null (sm-harness::repository-list-sessions repo))))
+      (sm-harness::close-session-repository repo)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
