@@ -14,6 +14,8 @@ RUN apt-get update \
       ca-certificates \
       curl \
       git \
+      build-essential \
+      libsqlite3-dev \
  && npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
  && useradd --create-home --uid 10001 --shell /usr/sbin/nologin app \
  && mkdir -p /cache /data /opt/quicklisp /app \
@@ -23,13 +25,15 @@ RUN apt-get update \
 
 USER app
 WORKDIR /home/app
+ENV HOME=/home/app
 RUN curl -fsSL https://beta.quicklisp.org/quicklisp.lisp -o /tmp/quicklisp.lisp \
  && sbcl --non-interactive \
       --load /tmp/quicklisp.lisp \
       --eval '(quicklisp-quickstart:install :path "/opt/quicklisp/")' \
-      --eval '(ql:add-to-init-file)' \
+      --eval '(load "/opt/quicklisp/setup.lisp")' \
       --eval '(ql:quickload :clog)' \
- && rm -f /tmp/quicklisp.lisp
+ && rm -f /tmp/quicklisp.lisp \
+ && printf '%s\n' '(load "/opt/quicklisp/setup.lisp")' > /home/app/.sbclrc
 
 USER root
 COPY --chown=app:app claude-agent-sdk-cl.asd /app/claude-agent-sdk-cl.asd
@@ -40,7 +44,7 @@ COPY sm-harness-web-ui/docker/entrypoint.sh /usr/local/bin/sm-harness-web-ui-ent
 RUN chmod 0755 /usr/local/bin/sm-harness-web-ui-entrypoint \
  && mkdir -p /app/static \
  && cp -a /app/sm-harness-web-ui/static/. /app/static/ \
- && chown -R app:app /app
+ && chown -R app:app /app /home/app
 
 USER app
 WORKDIR /app
