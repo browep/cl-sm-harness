@@ -88,6 +88,8 @@ async function newChatAndComposer(browser) {
   await prompt.press('Enter');
   await waitForDisabled(page, '#send', true);
   await waitForDisabled(page, '#stop', false);
+  await page.locator('#status-chip').getByText('Responding', { exact: true })
+    .waitFor({ state: 'visible', timeout: 15000 });
   await page.locator('.msg-user').getByText('hello e2e', { exact: true }).waitFor({ state: 'visible' });
   await page.locator('.msg-assistant').getByText('e2e hello', { exact: true }).waitFor({ state: 'visible', timeout: 15000 });
   await page.locator('#status-chip').getByText('Ready', { exact: true }).waitFor({ state: 'visible' });
@@ -95,6 +97,24 @@ async function newChatAndComposer(browser) {
   assert.equal(await page.locator('.msg-user').count(), 1);
   assert.equal(await prompt.inputValue(), '');
   assert.equal(await page.evaluate(() => document.activeElement?.id), 'prompt');
+
+  // Canonical identity is persisted to the harness repository and exposed on Home.
+  await page.locator('#back-home').click();
+  await page.locator('#home-root').waitFor({ state: 'visible', timeout: 15000 });
+  const row = page.locator('.session-row');
+  await row.waitFor({ state: 'visible', timeout: 15000 });
+  assert.equal(await row.count(), 1);
+  await row.getByText(/New session — Ready — e2e-canon/).waitFor({ state: 'visible' });
+
+  // Reopening the persisted row restores its displayed canonical identity/transcript.
+  await row.click();
+  await page.locator('#chat-root').waitFor({ state: 'visible', timeout: 15000 });
+  await page.locator('#canonical-id').getByText('e2e-canon', { exact: true })
+    .waitFor({ state: 'visible' });
+  await page.locator('.msg-user').getByText('hello e2e', { exact: true })
+    .waitFor({ state: 'visible' });
+  await page.locator('.msg-assistant').getByText('e2e hello', { exact: true })
+    .waitFor({ state: 'visible' });
 
   await completeEvidence(scenario, 'completed-turn');
 }
