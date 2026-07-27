@@ -1,0 +1,35 @@
+{
+  "source": {
+    "upstream_commit": "3145cc637778b23cb3caff7556ab76a10028b084",
+    "pytest_node": "tests/test_sdk_mcp_integration.py::test_sdk_mcp_server_handlers",
+    "symbol": "claude_agent_sdk.create_sdk_mcp_server"
+  },
+  "server_config": {
+    "type": "sdk",
+    "name": "test"
+  },
+  "qualified_tool_name": "mcp__test__echo",
+  "tool": {
+    "name": "echo",
+    "description": "Echo back the input text",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ]
+    }
+  },
+  "call_result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Echo: value"
+      }
+    ]
+  }
+}

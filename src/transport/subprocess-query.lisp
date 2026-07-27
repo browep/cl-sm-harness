@@ -78,6 +78,20 @@ Always selects Claude Code's bidirectional stream-json protocol."
     (when (agent-options-disallowed-tools options)
       (setf arguments (append arguments (list "--disallowedTools"
                                               (format nil "~{~A~^,~}" (agent-options-disallowed-tools options))))))
+    ;; Availability is separate from allowed/disallowed permission policy.
+    ;; Omit :DEFAULT to preserve the legacy CLI default exactly.
+    (unless (eq (agent-options-builtin-tools options) :default)
+      (setf arguments (append arguments
+                             (list "--tools"
+                                   (builtin-tools->cli-value
+                                    (agent-options-builtin-tools options))))))
+    (when (agent-options-sdk-mcp-servers options)
+      (setf arguments (append arguments
+                             (list "--mcp-config"
+                                   (sdk-mcp-config-json
+                                    (agent-options-sdk-mcp-servers options))))))
+    (when (agent-options-strict-mcp-config options)
+      (setf arguments (append arguments (list "--strict-mcp-config"))))
     (when (agent-options-model options)
       (setf arguments (append arguments (list "--model" (agent-options-model options)))))
     (when (agent-options-permission-mode options)

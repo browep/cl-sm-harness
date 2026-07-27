@@ -270,6 +270,20 @@ Ship linked child issues and documented slices in this order:
    adapter only after generic store conformance is stable. It uses a configured,
    traversal-safe root and deterministic fixture directories; it is the sole
    Phase 7D backend and requires no service container or credentials.
+5. **Session-start in-process SDK MCP tools.** **Complete as Phase 7E/#20:**
+   validated `sdk-tool`/`sdk-mcp-server` catalogs, metadata-only `--mcp-config`,
+   explicit built-in availability (`--tools`) and ambient MCP isolation
+   (`--strict-mcp-config`), plus synchronous consumer-driven `initialize`,
+   `tools/list`, and `tools/call` dispatch through the existing serialized
+   control-response path. Deterministic fixtures cover catalog metadata,
+   persistent control routing, handler failures, policy/shadowing rejection,
+   resume reconfiguration, and a fake-CLI subprocess. Catalogs are frozen at
+   session start and must be supplied again to replacement/resumed clients.
+   Provenance: pinned upstream `tests/test_sdk_mcp_integration.py` and
+   `create_sdk_mcp_server` behavior at
+   `3145cc637778b23cb3caff7556ab76a10028b084`. V1 deliberately excludes
+   asynchronous handlers, schema inference, annotations, binary/size-managed
+   result content, and external stdio/SSE/HTTP MCP transports.
 
 Redis, Postgres, MinIO/S3-compatible, and other remote adapters are explicitly
 out of Phase 7. They belong to a separately tracked future integration ticket
@@ -299,6 +313,7 @@ docker compose run --rm test parity
 CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live
 CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-client
 CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-terminate
+CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-mcp
 ```
 
 These are the required target commands; the Docker harness will introduce them in Phase 1.

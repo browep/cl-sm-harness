@@ -71,6 +71,12 @@ exit path (success/EOF, malformed JSON/error, cancellation), each exactly once."
     (signal-sdk-input-error "query prompt must be a string"))
   (when (and (null transport) options (not (typep options 'agent-options)))
     (signal-sdk-input-error "options must be an agent-options instance or NIL"))
+  ;; One-shot query has no inbound control loop, so accepting an SDK-hosted
+  ;; server would advertise tools whose calls can never be serviced.
+  (when (and (typep options 'agent-options)
+             (agent-options-sdk-mcp-servers options))
+    (signal-sdk-input-error
+     "SDK MCP tools require a persistent claude-sdk-client; query has no control loop"))
   (let* ((effective-options (if transport options (or options (make-agent-options))))
          (effective-transport
            (or transport

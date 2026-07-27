@@ -8,6 +8,10 @@
   model
   system-prompt
   resume
+  ;; Availability is intentionally separate from allowed/disallowed permission policy.
+  (builtin-tools :default)
+  (sdk-mcp-servers '() :type list)
+  (strict-mcp-config nil :type boolean)
   ;; Phase 7B configuration only; the generic store protocol arrives in 7C.
   session-store
   (session-store-list-sessions-p nil :type boolean)
@@ -81,10 +85,16 @@ OPERATION is one of :RENAME, :TAG, :DELETE, or :FORK."
 
 (defun make-agent-options (&key (allowed-tools '()) (disallowed-tools '()) permission-mode
                                (continue-conversation nil) model system-prompt resume
+                               (builtin-tools :default) (sdk-mcp-servers '())
+                               (strict-mcp-config nil)
                                session-store (session-store-list-sessions-p nil)
                                (enable-file-checkpointing nil) session-path)
   (%string-list-or-error allowed-tools "allowed-tools")
   (%string-list-or-error disallowed-tools "disallowed-tools")
+  (setf builtin-tools (%normalize-builtin-tools builtin-tools))
+  (%validate-sdk-mcp-servers sdk-mcp-servers)
+  (unless (typep strict-mcp-config 'boolean)
+    (signal-sdk-input-error "strict-mcp-config must be boolean"))
   (when (and permission-mode (not (stringp permission-mode)))
     (signal-sdk-input-error "permission-mode must be a string or NIL"))
   (when (and model (not (stringp model)))
@@ -96,10 +106,22 @@ OPERATION is one of :RENAME, :TAG, :DELETE, or :FORK."
                        :permission-mode permission-mode
                        :continue-conversation continue-conversation
                        :model model :system-prompt system-prompt :resume resume
+                       :builtin-tools builtin-tools
+                       ;; A catalog is session-start configuration: freeze schemas and
+                       ;; handlers now, before a default transport can be constructed.
+                       :sdk-mcp-servers (mapcar #'snapshot-sdk-mcp-server sdk-mcp-servers)
+                       :strict-mcp-config strict-mcp-config
                        :session-store session-store
                        :session-store-list-sessions-p session-store-list-sessions-p
                        :enable-file-checkpointing enable-file-checkpointing
                        :session-path session-path))
+
+(defun agent-options->mcp-config (options)
+  "Return the metadata-only CLI MCP configuration for OPTIONS.
+SDK tool schemas and Lisp handlers are served later over mcp_message."
+  (unless (typep options 'agent-options)
+    (signal-sdk-input-error "options must be an agent-options instance"))
+  (sdk-mcp-servers->cli-config (agent-options-sdk-mcp-servers options)))
 
 (defun agent-options->wire (options)
   (let ((wire (make-hash-table :test #'equal)))

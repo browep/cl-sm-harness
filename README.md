@@ -9,7 +9,7 @@ Provide an idiomatic Common Lisp interface to the installed **Claude Code CLI**:
 - one-shot, streamed `query` requests;
 - stateful interactive conversations through a client API;
 - typed messages, options, result/error conditions, and deterministic resource cleanup;
-- future support for SDK MCP tools, callbacks/hooks, and session helpers.
+- in-process SDK MCP tools, callbacks/hooks, and session helpers.
 
 This project is **not** a direct Anthropic Messages API client and does not reimplement Claude Code. The runtime boundary is Common Lisp ↔ Claude Code CLI over the CLI's JSONL/control protocol.
 
@@ -85,6 +85,7 @@ docker compose run --rm test integration
 CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live
 CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-client
 CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-terminate
+CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-mcp
 ```
 
 Phase 1 implements the offline `unit` command. Phase 2 adds `parity`: it compares the checked-in classification manifest with a catalog generated from the pinned upstream Python source in a separate credential-free Docker stage. It builds a pinned Node base image with SBCL, FiveAM, and Claude Code CLI `2.1.219`; exact resolved runtime versions are retained in `/usr/local/share/claude-agent-sdk-cl/runtime-versions.txt` in the image. The `test` service has network disabled, mounts source read-only, and uses a named `/cache` volume for compiled artifacts.
@@ -171,6 +172,76 @@ receives input, tool-use ID, and context) or `register-sdk-mcp-handler` (server
 name; function receives JSON-RPC message). Both registrations are validated and
 frozen once `connect` succeeds.
 
+### Session-start SDK MCP tools (Phase 7E)
+
+SDK MCP tools are **persistent-client-only**. A tool definition and its Lisp
+handler stay in the application process; `--mcp-config` receives only SDK server
+metadata. Configure the catalog before `connect`:
+
+```lisp
+(let* ((lookup-order
+         (make-sdk-tool
+          :name "lookup_order"
+          :description "Look up one order by ID."
+          :input-schema (let ((schema (make-hash-table :test #'equal)))
+                          (setf (gethash "type" schema) "object"
+                                (gethash "properties" schema)
+                                (let ((properties (make-hash-table :test #'equal)))
+                                  (setf (gethash "order_id" properties)
+                                        (let ((field (make-hash-table :test #'equal)))
+                                          (setf (gethash "type" field) "string")
+                                          field))
+                                  properties))
+                          schema)
+          :handler (lambda (arguments context)
+                     (declare (ignore context))
+                     (make-sdk-tool-result
+                      :text (format nil "order ~A" (gethash "order_id" arguments))))))
+       (server (make-sdk-mcp-server :name "orders" :tools (list lookup-order)))
+       (options (make-agent-options
+                 ;; Availability: no Claude Code built-ins, only this catalog.
+                 :builtin-tools :none
+                 :sdk-mcp-servers (list server)
+                 ;; Exclude user/project/plugin MCP configuration.
+                 :strict-mcp-config t
+                 ;; Permission / auto-approval policy remains separate.
+                 :allowed-tools '("mcp__orders__lookup_order")))
+       (client (make-claude-sdk-client :options options)))
+  (unwind-protect
+       (progn (connect client) (send client "Look up order 42")
+              (receive-response client))
+    (disconnect client)))
+```
+
+`:builtin-tools` controls Claude Code built-in **availability**: use `:default`,
+`:none`, or a non-empty explicit list. `:sdk-mcp-servers` adds in-process SDK
+tools; `:strict-mcp-config t` excludes ambient external MCP configuration. These
+source controls are distinct from `:allowed-tools`, `:disallowed-tools`, and
+`can_use_tool`, which remain invocation permission/auto-approval policy. SDK
+MCP names are qualified on the CLI wire as `mcp__<server>__<tool>`; v1 does not
+silently shadow built-ins or generic `mcp_message` handlers.
+
+Handlers are synchronous and serialized on the consumer-driven persistent
+control path. They are caller-owned application code, are not sandboxed, and
+must return `sdk-tool-result` text or JSON-compatible MCP content. v1 does not
+provide concurrent/async handlers, external stdio/SSE/HTTP MCP transports,
+binary or size-managed results, or schema inference. Handler errors are mapped
+to a safe JSON-RPC internal error without exposing condition text.
+
+Catalog configuration is frozen when `make-agent-options` returns and is not
+persisted by a Claude session ID. A replacement client using `:resume` must
+supply its SDK catalog again. One-shot `query` rejects SDK MCP tools because it
+cannot service inbound control requests. Consumers can render typed lifecycle
+information through `tool-use-block-id`, `tool-use-block-name`,
+`tool-use-block-input`, `tool-result-block-tool-use-id`,
+`tool-result-block-content`, and `tool-result-block-is-error`.
+
+The real CLI discovery/call smoke is separately authorization-gated:
+
+```bash
+CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-mcp
+```
+
 Handlers may return a JSON hash table, `permission-result-allow`,
 `permission-result-deny`, `hook-callback-result`, `mcp-control-result`, or
 `:cancel`. Missing handlers, invalid results, cancellation, exceptions, and
@@ -201,7 +272,7 @@ traversal-unsafe values. `make-session-import-plan` and
 `make-session-mutation-plan` create validated, side-effect-free plans; actual
 store persistence and transcript mirroring are Phase 7C.
 
-Offline tests remain credential-free and network-isolated. The one-shot smoke is `test.sh live`; the separately gated interactive two-turn smoke is `test.sh live-client`. Both require `CLAUDE_SDK_LIVE_TEST=1` and run only in the credential-scoped `live` Compose service. The interactive smoke was verified on 2026-07-26 with two exact fixed replies and two terminal `success` results.
+Offline tests remain credential-free and network-isolated. The one-shot smoke is `test.sh live`; the separately gated interactive two-turn smoke is `test.sh live-client`; process-tree termination is `test.sh live-terminate`; SDK MCP discovery/invocation is `test.sh live-mcp`. All require `CLAUDE_SDK_LIVE_TEST=1` and run only in the credential-scoped `live` Compose service. The interactive smoke was verified on 2026-07-26 with two exact fixed replies and two terminal `success` results.
 
 See GitHub [issue #1](https://github.com/browep/claude-agent-sdk-cl/issues/1) and [PLAN.md](PLAN.md).
 

@@ -171,6 +171,47 @@ case "${1:-ok}" in
       "$(ps -o sid= -p "$$" | tr -d ' ')" >"$identity_file"
     exec sleep 60
     ;;
+  mcp-client-smoke)
+    # End-to-end persistent SDK MCP fixture. Validate metadata-only CLI config,
+    # then exercise the existing correlated mcp_message control plane.
+    tools_seen=false
+    strict_seen=false
+    mcp_config=
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --tools)
+          [ "${2-}" = "" ] || { printf '%s\n' 'mcp smoke expected --tools empty' >&2; exit 64; }
+          tools_seen=true; shift 2 ;;
+        --strict-mcp-config) strict_seen=true; shift ;;
+        --mcp-config) mcp_config=${2-}; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    "$tools_seen" && "$strict_seen" && [ -n "$mcp_config" ] || {
+      printf '%s\n' 'mcp smoke missing source-policy argv' >&2; exit 64;
+    }
+    printf '%s' "$mcp_config" | node -e '
+      let s=""; process.stdin.on("data", c => s += c).on("end", () => {
+        const config = JSON.parse(s); const server = config.mcpServers && config.mcpServers.orders;
+        if (!server || server.type !== "sdk" || server.name !== "orders" ||
+            Object.keys(server).length !== 2 || s.includes("lookup-order") || s.includes("#<")) process.exit(64);
+      });' || { printf '%s\n' 'mcp smoke invalid metadata config' >&2; exit 64; }
+    IFS= read -r line || exit 0
+    request_id=$(printf '%s' "$line" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+    printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s"}}\n' "$request_id"
+    IFS= read -r line || exit 0
+    printf '%s\n' '{"type":"control_request","request_id":"mcp-init","request":{"subtype":"mcp_message","server_name":"orders","message":{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}}}'
+    IFS= read -r line || exit 0
+    printf '%s' "$line" | grep -F '"request_id":"mcp-init"' | grep -F '"protocolVersion":"2024-11-05"' >/dev/null || exit 64
+    printf '%s\n' '{"type":"control_request","request_id":"mcp-list","request":{"subtype":"mcp_message","server_name":"orders","message":{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}}}'
+    IFS= read -r line || exit 0
+    printf '%s' "$line" | grep -F '"request_id":"mcp-list"' | grep -F '"name":"lookup-order"' >/dev/null || exit 64
+    printf '%s\n' '{"type":"control_request","request_id":"mcp-call","request":{"subtype":"mcp_message","server_name":"orders","message":{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"lookup-order","arguments":{"order_id":"42"}}}}}'
+    IFS= read -r line || exit 0
+    printf '%s' "$line" | grep -F '"request_id":"mcp-call"' | grep -F '"text":"order 42"' >/dev/null || exit 64
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"mcp subprocess complete"}]}}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"num_turns":1,"session_id":"s","result":"mcp done"}'
+    ;;
   descendant-wait|client-descendant-wait)
     # Spawn a pipe-detached synthetic descendant and record only its PID. The
     # parent waits forever, so transport timeout/close must terminate both.

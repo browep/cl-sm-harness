@@ -152,7 +152,7 @@
     {
       "path": "tests/test_sdk_mcp_integration.py",
       "state": "deferred",
-      "rationale": "SDK behavior is not implemented in the bootstrap target; this contract is assigned to a later parity slice.",
+      "rationale": "Phase 7E ports the deterministic in-process tools-only subset through its classified public exports and fixture. The remaining upstream file covers annotations, Python type-schema conversion, binary/large content, and external MCP behavior that this slice explicitly defers.",
       "lisp_symbol": null,
       "lisp_test": null,
       "vectors": []
@@ -1367,29 +1367,29 @@
     {
       "module": "claude_agent_sdk",
       "name": "create_sdk_mcp_server",
-      "state": "deferred",
-      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
-      "lisp_symbol": null,
-      "lisp_test": null,
-      "vectors": []
+      "state": "ported",
+      "rationale": "Idiomatic Common Lisp constructor for the pinned upstream in-process SDK MCP server configuration.",
+      "lisp_symbol": "claude-agent-sdk-cl:make-sdk-mcp-server",
+      "lisp_test": "claude-agent-sdk-cl/tests::pinned-upstream-sdk-mcp-fixture-matches-lisp-catalog-and-router",
+      "vectors": ["test/fixtures/upstream/mcp/sdk-mcp-tools.json"]
     },
     {
       "module": "claude_agent_sdk",
       "name": "tool",
-      "state": "deferred",
-      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
-      "lisp_symbol": null,
-      "lisp_test": null,
-      "vectors": []
+      "state": "ported",
+      "rationale": "Idiomatic Common Lisp uses an explicit validated constructor rather than a decorator to define a synchronous in-process SDK tool.",
+      "lisp_symbol": "claude-agent-sdk-cl:make-sdk-tool",
+      "lisp_test": "claude-agent-sdk-cl/tests::pinned-upstream-sdk-mcp-fixture-matches-lisp-catalog-and-router",
+      "vectors": ["test/fixtures/upstream/mcp/sdk-mcp-tools.json"]
     },
     {
       "module": "claude_agent_sdk",
       "name": "SdkMcpTool",
-      "state": "deferred",
-      "rationale": "The Common Lisp bootstrap does not yet expose this upstream public contract; it is deferred to its documented implementation slice.",
-      "lisp_symbol": null,
-      "lisp_test": null,
-      "vectors": []
+      "state": "ported",
+      "rationale": "Idiomatic Common Lisp SDK tool structure with validated metadata and synchronous handler.",
+      "lisp_symbol": "claude-agent-sdk-cl:sdk-tool",
+      "lisp_test": "claude-agent-sdk-cl/tests::sdk-tool-and-server-validate-public-contract",
+      "vectors": ["test/fixtures/upstream/mcp/sdk-mcp-tools.json"]
     },
     {
       "module": "claude_agent_sdk",
@@ -1483,6 +1483,17 @@
       },
       "generation_command": "docker compose run --rm reference --phase3-fixtures /out",
       "target_lisp_test": "claude-agent-sdk-cl/tests::typed-conditions-remain-distinct"
+    },
+    {
+      "path": "test/fixtures/upstream/mcp/sdk-mcp-tools.json",
+      "sha256": "048e56f14e44fcc45b5374f2e6a1b9f28eb54fca3b5a1e83081e858bc70a60e1",
+      "upstream_commit": "3145cc637778b23cb3caff7556ab76a10028b084",
+      "source": {
+        "pytest_node": "tests/test_sdk_mcp_integration.py::test_sdk_mcp_server_handlers",
+        "symbol": "claude_agent_sdk.create_sdk_mcp_server"
+      },
+      "generation_command": "docker compose run --rm reference --phase3-fixtures /out",
+      "target_lisp_test": "claude-agent-sdk-cl/tests::pinned-upstream-sdk-mcp-fixture-matches-lisp-catalog-and-router"
     }
   ]
 }

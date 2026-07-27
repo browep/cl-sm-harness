@@ -22,6 +22,19 @@
     (is (string= "Hello" (claude-agent-sdk-cl::text-block-text (first (claude-agent-sdk-cl::assistant-message-content message)))))
     (is (gethash "futureField" (claude-agent-sdk-cl::message-extra message)))))
 
+(test public-tool-block-readers-expose-safe-lifecycle-fields
+  (let* ((tool-use (make-instance 'claude-agent-sdk-cl:tool-use-block
+                                  :id "tu-1" :name "mcp__orders__lookup"
+                                  :input (make-wire-object "order_id" "42")))
+         (tool-result (make-instance 'claude-agent-sdk-cl:tool-result-block
+                                     :tool-use-id "tu-1" :content "order 42" :is-error nil)))
+    (is (string= "tu-1" (claude-agent-sdk-cl:tool-use-block-id tool-use)))
+    (is (string= "mcp__orders__lookup" (claude-agent-sdk-cl:tool-use-block-name tool-use)))
+    (is (string= "42" (gethash "order_id" (claude-agent-sdk-cl:tool-use-block-input tool-use))))
+    (is (string= "tu-1" (claude-agent-sdk-cl:tool-result-block-tool-use-id tool-result)))
+    (is (string= "order 42" (claude-agent-sdk-cl:tool-result-block-content tool-result)))
+    (is (null (claude-agent-sdk-cl:tool-result-block-is-error tool-result)))))
+
 (test malformed-message-signals-cli-json-error
   (signals claude-agent-sdk-cl::cli-json-error
     (claude-agent-sdk-cl::decode-message (make-wire-object "type" "assistant" "message" "not-an-object"))))

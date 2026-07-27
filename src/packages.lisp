@@ -9,6 +9,14 @@
            #:agent-options-disallowed-tools #:agent-options-permission-mode
            #:agent-options-continue-conversation #:agent-options-model
            #:agent-options-system-prompt #:agent-options-resume
+           #:agent-options-builtin-tools #:agent-options-sdk-mcp-servers
+           #:agent-options-strict-mcp-config #:agent-options->mcp-config
+           #:sdk-tool #:make-sdk-tool #:sdk-tool-name #:sdk-tool-description
+           #:sdk-tool-input-schema #:sdk-tool-handler
+           #:sdk-mcp-server #:make-sdk-mcp-server #:sdk-mcp-server-name
+           #:sdk-mcp-server-version #:sdk-mcp-server-tools
+           #:sdk-tool-result #:make-sdk-tool-result #:sdk-tool-result-text
+           #:sdk-tool-result-content #:sdk-tool-result-is-error
            #:normalize-session-id #:normalize-session-path
            #:session-import-plan #:make-session-import-plan #:session-import-plan-session-id #:session-import-plan-path
            #:session-mutation-plan #:make-session-mutation-plan #:session-mutation-plan-operation
@@ -20,7 +28,10 @@
            #:session-store-mirror-message
            #:message #:user-message #:assistant-message #:message-extra
            #:assistant-message-content #:assistant-message-model
-           #:text-block #:text-block-text #:thinking-block #:tool-use-block #:tool-result-block
+           #:text-block #:text-block-text #:thinking-block #:tool-use-block
+           #:tool-use-block-id #:tool-use-block-name #:tool-use-block-input
+           #:tool-result-block #:tool-result-block-tool-use-id #:tool-result-block-content
+           #:tool-result-block-is-error
            #:decode-message #:decode-permission-update #:permission-update #:permission-update-type
            #:permission-update->wire
            #:result-message #:decode-result-message

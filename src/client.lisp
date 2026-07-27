@@ -32,6 +32,10 @@
    ;; subtypes without requiring applications to parse raw control envelopes.
    (hook-callbacks :initform nil :accessor client-hook-callbacks)
    (mcp-handlers :initform nil :accessor client-mcp-handlers)
+   ;; Session-start SDK catalogs own these names for the client lifetime. Public
+   ;; ad-hoc registration must not silently replace an advertised tool server.
+   (configured-sdk-mcp-server-names :initform nil
+                                    :accessor client-configured-sdk-mcp-server-names)
    ;; Inbound request IDs are one-shot. Retaining them for this connection makes
    ;; duplicate CLI deliveries deterministic instead of rerunning callbacks.
    (handled-control-requests :initform (make-hash-table :test #'equal)
@@ -62,6 +66,12 @@ handler cannot change while its request is being synchronously serviced."
     (signal-sdk-input-error "control handler subtype must be a string"))
   (unless (functionp function)
     (signal-sdk-input-error "control handler must be a function"))
+  ;; A generic handler is routed before named MCP server handlers. A session
+  ;; catalog therefore reserves this subtype for its generated server routes.
+  (when (and (string= subtype "mcp_message")
+             (client-configured-sdk-mcp-server-names client))
+    (signal-sdk-input-error
+     "cannot register generic mcp_message handler with a session-configured SDK MCP catalog"))
   (%require-client-state client :register-control-handler '(:new))
   (setf (client-control-handlers client)
         (acons subtype function
@@ -93,7 +103,11 @@ HOOK-CALLBACK-RESULT, a JSON hash table, or :CANCEL."
 (defun register-sdk-mcp-handler (client server-name function)
   "Register FUNCTION for SDK MCP messages addressed to SERVER-NAME.
 FUNCTION receives the decoded JSON-RPC message and returns an MCP-CONTROL-RESULT
-or raw JSON object."
+or raw JSON object. Session-start SDK catalogs own their configured names."
+  (when (member server-name (client-configured-sdk-mcp-server-names client)
+                :test #'equal)
+    (signal-sdk-input-error
+     "cannot replace a session-configured SDK MCP server handler"))
   (%register-named-control-handler client #'client-mcp-handlers server-name function
                                    :register-sdk-mcp-handler))
 
@@ -106,12 +120,32 @@ subprocess using explicit CLI-PATH first and PATH discovery second."
     (signal-sdk-input-error "client options must be an agent-options instance or NIL"))
   (let ((effective-options (or options (make-agent-options))))
     (%validate-control-handlers control-handlers)
-    (make-instance 'claude-sdk-client
-                   :options effective-options
-                   :control-handlers control-handlers
-                   :transport (or transport
-                                  (make-default-client-transport
-                                   effective-options cli-path timeout)))))
+    ;; A direct subtype handler wins router precedence over the named MCP
+    ;; registry. Refuse that ambiguous configuration before transport startup.
+    (when (and (agent-options-sdk-mcp-servers effective-options)
+               (assoc "mcp_message" control-handlers :test #'equal))
+      (signal-sdk-input-error
+       "cannot combine session-configured SDK MCP servers with a generic mcp_message control handler"))
+    (let ((client
+            (make-instance 'claude-sdk-client
+                           :options effective-options
+                           :control-handlers control-handlers
+                           :transport (or transport
+                                          (make-default-client-transport
+                                           effective-options cli-path timeout)))))
+      ;; Session-start SDK catalogs are registered before any transport exists,
+      ;; then frozen by CONNECT with all other control callback configuration.
+      ;; Install with the private helper, then reserve the names so later public
+      ;; registration cannot replace an advertised catalog handler.
+      (dolist (server (agent-options-sdk-mcp-servers effective-options))
+        (%register-named-control-handler client #'client-mcp-handlers
+                                         (sdk-mcp-server-name server)
+                                         (make-sdk-mcp-handler server)
+                                         :register-sdk-mcp-handler))
+      (setf (client-configured-sdk-mcp-server-names client)
+            (mapcar #'sdk-mcp-server-name
+                    (agent-options-sdk-mcp-servers effective-options)))
+      client)))
 
 (defun %require-client-state (client operation allowed)
   (unless (member (client-state client) allowed)
