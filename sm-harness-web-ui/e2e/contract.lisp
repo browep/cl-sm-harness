@@ -18,13 +18,15 @@
         (e2e-turn-identity-scenario)
         (e2e-streaming-layout-scenario)
         (e2e-errors-recovery-scenario)
-        (e2e-safe-rendering-scenario)))
+        (e2e-safe-rendering-scenario)
+        (e2e-accessibility-scenario)))
 
 (defparameter +e2e-supported-ops+
   '("assert_text_count" "wait" "wait_text" "assert_text" "assert_title"
     "focus" "assert_active_id" "press" "assert_disabled" "fill" "click"
     "wait_pattern" "assert_value" "assert_input_pattern" "assert_count"
-    "wait_disabled" "assert_text_order" "assert_overflow_fits"))
+    "wait_disabled" "assert_text_order" "assert_overflow_fits"
+    "assert_attribute"))
 
 (defun validate-e2e-contract (contract)
   (let ((names (make-hash-table :test #'equal)))

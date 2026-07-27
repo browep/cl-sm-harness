@@ -27,7 +27,8 @@
                              (:file "turn-identity")
                              (:file "streaming-layout")
                              (:file "errors-recovery")
-                             (:file "safe-rendering")))))
+                             (:file "safe-rendering")
+                             (:file "accessibility")))))
 
 (asdf:defsystem #:sm-harness-web-ui/e2e
   :description "Test-only deterministic SDK transport for browser E2E"

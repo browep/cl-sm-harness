@@ -42,6 +42,7 @@ async function executeStep(page, step) {
       }
       return;
     }
+    case 'assert_attribute': return assert.equal(await target().getAttribute(step.name), step.value);
     case 'assert_overflow_fits': return assert.equal(await target().evaluate((node) => node.scrollWidth <= node.clientWidth), true);
     default: throw new Error(`unsupported E2E contract op: ${step.op}`);
   }

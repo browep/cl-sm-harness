@@ -30,6 +30,15 @@
          (busy nil)
          (pending-prompt nil))
     (declare (ignore title-el))
+    (setf (clog:attribute root "role") "main"
+          (clog:attribute status-el "role") "status"
+          (clog:attribute status-el "aria-live") "polite"
+          (clog:attribute transcript "role") "log"
+          (clog:attribute transcript "aria-label") "Conversation transcript"
+          (clog:attribute transcript "aria-live") "polite"
+          (clog:attribute err "role") "alert"
+          (clog:attribute err "aria-live") "assertive"
+          (clog:attribute input "aria-label") "Message")
     (labels ((add-line (role text)
       (let ((line (clog:create-div transcript
                                    :class (format nil "msg msg-~A" role))))
@@ -73,7 +82,8 @@
           (declare (ignore obj))
           (when listener-id (ui-detach session-id listener-id))
           (clear-body body)
-          (render-home body)))
+          (render-home body)
+          (clog:js-execute body "document.getElementById('new-session').focus()")))
       (clog:set-on-click send-btn
         (lambda (obj)
           (declare (ignore obj))

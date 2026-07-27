@@ -14,6 +14,9 @@
          (status (clog:create-div root :class "status" :html-id "home-status"
                                   :content "Loading…")))
     (declare (ignore _title))
+    (setf (clog:attribute root "role") "main"
+          (clog:attribute list-region "role") "region"
+          (clog:attribute list-region "aria-label") "Sessions")
     (clog:set-on-click new-btn
       (lambda (obj)
         (declare (ignore obj))
