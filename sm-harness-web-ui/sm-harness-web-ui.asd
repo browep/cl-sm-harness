@@ -15,6 +15,12 @@
                  (:file "ui/chat")
                  (:file "application")))))
 
+(asdf:defsystem #:sm-harness-web-ui/e2e
+  :description "Test-only deterministic SDK transport for browser E2E"
+  :depends-on (#:sm-harness-web-ui)
+  :serial t
+  :components ((:file "e2e/fixture-transport")))
+
 (asdf:defsystem #:sm-harness-web-ui/presenter-tests
   :description "Presenter-only tests (no CLOG runtime required)"
   :depends-on (#:sm-harness #:fiveam)

@@ -69,7 +69,7 @@
   (when (session-runtime-client rt)
     (return-from %ensure-client (session-runtime-client rt)))
   (let* ((cfg (harness-config harness))
-         (catalog (default-tool-catalog))
+         (catalog (harness-catalog harness))
          (policy (harness-policy harness))
          (options (build-agent-options catalog policy
                                        :resume resume
@@ -81,8 +81,7 @@
                                   :transport transport
                                   :cli-path (harness-config-cli-path cfg)
                                   :control-handlers handlers)))
-    (setf (session-runtime-client rt) client
-          (harness-catalog harness) catalog)
+    (setf (session-runtime-client rt) client)
     (%set-status rt :connecting)
     (connect-client client)
     (%set-status rt :ready)

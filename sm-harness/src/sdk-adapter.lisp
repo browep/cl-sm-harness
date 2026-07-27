@@ -2,11 +2,42 @@
 
 ;;;; Sole production boundary that calls claude-agent-sdk-cl exports.
 
+(defun %sdk-tool-from-definition (definition)
+  (claude-agent-sdk-cl:make-sdk-tool
+   :name (tool-definition-name definition)
+   :description (tool-definition-description definition)
+   :input-schema (tool-definition-input-schema definition)
+   :handler (lambda (arguments context)
+              (let ((result (funcall (tool-definition-handler definition)
+                                     arguments context)))
+                (claude-agent-sdk-cl:make-sdk-tool-result
+                 :text (princ-to-string result))))))
+
+(defun %sdk-server-from-definition (server)
+  (claude-agent-sdk-cl:make-sdk-mcp-server
+   :name (tool-server-definition-name server)
+   :version (tool-server-definition-version server)
+   :tools (mapcar #'%sdk-tool-from-definition
+                  (tool-server-definition-tools server))))
+
+(defun %sdk-catalog (catalog)
+  (mapcar #'%sdk-server-from-definition (tool-catalog-servers catalog)))
+
+(defun %can-use-tool-handler (policy)
+  "Adapt product policy data to the SDK's permission-result protocol."
+  (lambda (request)
+    (let ((decision (tool-permission-decision policy request)))
+      (if (getf decision :allow)
+          (claude-agent-sdk-cl:make-permission-result-allow)
+          (claude-agent-sdk-cl:make-permission-result-deny
+           :message (getf decision :message)
+           :interrupt nil)))))
+
 (defun build-agent-options (catalog policy &key resume model)
   "Map harness catalog/policy to merged session-start SDK options."
   (claude-agent-sdk-cl:make-agent-options
    :builtin-tools (tool-policy-builtin-tools policy)
-   :sdk-mcp-servers catalog
+   :sdk-mcp-servers (%sdk-catalog catalog)
    :strict-mcp-config (tool-policy-strict-mcp-p policy)
    :allowed-tools (tool-policy-allowed-tools policy)
    :disallowed-tools (tool-policy-disallowed-tools policy)

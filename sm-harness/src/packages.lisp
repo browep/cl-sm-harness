@@ -21,5 +21,10 @@
    #:default-tool-catalog #:default-tool-policy
    #:make-tool-policy #:tool-policy-builtin-tools #:tool-policy-strict-mcp-p
    #:tool-policy-allowed-tools #:tool-policy-disallowed-tools
+   #:tool-catalog #:tool-catalog-servers
+   #:tool-server-definition #:tool-server-definition-name #:tool-server-definition-version
+   #:tool-server-definition-tools
+   #:tool-definition #:tool-definition-name #:tool-definition-description
+   #:tool-definition-input-schema #:tool-definition-handler
    #:harness-error #:harness-error-message
    #:harness-input-error #:harness-state-error #:harness-not-found-error))

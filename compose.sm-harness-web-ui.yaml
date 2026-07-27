@@ -32,19 +32,25 @@ services:
       SM_HARNESS_HOST: 0.0.0.0
       SM_HARNESS_PORT: "8080"
       WEB_UI_E2E: "1"
+      CL_SOURCE_REGISTRY: /app//
     volumes:
       - sm-harness-e2e-data:/data
       - sm-harness-cache:/cache
+      - ./claude-agent-sdk-cl.asd:/app/claude-agent-sdk-cl.asd:ro
+      - ./src:/app/src:ro
+      - ./sm-harness:/app/sm-harness:ro
+      - ./sm-harness-web-ui:/app/sm-harness-web-ui:ro
     networks:
       - e2e
     expose:
       - "8080"
 
   web-ui-e2e:
-    image: mcr.microsoft.com/playwright:v1.49.1-jammy
-    working_dir: /e2e
+    build:
+      context: ./sm-harness-web-ui/e2e
+      dockerfile: Dockerfile
+    image: sm-harness-web-ui-e2e:local
     volumes:
-      - ./sm-harness-web-ui/e2e:/e2e
       - sm-harness-e2e-artifacts:/artifacts
     environment:
       BASE_URL: http://web-ui-e2e-app:8080
@@ -53,7 +59,6 @@ services:
       - web-ui-e2e-app
     networks:
       - e2e
-    command: ["bash", "-lc", "npm ci && node run-e2e.mjs"]
 
 networks:
   e2e:

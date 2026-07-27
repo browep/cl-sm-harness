@@ -38,7 +38,7 @@ try {
   // New session
   const newBtn = page.getByRole('button', { name: /New session/i }).first();
   await newBtn.click();
-  await page.waitForTimeout(1000);
+  await page.locator('#chat-root').waitFor({ state: 'visible', timeout: 15000 });
   await page.screenshot({ path: path.join(artifacts, 'chat.png'), fullPage: true });
 
   // Prompt + send
@@ -48,7 +48,7 @@ try {
     const send = page.getByRole('button', { name: /^Send$/i }).first();
     if (await send.count()) {
       await send.click();
-      await page.waitForTimeout(3000);
+      await page.getByText('e2e hello').waitFor({ state: 'visible', timeout: 15000 });
     }
   }
   await page.screenshot({ path: path.join(artifacts, 'after-send.png'), fullPage: true });

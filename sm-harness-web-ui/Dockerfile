@@ -43,6 +43,7 @@ COPY --chown=app:app sm-harness-web-ui /app/sm-harness-web-ui
 COPY sm-harness-web-ui/docker/entrypoint.sh /usr/local/bin/sm-harness-web-ui-entrypoint
 RUN chmod 0755 /usr/local/bin/sm-harness-web-ui-entrypoint \
  && mkdir -p /app/static \
+ && cp -a /opt/quicklisp/dists/quicklisp/software/clog-*/static-files/. /app/static/ \
  && cp -a /app/sm-harness-web-ui/static/. /app/static/ \
  && chown -R app:app /app /home/app
 

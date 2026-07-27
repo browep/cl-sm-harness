@@ -4,7 +4,7 @@
   (setf (clog:title (clog:html-document body)) "sm-harness")
   (let* ((root (clog:create-div body :class "page" :html-id "home-root"))
          (header (clog:create-div root :class "header"))
-         (_title (clog:create-section-h1 header :content "sm-harness"))
+         (_title (clog:create-section header :h1 :content "sm-harness"))
          (actions (clog:create-div root :class "actions"))
          (new-btn (clog:create-button actions :content "New session"
                                       :class "btn primary"
