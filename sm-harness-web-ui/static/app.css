@@ -26,9 +26,11 @@ body {
   min-height: 320px;
   max-height: 55vh;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 0.75rem;
   background: #121821;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .msg { margin: 0.4rem 0; padding: 0.55rem 0.7rem; border-radius: 8px; }
 .msg-user { background: #243044; }

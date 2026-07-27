@@ -92,6 +92,20 @@ async function newChatAndComposer(browser) {
     .waitFor({ state: 'visible', timeout: 15000 });
   await page.locator('.msg-user').getByText('hello e2e', { exact: true }).waitFor({ state: 'visible' });
   await page.locator('.msg-assistant').getByText('e2e hello', { exact: true }).waitFor({ state: 'visible', timeout: 15000 });
+  await page.locator('.msg-assistant').getByText('stream two: Unicode ✓\nsecond line', { exact: true })
+    .waitFor({ state: 'visible', timeout: 15000 });
+  await page.locator('.msg-assistant').filter({ hasText: 'unbroken-' })
+    .waitFor({ state: 'visible', timeout: 15000 });
+  const assistantText = await page.locator('.msg-assistant').allTextContents();
+  const first = assistantText.findIndex((text) => text === 'e2e hello');
+  const second = assistantText.findIndex((text) => text === 'stream two: Unicode ✓\nsecond line');
+  const third = assistantText.findIndex((text) => text.startsWith('unbroken-'));
+  assert.ok(first >= 0 && first < second && second < third, 'stream records retain order');
+  assert.equal(
+    await page.locator('#transcript').evaluate((node) => node.scrollWidth <= node.clientWidth),
+    true,
+    'long unbroken assistant output does not cause horizontal transcript blowout'
+  );
   await page.locator('#status-chip').getByText('Ready', { exact: true }).waitFor({ state: 'visible' });
   await page.locator('#canonical-id').getByText('e2e-canon', { exact: true }).waitFor({ state: 'visible' });
   assert.equal(await page.locator('.msg-user').count(), 1);
