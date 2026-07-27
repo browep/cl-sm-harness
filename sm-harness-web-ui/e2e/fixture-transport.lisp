@@ -52,5 +52,7 @@
                      nl
                      (format nil "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"~A\"}],\"model\":\"fixture\"}}" long-token)
                      nl
+                     "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"<script>e2e-xss</script> **not bold** [not-link](javascript:alert(1))\"}],\"model\":\"fixture\"}}"
+                     nl
                      "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"e2e-canon\",\"result\":\"ok\"}"
                      nl)))))

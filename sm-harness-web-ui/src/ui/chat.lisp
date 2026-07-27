@@ -31,9 +31,10 @@
          (pending-prompt nil))
     (declare (ignore title-el))
     (labels ((add-line (role text)
-               (clog:create-div transcript
-                                :class (format nil "msg msg-~A" role)
-                                :content text))
+      (let ((line (clog:create-div transcript
+                                   :class (format nil "msg msg-~A" role))))
+        (setf (clog:text line) text)
+        line))
              (set-busy (v)
                (setf busy v)
                (setf (clog:disabledp send-btn) v)
@@ -80,8 +81,8 @@
             (let ((prompt (clog:text-value input)))
               (handler-case
                   (progn
-                    (ui-submit session-id prompt)
                     (setf pending-prompt prompt)
+                    (ui-submit session-id prompt)
                     (setf (clog:text-value input) "")
                     (setf (clog:text err) "")
                     (set-busy t))
@@ -101,8 +102,8 @@
             (let ((prompt (clog:text-value input)))
               (handler-case
                   (progn
-                    (ui-submit session-id prompt)
                     (setf pending-prompt prompt)
+                    (ui-submit session-id prompt)
                     (setf (clog:text-value input) "")
                     (set-busy t))
                 (error (c)
