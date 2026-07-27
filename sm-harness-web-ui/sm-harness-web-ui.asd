@@ -20,7 +20,12 @@
   :depends-on (#:sm-harness)
   :serial t
   :components ((:file "src/packages")
-               (:file "e2e/contract")))
+               (:file "e2e/contract")
+               (:module "e2e/scenarios"
+                :components ((:file "home-health")
+                             (:file "new-chat-composer")
+                             (:file "turn-identity")
+                             (:file "streaming-layout")))))
 
 (asdf:defsystem #:sm-harness-web-ui/e2e
   :description "Test-only deterministic SDK transport for browser E2E"
