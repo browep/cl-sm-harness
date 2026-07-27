@@ -12,7 +12,10 @@ fs.mkdirSync(artifacts, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 try {
   const contract = await loadContract(base);
-  const requested = process.env.E2E_SCENARIO ? [process.env.E2E_SCENARIO] : discoverScenarioNames(path.join(here, 'tests'));
+  const markers = new Set(discoverScenarioNames(path.join(here, 'tests')));
+  const requested = process.env.E2E_SCENARIO
+    ? [process.env.E2E_SCENARIO]
+    : contract.map((scenario) => scenario.name).filter((name) => markers.has(name));
   for (const name of requested) {
     const scenario = contract.find((item) => item.name === name);
     if (!scenario) throw new Error(`Lisp E2E contract has no scenario named ${name}`);

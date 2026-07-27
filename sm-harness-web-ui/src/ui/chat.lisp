@@ -27,7 +27,8 @@
                                        :class "btn danger" :html-id "stop"))
          (err (clog:create-div root :class "error" :html-id "chat-error"))
          (listener-id nil)
-         (busy nil))
+         (busy nil)
+         (pending-prompt nil))
     (declare (ignore title-el))
     (labels ((add-line (role text)
                (clog:create-div transcript
@@ -48,10 +49,14 @@
                     (add-line role text)
                     (let ((cid (getf (sm-harness:event-payload ev) :session-id)))
                       (when cid (setf (clog:text canon-el) cid)))
+                    (setf pending-prompt nil)
                     (set-busy nil)
                     (clog:focus input))
                    ((eq (sm-harness:event-type ev) :error)
                     (setf (clog:text err) text)
+                    (when pending-prompt
+                      (setf (clog:text-value input) pending-prompt))
+                    (setf pending-prompt nil)
                     (set-busy nil))
                    (t (add-line role text))))))
       (dolist (entry (sm-harness:session-snapshot-transcript snap))
@@ -76,6 +81,7 @@
               (handler-case
                   (progn
                     (ui-submit session-id prompt)
+                    (setf pending-prompt prompt)
                     (setf (clog:text-value input) "")
                     (setf (clog:text err) "")
                     (set-busy t))
@@ -96,6 +102,7 @@
               (handler-case
                   (progn
                     (ui-submit session-id prompt)
+                    (setf pending-prompt prompt)
                     (setf (clog:text-value input) "")
                     (set-busy t))
                 (error (c)

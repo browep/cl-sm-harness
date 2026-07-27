@@ -5,11 +5,14 @@
   ((chunks :initarg :chunks :accessor e2e-chunks)
    (writes :initform '() :accessor e2e-writes)
    (read-count :initform 0 :accessor e2e-read-count)
+   (fail-writes-p :initarg :fail-writes-p :initform nil :accessor e2e-fail-writes-p)
    ;; Lets browser E2E observe the real busy/responding transition without
    ;; arbitrary test-side sleeps.
    (delay-before-second-read-seconds :initarg :delay-before-second-read-seconds
                                      :initform 1
                                      :accessor e2e-delay-before-second-read-seconds)))
+
+(defparameter *e2e-retry-failure-available* t)
 
 (defmethod claude-agent-sdk-cl:start-client-transport ((tport e2e-fake-transport) options)
   (declare (ignore options))
@@ -20,6 +23,12 @@
   (pop (e2e-chunks tport)))
 (defmethod claude-agent-sdk-cl:write-client-input ((tport e2e-fake-transport) input)
   (push input (e2e-writes tport))
+  (when (and *e2e-retry-failure-available*
+             (e2e-fail-writes-p tport)
+             (search "retry e2e" input))
+    (setf *e2e-retry-failure-available* nil
+          (e2e-fail-writes-p tport) nil)
+    (error "fixture protocol secret: send failed"))
   t)
 (defmethod claude-agent-sdk-cl:close-client-transport ((tport e2e-fake-transport) &key reason)
   (declare (ignore reason))
@@ -30,6 +39,7 @@
   (let ((nl (string #\Newline))
         (long-token (concatenate 'string "unbroken-" (make-string 512 :initial-element #\x))))
     (make-instance 'e2e-fake-transport
+                   :fail-writes-p t
                    :chunks
                    (list
                     (concatenate 'string

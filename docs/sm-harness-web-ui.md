@@ -35,7 +35,8 @@ sm-harness-web-ui/e2e/
 │   ├── home-health.lisp
 │   ├── new-chat-composer.lisp
 │   ├── turn-identity.lisp
-│   └── streaming-layout.lisp
+│   ├── streaming-layout.lisp
+│   └── errors-recovery.lisp
 ├── fixture-transport.lisp     test-only deterministic SDK transport
 ├── bridge.mjs                 generic Playwright contract interpreter
 ├── run-e2e.mjs                discovers requested scenario entry points
@@ -79,3 +80,13 @@ unsupported action. A successful scenario emits a descriptive PNG and a
 Playwright-native WebM in the disposable `sm-harness-e2e-artifacts` volume.
 Export evidence to a host directory before tearing down a run when it must be
 retained outside Docker.
+
+### Current recovery coverage
+
+`errors-recovery` deliberately causes one fixture transport write failure for
+the `retry e2e` prompt. The harness emits only the safe public `internal error`
+message (not the fixture/protocol detail), the UI retains the draft, and a
+second submission creates a new client and completes canonically. This is a
+real harness/transport recovery path, not a mocked DOM error. Other #28 cases
+(connect, read, malformed SDK/tool, and persistence failures) remain separate
+coverage work.

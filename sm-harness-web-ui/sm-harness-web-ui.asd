@@ -25,7 +25,8 @@
                 :components ((:file "home-health")
                              (:file "new-chat-composer")
                              (:file "turn-identity")
-                             (:file "streaming-layout")))))
+                             (:file "streaming-layout")
+                             (:file "errors-recovery")))))
 
 (asdf:defsystem #:sm-harness-web-ui/e2e
   :description "Test-only deterministic SDK transport for browser E2E"
