@@ -40,6 +40,16 @@ case "$mode" in
         ;;
     esac
     ;;
+  sm-harness)
+    exec sbcl --non-interactive \
+      --eval '(require :asdf)' \
+      --eval '(asdf:test-system :sm-harness/tests)'
+    ;;
+  sm-harness-presenter)
+    exec sbcl --non-interactive \
+      --eval '(require :asdf)' \
+      --eval '(asdf:test-system :sm-harness-web-ui/presenter-tests)'
+    ;;
   integration)
     exec sbcl --non-interactive \
       --eval '(require :asdf)' \
@@ -77,7 +87,7 @@ case "$mode" in
     exit 1
     ;;
   *)
-    printf '%s\n' "unknown test mode: $mode (expected unit, integration, examples, parity, live, live-client, live-terminate, or live-mcp)" >&2
+    printf '%s\n' "unknown test mode: $mode (expected unit, sm-harness, integration, examples, parity, live, live-client, live-terminate, or live-mcp)" >&2
     exit 64
     ;;
 esac

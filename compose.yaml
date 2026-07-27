@@ -15,8 +15,42 @@ services:
       - ./test:/workspace/test:ro
       - ./scripts:/workspace/scripts:ro
       - ./examples:/workspace/examples:ro
+      - ./sm-harness:/workspace/sm-harness:ro
       - claude-agent-sdk-cl-cache:/cache
     command: ["unit"]
+
+  sm-harness-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    image: claude-agent-sdk-cl:test
+    working_dir: /workspace
+    network_mode: none
+    volumes:
+      - ./claude-agent-sdk-cl.asd:/workspace/claude-agent-sdk-cl.asd:ro
+      - ./src:/workspace/src:ro
+      - ./scripts:/workspace/scripts:ro
+      - ./sm-harness:/workspace/sm-harness:ro
+      - claude-agent-sdk-cl-cache:/cache
+    command: ["sm-harness"]
+
+  sm-harness-presenter-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    image: claude-agent-sdk-cl:test
+    working_dir: /workspace
+    network_mode: none
+    volumes:
+      - ./claude-agent-sdk-cl.asd:/workspace/claude-agent-sdk-cl.asd:ro
+      - ./src:/workspace/src:ro
+      - ./scripts:/workspace/scripts:ro
+      - ./sm-harness:/workspace/sm-harness:ro
+      - ./sm-harness-web-ui:/workspace/sm-harness-web-ui:ro
+      - claude-agent-sdk-cl-cache:/cache
+    command: ["sm-harness-presenter"]
 
   live:
     build:

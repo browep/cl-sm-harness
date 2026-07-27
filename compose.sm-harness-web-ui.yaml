@@ -1,0 +1,66 @@
+services:
+  web-ui:
+    build:
+      context: .
+      dockerfile: sm-harness-web-ui/Dockerfile
+    image: sm-harness-web-ui:local
+    user: "10001:10001"
+    environment:
+      SM_HARNESS_DATA: /data
+      SM_HARNESS_HOST: 0.0.0.0
+      SM_HARNESS_PORT: "8080"
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+    volumes:
+      - sm-harness-data:/data
+      - sm-harness-cache:/cache
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "sbcl", "--non-interactive", "--eval", "(quit)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  web-ui-e2e-app:
+    build:
+      context: .
+      dockerfile: sm-harness-web-ui/Dockerfile
+    image: sm-harness-web-ui:local
+    user: "10001:10001"
+    environment:
+      SM_HARNESS_DATA: /data
+      SM_HARNESS_HOST: 0.0.0.0
+      SM_HARNESS_PORT: "8080"
+      WEB_UI_E2E: "1"
+    volumes:
+      - sm-harness-e2e-data:/data
+      - sm-harness-cache:/cache
+    networks:
+      - e2e
+    expose:
+      - "8080"
+
+  web-ui-e2e:
+    image: mcr.microsoft.com/playwright:v1.49.1-jammy
+    working_dir: /e2e
+    volumes:
+      - ./sm-harness-web-ui/e2e:/e2e
+      - sm-harness-e2e-artifacts:/artifacts
+    environment:
+      BASE_URL: http://web-ui-e2e-app:8080
+      ARTIFACTS: /artifacts
+    depends_on:
+      - web-ui-e2e-app
+    networks:
+      - e2e
+    command: ["bash", "-lc", "npm ci && node run-e2e.mjs"]
+
+networks:
+  e2e:
+    internal: true
+
+volumes:
+  sm-harness-data:
+  sm-harness-e2e-data:
+  sm-harness-cache:
+  sm-harness-e2e-artifacts:
