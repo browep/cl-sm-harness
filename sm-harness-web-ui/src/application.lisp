@@ -1,8 +1,20 @@
 (in-package #:sm-harness-web-ui)
 
+(defun %session-id-from-route (path)
+  (let ((prefix "/sessions/"))
+    (when (and (uiop:string-prefix-p prefix path)
+               (> (length path) (length prefix)))
+      (let ((id (subseq path (length prefix))))
+        (and (null (position #\/ id)) id)))))
+
 (defun on-new-window (body)
   (clog:load-css (clog:html-document body) "/app.css")
-  (render-home body))
+  (let ((session-id (%session-id-from-route
+                     (clog:path-name (clog:location body)))))
+    (if session-id
+        (handler-case (render-chat body session-id)
+          (sm-harness:harness-not-found-error () (render-not-found body)))
+        (render-home body))))
 
 (defun start-web-ui (&key harness config)
   "Start CLOG server. HARNESS must already be constructed."
@@ -14,7 +26,9 @@
                            :host (web-ui-config-host cfg)
                            :port (web-ui-config-port cfg)
                            :static-root (namestring (web-ui-config-static-root cfg))
-                           :boot-file "/boot.html"))
+                           :boot-file "/boot.html"
+                           :extended-routing t))
+    (clog:set-on-new-window #'on-new-window :path "/sessions" :boot-file "/boot.html")
     (format t "sm-harness-web-ui listening on ~A:~A~%"
             (web-ui-config-host cfg)
             (web-ui-config-port cfg))

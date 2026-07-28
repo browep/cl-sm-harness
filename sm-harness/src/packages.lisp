@@ -6,7 +6,7 @@
    #:harness-config-idle-ttl-seconds #:harness-config-turn-deadline-seconds
    #:make-harness #:close-harness
    #:start-session #:list-sessions #:open-session
-   #:submit-turn #:interrupt-turn
+   #:submit-turn #:interrupt-turn #:evict-idle-sessions
    #:attach-session-listener #:detach-session-listener
    #:session-status
    #:make-event #:event-type #:event-sequence #:event-session-id #:event-payload

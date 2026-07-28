@@ -18,7 +18,7 @@ async function textLocator(page, step) {
   return step.text === undefined ? target : target.filter({ hasText: step.text });
 }
 
-async function executeStep(page, step) {
+async function executeStep(page, base, step) {
   const target = () => locator(page, step);
   switch (step.op) {
     case 'wait': return target().waitFor({ state: step.state ?? 'visible', timeout });
@@ -28,8 +28,12 @@ async function executeStep(page, step) {
     case 'press': return step.selector ? target().press(step.key) : page.keyboard.press(step.key);
     case 'fill': return target().fill(step.value);
     case 'click': return target().click();
+    case 'goto': return page.goto(new URL(step.path, base).toString(), { waitUntil: 'domcontentloaded', timeout });
+    case 'reload': return page.reload({ waitUntil: 'domcontentloaded', timeout });
+    case 'assert_url_pattern': return assert.match(new URL(page.url()).pathname, new RegExp(step.pattern));
     case 'assert_title': return assert.equal(await page.title(), step.value);
-    case 'assert_active_id': return assert.equal(await page.evaluate(() => document.activeElement?.id), step.value);
+    case 'assert_active_id': return page.waitForFunction(
+      (value) => document.activeElement?.id === value, step.value, { timeout });
     case 'assert_disabled': return assert.equal(await target().isDisabled(), Boolean(step.value));
     case 'wait_disabled': return page.waitForFunction(({ selector, value }) => document.querySelector(selector)?.disabled === Boolean(value), { selector: step.selector, value: step.value }, { timeout });
     case 'assert_value': return assert.equal(await target().inputValue(), step.value);
@@ -47,7 +51,9 @@ async function executeStep(page, step) {
       }
       return;
     }
-    case 'assert_attribute': return assert.equal(await target().getAttribute(step.name), step.value);
+    case 'assert_attribute': return page.waitForFunction(
+      ({ selector, name, value }) => document.querySelector(selector)?.getAttribute(name) === value,
+      { selector: step.selector, name: step.name, value: step.value }, { timeout });
     case 'assert_overflow_fits': return assert.equal(await target().evaluate((node) => node.scrollWidth <= node.clientWidth), true);
     default: throw new Error(`unsupported E2E contract op: ${step.op}`);
   }
@@ -68,7 +74,7 @@ export async function runScenario(browser, base, artifacts, scenario) {
   page.on('console', (message) => { if (message.type() === 'error') errors.push(`console: ${message.text()}`); });
   try {
     await page.goto(base, { waitUntil: 'domcontentloaded', timeout });
-    for (const step of scenario.steps) await executeStep(page, step);
+    for (const step of scenario.steps) await executeStep(page, base, step);
     await page.screenshot({ path: path.join(artifacts, `${scenario.name}-${scenario.evidence_suffix}.png`), fullPage: true });
     assert.deepEqual(errors, [], `${scenario.name}: unexpected browser errors`);
   } finally {
