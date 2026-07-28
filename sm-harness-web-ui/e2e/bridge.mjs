@@ -18,7 +18,7 @@ async function textLocator(page, step) {
   return step.text === undefined ? target : target.filter({ hasText: step.text });
 }
 
-async function executeStep(page, step) {
+async function executeStep(page, base, step) {
   const target = () => locator(page, step);
   switch (step.op) {
     case 'wait': return target().waitFor({ state: step.state ?? 'visible', timeout });
@@ -28,6 +28,7 @@ async function executeStep(page, step) {
     case 'press': return step.selector ? target().press(step.key) : page.keyboard.press(step.key);
     case 'fill': return target().fill(step.value);
     case 'click': return target().click();
+    case 'goto': return page.goto(new URL(step.path, base).toString(), { waitUntil: 'domcontentloaded', timeout });
     case 'assert_title': return assert.equal(await page.title(), step.value);
     case 'assert_active_id': return page.waitForFunction(
       (value) => document.activeElement?.id === value, step.value, { timeout });
@@ -71,7 +72,7 @@ export async function runScenario(browser, base, artifacts, scenario) {
   page.on('console', (message) => { if (message.type() === 'error') errors.push(`console: ${message.text()}`); });
   try {
     await page.goto(base, { waitUntil: 'domcontentloaded', timeout });
-    for (const step of scenario.steps) await executeStep(page, step);
+    for (const step of scenario.steps) await executeStep(page, base, step);
     await page.screenshot({ path: path.join(artifacts, `${scenario.name}-${scenario.evidence_suffix}.png`), fullPage: true });
     assert.deepEqual(errors, [], `${scenario.name}: unexpected browser errors`);
   } finally {

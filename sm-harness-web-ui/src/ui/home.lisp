@@ -1,5 +1,23 @@
 (in-package #:sm-harness-web-ui)
 
+(defun set-session-route (body session-id)
+  (clog:js-execute body
+                   (format nil "window.history.replaceState(null, '', '/sessions/~A');" session-id)))
+
+(defun render-not-found (body)
+  (setf (clog:title (clog:html-document body)) "Session not found — sm-harness")
+  (let ((root (clog:create-div body :class "page" :html-id "not-found-root"))
+        (home nil))
+    (clog:create-div root :class "error" :html-id "session-not-found"
+                     :content "Session not found")
+    (setf home (clog:create-button root :class "btn" :html-id "not-found-home"
+                                   :content "Back to home"))
+    (clog:set-on-click home
+      (lambda (obj)
+        (declare (ignore obj))
+        (clear-body body)
+        (render-home body)))))
+
 (defun render-home (body)
   (setf (clog:title (clog:html-document body)) "sm-harness")
   (let* ((root (clog:create-div body :class "page" :html-id "home-root"))
@@ -22,7 +40,8 @@
         (declare (ignore obj))
         (handler-case
             (let ((snap (ui-start-session)))
-              (render-chat body (sm-harness:session-snapshot-id snap)))
+              (render-chat body (sm-harness:session-snapshot-id snap))
+              (set-session-route body (sm-harness:session-snapshot-id snap)))
           (error (c)
             (setf (clog:text status) (format nil "Error: ~A" c))))))
     (handler-case

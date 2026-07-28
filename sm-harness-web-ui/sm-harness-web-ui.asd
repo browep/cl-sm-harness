@@ -25,6 +25,7 @@
                 :components ((:file "home-health")
                              (:file "new-chat-composer")
                              (:file "turn-identity")
+                             (:file "direct-session-routes")
                              (:file "streaming-layout")
                              (:file "errors-recovery")
                              (:file "safe-rendering")

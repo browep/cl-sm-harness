@@ -16,6 +16,7 @@
   (list (e2e-home-health-scenario)
         (e2e-new-chat-composer-scenario)
         (e2e-turn-identity-scenario)
+        (e2e-direct-session-routes-scenario)
         (e2e-streaming-layout-scenario)
         (e2e-errors-recovery-scenario)
         (e2e-safe-rendering-scenario)
@@ -28,7 +29,7 @@
     "focus" "assert_active_id" "press" "assert_disabled" "fill" "click"
     "wait_pattern" "assert_value" "assert_input_pattern" "assert_count"
     "wait_disabled" "assert_text_order" "assert_overflow_fits"
-    "assert_attribute"))
+    "assert_attribute" "goto"))
 
 (defun validate-e2e-contract (contract)
   (let ((names (make-hash-table :test #'equal)))
