@@ -20,7 +20,6 @@
    #:transcript-entry-kind #:transcript-entry-meta #:transcript-entry-created-at
    #:default-tool-catalog #:default-tool-policy
    #:make-tool-policy #:tool-policy-builtin-tools #:tool-policy-strict-mcp-p
-   #:tool-policy-allowed-tools #:tool-policy-disallowed-tools
    #:tool-catalog #:tool-catalog-servers
    #:tool-server-definition #:tool-server-definition-name #:tool-server-definition-version
    #:tool-server-definition-tools
