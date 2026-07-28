@@ -4,3 +4,6 @@
 
 # Local agent planning and handoff state
 .hermes/
+
+# Generated browser E2E artifacts
+/evidence/
