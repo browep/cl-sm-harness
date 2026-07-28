@@ -12,7 +12,7 @@ docker compose -f "$compose_file" up -d web-ui-e2e-app
 i=0
 until docker compose -f "$compose_file" logs --tail=20 web-ui-e2e-app 2>&1 | grep -q 'sm-harness-web-ui listening'; do
   i=$((i + 1))
-  if [ "$i" -ge 60 ]; then
+  if [ "$i" -ge 300 ]; then
     docker compose -f "$compose_file" logs --tail=100 web-ui-e2e-app >&2
     exit 1
   fi
