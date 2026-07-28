@@ -1,3 +1,6 @@
 # Local credentials
 .env*
 !.env.example
+
+# Local agent planning and handoff state
+.hermes/
