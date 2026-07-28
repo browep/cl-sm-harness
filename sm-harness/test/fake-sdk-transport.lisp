@@ -4,15 +4,24 @@
 (defclass harness-fake-transport (claude-agent-sdk-cl:client-transport)
   ((chunks :initarg :chunks :accessor fake-chunks)
    (writes :initform '() :accessor fake-writes)
+   (start-error :initarg :start-error :initform nil :accessor fake-start-error)
+   (read-error-after :initarg :read-error-after :initform nil :accessor fake-read-error-after)
+   (read-count :initform 0 :accessor fake-read-count)
    (closed-reason :initform nil :accessor fake-closed-reason)))
 
 (defmethod claude-agent-sdk-cl:start-client-transport
-    ((transport harness-fake-transport) options)
+   ((transport harness-fake-transport) options)
   (declare (ignore options))
+  (when (fake-start-error transport)
+    (error "~A" (fake-start-error transport)))
   transport)
 
 (defmethod claude-agent-sdk-cl:read-client-chunk ((transport harness-fake-transport))
-  (pop (fake-chunks transport)))
+  (let ((read-count (incf (fake-read-count transport))))
+    (when (and (fake-read-error-after transport)
+               (> read-count (fake-read-error-after transport)))
+      (error "fixture read secret: transport failed"))
+    (pop (fake-chunks transport))))
 
 (defmethod claude-agent-sdk-cl:write-client-input
     ((transport harness-fake-transport) input)

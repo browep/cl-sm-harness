@@ -174,14 +174,17 @@
   (let ((rec (session-runtime-record rt)))
     (handler-case
         (progn
-          (setf (session-record-active-turn-id rec) turn-id)
-          (%append-transcript rt "user" prompt)
-          (%publish rt :user-message (list :text prompt :turn-id turn-id))
-          (repository-save-session (harness-repository harness) rec)
-          (setf (session-runtime-cancellation-reason rt) nil)
+          (setf (session-record-active-turn-id rec) turn-id
+                (session-runtime-cancellation-reason rt) nil)
+          ;; A pre-connect failure has not accepted the prompt.  Do not create a
+          ;; durable user record until the client connection is usable; the web
+          ;; presentation retains its draft locally for retry.
           (let* ((resume (session-record-canonical-id rec))
                  (client (%ensure-client harness rt :resume resume))
                  (done nil))
+            (%append-transcript rt "user" prompt)
+            (%publish rt :user-message (list :text prompt :turn-id turn-id))
+            (repository-save-session (harness-repository harness) rec)
             (%set-status rt :responding)
             (send-prompt client prompt
                          :session-id (or (session-record-canonical-id rec)

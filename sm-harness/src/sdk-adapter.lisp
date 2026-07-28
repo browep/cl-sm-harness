@@ -109,9 +109,7 @@ Each item is (event-type . plist-or-string)."
      (list (list :unrecognized :class (symbol-name (class-name (class-of message))))))))
 
 (defun safe-error-payload (condition)
-  (list :message
-        (typecase condition
-          (claude-agent-sdk-cl:sdk-error
-           (princ-to-string condition))
-          (harness-error (harness-error-message condition))
-          (t "internal error"))))
+  "Return the deliberately non-diagnostic public error contract.
+Detailed SDK and repository conditions belong only in private diagnostics."
+  (declare (ignore condition))
+  (list :message "internal error"))

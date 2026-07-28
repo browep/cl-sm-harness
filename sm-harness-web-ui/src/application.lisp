@@ -67,9 +67,11 @@
          (port (parse-integer (or (uiop:getenv "SM_HARNESS_PORT") "8080")))
          (host (or (uiop:getenv "SM_HARNESS_HOST") "0.0.0.0"))
          (fixture (equal (uiop:getenv "WEB_UI_E2E") "1"))
+         (read-recovery (equal (uiop:getenv "E2E_SCENARIO") "read-recovery"))
          (hcfg (sm-harness:make-harness-config
                 :data-root data
                 :project-key "web"
+                :idle-ttl-seconds (if read-recovery 1 1800)
                 :transport-factory (when fixture (%fixture-transport-factory))))
          (harness (sm-harness:make-harness :config hcfg)))
     (when fixture

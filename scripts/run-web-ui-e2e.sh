@@ -39,7 +39,7 @@ for scenario in $scenarios; do
   docker compose -f "$compose_file" down --remove-orphans
   docker volume rm -f "${project}_sm-harness-e2e-data" \
     "${project}_sm-harness-e2e-artifacts" 2>/dev/null || true
-  docker compose -f "$compose_file" up -d web-ui-e2e-app
+  E2E_SCENARIO="$scenario" docker compose -f "$compose_file" up -d web-ui-e2e-app
 
   # Probe only the app logs while waiting for its compiled CLOG app to listen.
   i=0

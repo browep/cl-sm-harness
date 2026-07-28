@@ -9,6 +9,8 @@
    (stop-mode-p :initform nil :accessor e2e-stop-mode-p)
    (stop-lock :initform (sb-thread:make-mutex :name "e2e-stop") :reader e2e-stop-lock)
    (stop-cv :initform (sb-thread:make-waitqueue :name "e2e-stop") :reader e2e-stop-cv)
+   (start-error :initarg :start-error :initform nil :accessor e2e-start-error)
+   (read-error-after :initarg :read-error-after :initform nil :accessor e2e-read-error-after)
    (fail-writes-p :initarg :fail-writes-p :initform nil :accessor e2e-fail-writes-p)
    ;; Lets browser E2E observe the real busy/responding transition without
    ;; arbitrary test-side sleeps.
@@ -17,17 +19,25 @@
                                      :accessor e2e-delay-before-second-read-seconds)))
 
 (defparameter *e2e-retry-failure-available* t)
+(defparameter *e2e-connect-failure-available* t)
+(defparameter *e2e-read-recovery-client-count* 0)
 
 (defmethod claude-agent-sdk-cl:start-client-transport ((tport e2e-fake-transport) options)
   (declare (ignore options))
+  (when (e2e-start-error tport)
+    (error "~A" (e2e-start-error tport)))
   tport)
 (defmethod claude-agent-sdk-cl:read-client-chunk ((tport e2e-fake-transport))
-  (when (= (incf (e2e-read-count tport)) 2)
-    (sb-thread:with-mutex ((e2e-stop-lock tport))
-      (loop while (e2e-stop-mode-p tport) do
-        (sb-thread:condition-wait (e2e-stop-cv tport) (e2e-stop-lock tport))))
-    (sleep (e2e-delay-before-second-read-seconds tport)))
-  (pop (e2e-chunks tport)))
+  (let ((read-count (incf (e2e-read-count tport))))
+    (when (= read-count 2)
+      (sb-thread:with-mutex ((e2e-stop-lock tport))
+        (loop while (e2e-stop-mode-p tport) do
+          (sb-thread:condition-wait (e2e-stop-cv tport) (e2e-stop-lock tport))))
+      (sleep (e2e-delay-before-second-read-seconds tport)))
+    (when (and (e2e-read-error-after tport)
+               (> read-count (e2e-read-error-after tport)))
+      (error "fixture read secret: transport failed"))
+    (pop (e2e-chunks tport))))
 
 (defun %e2e-stop-terminal ()
   (let ((nl (string #\Newline)))
@@ -89,8 +99,59 @@
   (declare (ignore reason))
   t)
 
-(defun %e2e-transport-factory (options)
-  (declare (ignore options))
+(defun %e2e-connect-recovery-p ()
+  (string= (or (uiop:getenv "E2E_SCENARIO") "") "connect-recovery"))
+
+(defun %e2e-init-chunk ()
+  (concatenate 'string
+               "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"request-1\"}}"
+               (string #\Newline)))
+
+(defun %e2e-connect-recovery-transport ()
+  (if *e2e-connect-failure-available*
+      (progn
+        (setf *e2e-connect-failure-available* nil)
+        (make-instance 'e2e-fake-transport
+                       :start-error "fixture connect secret: unavailable"))
+      (let ((nl (string #\Newline)))
+        (make-instance 'e2e-fake-transport
+                       :chunks
+                       (list (%e2e-init-chunk)
+                             (concatenate 'string
+                                          "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"connect retry complete\"}],\"model\":\"fixture\"}}"
+                                          nl
+                                          "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"e2e-canon\",\"result\":\"connect retry done\"}"
+                                          nl))))))
+
+(defun %e2e-read-recovery-p ()
+  (string= (or (uiop:getenv "E2E_SCENARIO") "") "read-recovery"))
+
+(defun %e2e-read-result-chunk (text)
+  (let ((nl (string #\Newline)))
+    (concatenate 'string
+                 (format nil "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"~A\"}],\"model\":\"fixture\"}}" text)
+                 nl
+                 "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"e2e-canon\",\"result\":\"done\"}"
+                 nl)))
+
+(defun %e2e-read-recovery-transport (options)
+  (incf *e2e-read-recovery-client-count*)
+  (let ((n *e2e-read-recovery-client-count*))
+    (when (and (> n 1)
+               (not (string= "e2e-canon" (claude-agent-sdk-cl:agent-options-resume options))))
+      (error "fixture replacement client did not receive canonical resume"))
+    (case n
+      (1 (make-instance 'e2e-fake-transport
+                        :chunks (list (%e2e-init-chunk)
+                                      (%e2e-read-result-chunk "read first complete"))))
+      (2 (make-instance 'e2e-fake-transport
+                        :chunks (list (%e2e-init-chunk))
+                        :read-error-after 1))
+      (otherwise (make-instance 'e2e-fake-transport
+                                :chunks (list (%e2e-init-chunk)
+                                              (%e2e-read-result-chunk "read retry complete")))))))
+
+(defun %e2e-default-transport ()
   (let ((nl (string #\Newline))
         (long-token (concatenate 'string "unbroken-" (make-string 512 :initial-element #\x))))
     (make-instance 'e2e-fake-transport
@@ -113,3 +174,9 @@
                      nl
                      "{\"type\":\"control_request\",\"request_id\":\"e2e-tool-call\",\"request\":{\"subtype\":\"mcp_message\",\"server_name\":\"sm_harness\",\"message\":{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"echo_text\",\"arguments\":{\"text\":\"browser-actual\"}}}}}"
                      nl)))))
+
+(defun %e2e-transport-factory (options)
+  (cond
+    ((%e2e-connect-recovery-p) (%e2e-connect-recovery-transport))
+    ((%e2e-read-recovery-p) (%e2e-read-recovery-transport options))
+    (t (%e2e-default-transport))))

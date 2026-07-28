@@ -30,6 +30,7 @@ async function executeStep(page, base, step) {
     case 'click': return target().click();
     case 'goto': return page.goto(new URL(step.path, base).toString(), { waitUntil: 'domcontentloaded', timeout });
     case 'reload': return page.reload({ waitUntil: 'domcontentloaded', timeout });
+    case 'sleep': return new Promise((resolve) => setTimeout(resolve, step.milliseconds));
     case 'assert_url_pattern': return assert.match(new URL(page.url()).pathname, new RegExp(step.pattern));
     case 'assert_title': return assert.equal(await page.title(), step.value);
     case 'assert_active_id': return page.waitForFunction(
