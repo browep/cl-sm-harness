@@ -4,6 +4,11 @@ import path from 'node:path';
 
 const timeout = 30000;
 
+export function videoArtifactName(scenarioName, timestamp = new Date()) {
+  const utc = timestamp.toISOString().replace(/[-:.]/g, '').replace('Z', 'Z');
+  return `${utc}-${scenarioName}.webm`;
+}
+
 function locator(page, step) {
   return page.locator(step.selector);
 }
@@ -57,6 +62,7 @@ export async function loadContract(base) {
 export async function runScenario(browser, base, artifacts, scenario) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, recordVideo: { dir: artifacts, size: { width: 1280, height: 720 } } });
   const page = await context.newPage();
+  const video = page.video();
   const errors = [];
   page.on('pageerror', (error) => errors.push(`pageerror: ${error}`));
   page.on('console', (message) => { if (message.type() === 'error') errors.push(`console: ${message.text()}`); });
@@ -67,6 +73,10 @@ export async function runScenario(browser, base, artifacts, scenario) {
     assert.deepEqual(errors, [], `${scenario.name}: unexpected browser errors`);
   } finally {
     await context.close();
+    if (video) {
+      const source = await video.path();
+      fs.renameSync(source, path.join(artifacts, videoArtifactName(scenario.name)));
+    }
   }
 }
 
