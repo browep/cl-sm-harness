@@ -7,12 +7,13 @@
          (catalog (sm-harness:default-tool-catalog))
          (policy (sm-harness:default-tool-policy))
          (opts (sm-harness::build-agent-options catalog policy))
+         (transport nil)
          (h (sm-harness:make-harness
              :config (sm-harness:make-harness-config
                       :data-root root
                       :transport-factory (lambda (options)
                                            (declare (ignore options))
-                                           (make-simple-turn-transport))))))
+                                           (setf transport (make-catalog-tool-turn-transport)))))))
     (unwind-protect
          (progn
            (is (eq :none (claude-agent-sdk-cl:agent-options-builtin-tools opts)))
@@ -28,6 +29,9 @@
              (sm-harness:submit-turn h session-id "run the catalog tool")
              (is (wait-until (lambda () (sm-harness::session-runtime-client runtime))))
              (is (null (claude-agent-sdk-cl:client-control-handlers
-                        (sm-harness::session-runtime-client runtime))))))
+                        (sm-harness::session-runtime-client runtime))))
+             (is (wait-until (lambda () (>= (length (fake-writes transport)) 3))))
+             (is (string= "echo: automatic"
+                          (echoed-mcp-result-text (first (fake-writes transport)))))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
