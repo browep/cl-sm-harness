@@ -21,6 +21,7 @@
 (defparameter *e2e-retry-failure-available* t)
 (defparameter *e2e-connect-failure-available* t)
 (defparameter *e2e-read-recovery-client-count* 0)
+(defparameter *e2e-malformed-event-available* t)
 
 (defmethod claude-agent-sdk-cl:start-client-transport ((tport e2e-fake-transport) options)
   (declare (ignore options))
@@ -84,6 +85,18 @@
     (setf *e2e-retry-failure-available* nil
           (e2e-fail-writes-p tport) nil)
     (error "fixture protocol secret: send failed"))
+  (when (and (%e2e-tool-handler-failure-p)
+             (search "e2e-failing-tool-call" input))
+    (unless (search "-32603" input)
+      (error "fixture expected a nested JSON-RPC internal error"))
+    (unless (= 0 (e2e-mcp-response-count tport))
+      (error "fixture failing tool handler response was not exactly once"))
+    (incf (e2e-mcp-response-count tport))
+    (setf (e2e-chunks tport)
+          (append (e2e-chunks tport)
+                  (list (concatenate 'string
+                         "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e2e-tool-fail-1\",\"content\":\"Tool failed\",\"is_error\":true}],\"model\":\"fixture\"}}\n"
+                         "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"e2e-canon\",\"result\":\"tool handler failure handled\"}\n")))))
   (let ((result-text (%e2e-mcp-result-text input)))
     (when result-text
       ;; A real session-start MCP handler produced this response.  Do not emit
@@ -151,6 +164,44 @@
                                 :chunks (list (%e2e-init-chunk)
                                               (%e2e-read-result-chunk "read retry complete")))))))
 
+(defun %e2e-tool-handler-failure-p ()
+  (string= (or (uiop:getenv "E2E_SCENARIO") "") "tool-handler-failure"))
+
+(defun e2e-fixture-catalog ()
+  (let ((catalog (sm-harness:default-tool-catalog)))
+    (when (%e2e-tool-handler-failure-p)
+      (setf (sm-harness::tool-definition-handler
+             (first (sm-harness::tool-server-definition-tools
+                     (first (sm-harness::tool-catalog-servers catalog)))))
+            (lambda (arguments context)
+              (declare (ignore arguments context))
+              (error "fixture handler secret"))))
+    catalog))
+
+(defun %e2e-tool-handler-failure-transport ()
+  (let ((nl (string #\Newline)))
+    (make-instance 'e2e-fake-transport
+                   :chunks
+                   (list (%e2e-init-chunk)
+                         (concatenate 'string
+                          "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"e2e-tool-fail-1\",\"name\":\"mcp__sm_harness__echo_text\",\"input\":{\"text\":\"fail\"}}],\"model\":\"fixture\"}}" nl
+                          "{\"type\":\"control_request\",\"request_id\":\"e2e-failing-tool-call\",\"request\":{\"subtype\":\"mcp_message\",\"server_name\":\"sm_harness\",\"message\":{\"jsonrpc\":\"2.0\",\"id\":45,\"method\":\"tools/call\",\"params\":{\"name\":\"echo_text\",\"arguments\":{\"text\":\"fail\"}}}}}" nl)))))
+
+(defun %e2e-malformed-event-p ()
+  (string= (or (uiop:getenv "E2E_SCENARIO") "") "malformed-event-recovery"))
+
+(defun %e2e-malformed-event-transport (options)
+  (when (and (not *e2e-malformed-event-available*)
+             (claude-agent-sdk-cl:agent-options-resume options))
+    (error "fixture malformed-event retry unexpectedly resumed"))
+  (if *e2e-malformed-event-available*
+      (progn
+        (setf *e2e-malformed-event-available* nil)
+        (make-instance 'e2e-fake-transport
+                       :chunks (list (%e2e-init-chunk)
+                                     "{fixture malformed secret: invalid JSON}\n")))
+      (%e2e-default-transport)))
+
 (defun %e2e-default-transport ()
   (let ((nl (string #\Newline))
         (long-token (concatenate 'string "unbroken-" (make-string 512 :initial-element #\x))))
@@ -179,4 +230,6 @@
   (cond
     ((%e2e-connect-recovery-p) (%e2e-connect-recovery-transport))
     ((%e2e-read-recovery-p) (%e2e-read-recovery-transport options))
+    ((%e2e-tool-handler-failure-p) (%e2e-tool-handler-failure-transport))
+    ((%e2e-malformed-event-p) (%e2e-malformed-event-transport options))
     (t (%e2e-default-transport))))

@@ -42,6 +42,7 @@ async function executeStep(page, base, step) {
     case 'assert_count': return assert.equal(await target().count(), step.count);
     case 'assert_text_count': return assert.equal(await target().filter({ hasText: step.text }).count(), step.count);
     case 'assert_text': return assert.equal(await target().innerText(), step.value);
+    case 'assert_not_text': return assert.equal((await page.locator('body').innerText()).includes(step.value), false);
     case 'assert_text_order': {
       const text = await target().allTextContents();
       let after = -1;
@@ -78,6 +79,9 @@ export async function runScenario(browser, base, artifacts, scenario) {
     for (const step of scenario.steps) await executeStep(page, base, step);
     await page.screenshot({ path: path.join(artifacts, `${scenario.name}-${scenario.evidence_suffix}.png`), fullPage: true });
     assert.deepEqual(errors, [], `${scenario.name}: unexpected browser errors`);
+  } catch (error) {
+    await page.screenshot({ path: path.join(artifacts, `${scenario.name}-${scenario.evidence_suffix}-failure.png`), fullPage: true });
+    throw error;
   } finally {
     await context.close();
     if (video) {

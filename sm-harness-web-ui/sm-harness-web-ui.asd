@@ -31,6 +31,8 @@
                              (:file "errors-recovery")
                              (:file "connect-recovery")
                              (:file "read-recovery")
+                             (:file "malformed-event-recovery")
+                             (:file "tool-handler-failure")
                              (:file "safe-rendering")
                              (:file "accessibility")
                              (:file "stop-deadline")

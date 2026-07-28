@@ -82,6 +82,80 @@
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
+(test malformed-sdk-event-is-safe-terminal-and-a-fresh-retry-can-complete
+  (let* ((root (temp-data-root))
+         (factory-count 0)
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (incf factory-count)
+                        (if (= factory-count 1)
+                            (make-instance 'harness-fake-transport
+                                           :chunks (list (concatenate 'string +init-ok+ +nl+)
+                                                         "{not valid JSON}\n"))
+                            (make-simple-turn-transport))))))
+         (snapshot (sm-harness:start-session h :title "malformed event"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "malformed fixture turn")
+           (is (wait-until (lambda () (eq :error (sm-harness:session-status h session-id)))) )
+           (let ((reopened (sm-harness:open-session h session-id)))
+             (is (null (sm-harness:session-snapshot-canonical-id reopened))))
+           (sm-harness:submit-turn h session-id "fresh valid retry")
+           (is (wait-until
+                (lambda () (string= "canon-42"
+                                     (sm-harness:session-snapshot-canonical-id
+                                      (sm-harness:open-session h session-id)))))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test session-start-tool-handler-failure-emits-correlated-safe-mcp-error-once
+  (let* ((root (temp-data-root))
+         (calls 0)
+         (catalog (sm-harness:default-tool-catalog))
+         (tool (first (sm-harness::tool-server-definition-tools
+                       (first (sm-harness::tool-catalog-servers catalog)))))
+         (transport (make-catalog-tool-turn-transport))
+         (h (sm-harness:make-harness
+             :catalog catalog
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "failing control handler"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (setf (sm-harness::tool-definition-handler tool)
+          (lambda (arguments context)
+            (declare (ignore arguments context))
+            (incf calls)
+            (error "handler secret must never cross the MCP wire")))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "call failing tool")
+           (is (wait-until (lambda () (= 1 calls))))
+           (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
+           (is (= 1 calls))
+           (let* ((wire (find-if (lambda (line) (search "mcp_response" line))
+                                 (fake-writes transport)))
+                  (outer (yason:parse wire))
+                  (response (gethash "response" outer))
+                  (payload (gethash "response" response))
+                  (mcp (gethash "mcp_response" payload))
+                  (error (gethash "error" mcp)))
+             (is (string= "success" (gethash "subtype" response)))
+             (is (string= "tool-call-1" (gethash "request_id" response)))
+             (is (= 7 (gethash "id" mcp)))
+             (is (= -32603 (gethash "code" error)))
+             (is (not (search "secret" (gethash "message" error)))))
+           (is (= 1 (count-if (lambda (line) (search "mcp_response" line))
+                               (fake-writes transport)))) )
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
 (test interrupt-turn-writes-control-without-waiting-for-the-worker-mailbox
   (let* ((root (temp-data-root))
          (transport (make-instance 'harness-fake-transport

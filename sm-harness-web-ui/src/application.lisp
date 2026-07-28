@@ -73,7 +73,9 @@
                 :project-key "web"
                 :idle-ttl-seconds (if read-recovery 1 1800)
                 :transport-factory (when fixture (%fixture-transport-factory))))
-         (harness (sm-harness:make-harness :config hcfg)))
+         (harness (sm-harness:make-harness
+                   :config hcfg
+                   :catalog (when fixture (e2e-fixture-catalog)))))
     (when fixture
       (let ((writer (find-symbol "WRITE-E2E-CONTRACT" :sm-harness-web-ui)))
         (unless (and writer (fboundp writer))
