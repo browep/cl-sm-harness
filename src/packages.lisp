@@ -63,4 +63,4 @@
            #:claude-sdk-client #:make-claude-sdk-client #:client-state
            #:client-transport #:start-client-transport #:read-client-chunk
            #:write-client-input #:close-client-transport
-           #:connect #:send #:receive-message #:receive-response #:interrupt #:disconnect))
+           #:connect #:send #:receive-message #:receive-response #:interrupt #:request-interrupt #:disconnect))

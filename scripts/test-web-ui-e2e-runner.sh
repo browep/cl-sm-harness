@@ -24,6 +24,7 @@ chmod +x "$tmp/bin/docker" "$tmp/bin/sudo"
 (
   cd "$repo"
   PATH="$tmp/bin:$PATH" \
+  E2E_SCENARIO='' \
   E2E_RUNNER_LOG="$log" \
   E2E_ARTIFACTS_DIR="$tmp/artifacts" \
   ./scripts/run-web-ui-e2e.sh

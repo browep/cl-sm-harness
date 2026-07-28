@@ -29,6 +29,7 @@
                              (:file "errors-recovery")
                              (:file "safe-rendering")
                              (:file "accessibility")
+                             (:file "stop-deadline")
                              (:file "custom-tool-lifecycle")))))
 
 (asdf:defsystem #:sm-harness-web-ui/e2e

@@ -596,6 +596,22 @@
     (is (eq :connected (claude-agent-sdk-cl:client-state client)))
     (claude-agent-sdk-cl:disconnect client)))
 
+(test client-request-interrupt-does-not-wait-for-a-control-response
+  "A harness may request cancellation while another owner is blocked reading."
+  (let* ((transport
+           (make-instance 'fake-client-transport
+                          :chunks (list
+                                   (concatenate 'string +initialize-response+ +client-nl+))))
+         (client (claude-agent-sdk-cl:make-claude-sdk-client :transport transport)))
+    (claude-agent-sdk-cl:connect client)
+    (claude-agent-sdk-cl:request-interrupt client)
+    (let ((interrupt-wire (second (reverse (fake-client-writes transport)))))
+      (is (search "\"type\":\"control_request\"" interrupt-wire))
+      (is (search "\"request_id\":\"request-2\"" interrupt-wire))
+      (is (search "\"subtype\":\"interrupt\"" interrupt-wire)))
+    (is (eq :connected (claude-agent-sdk-cl:client-state client)))
+    (claude-agent-sdk-cl:disconnect client)))
+
 (test client-skips-unknown-events-without-ending-the-turn
   (let* ((events '())
          (claude-agent-sdk-cl::*transport-log-function*

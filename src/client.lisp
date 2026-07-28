@@ -354,6 +354,20 @@ an error response, while a handler returning a JSON object emits success."
                     "request" (%client-json-object "subtype" subtype "hooks" nil)))
     (%client-await-response client request-id subtype)))
 
+(defun %client-request-control (client subtype)
+  "Write a correlated control request without becoming a concurrent reader.
+
+The receive owner later consumes and routes the response. This is required for
+cancellation requests issued while that owner is blocked on transport input."
+  (let* ((router (client-router client))
+         (request-id (next-request-id router)))
+    (register-request router request-id)
+    (%client-write client
+                   (%client-json-object
+                    "type" "control_request" "request_id" request-id
+                    "request" (%client-json-object "subtype" subtype "hooks" nil)))
+    request-id))
+
 (defun connect (client)
   "Start CLIENT and complete its initialize control handshake."
   (%require-client-state client :connect '(:new))
@@ -409,6 +423,15 @@ The client remains :CONNECTED after the result, ready for another `send`."
             (when (typep message 'result-message)
               (return (nreverse messages)))
           finally (return (nreverse messages)))))
+
+(defun request-interrupt (client)
+  "Request interruption without waiting for a correlated response.
+
+Use this from a cancellation path while another owner is blocked in
+`receive-message`; that owner remains the only reader of the client stream."
+  (%require-client-state client :request-interrupt '(:connected))
+  (%client-request-control client "interrupt")
+  client)
 
 (defun interrupt (client)
   "Send/correlate the upstream interrupt control request."
