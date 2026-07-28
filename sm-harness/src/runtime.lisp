@@ -101,7 +101,8 @@
        (%publish rt :tool-requested payload)
        nil)
       (:tool-completed
-       (%append-transcript rt "assistant" "Tool completed"
+       (%append-transcript rt "assistant"
+                           (format nil "Tool completed: ~A" (getf payload :content))
                            :kind "tool" :meta payload)
        (%publish rt :tool-completed payload)
        nil)

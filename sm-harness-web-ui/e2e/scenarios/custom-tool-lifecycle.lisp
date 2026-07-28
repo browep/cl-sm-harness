@@ -11,8 +11,21 @@
     (%e2e-step "press" "selector" "#prompt" "key" "Enter")
     (%e2e-step "wait_text" "selector" ".msg-tool"
                "text" "Tool requested: mcp__sm_harness__echo_text")
-    (%e2e-step "wait_text" "selector" ".msg-tool" "text" "Tool completed")
+    (%e2e-step "wait_text" "selector" ".msg-tool"
+               "text" "Tool completed: echo: browser-actual")
+    (%e2e-step "assert_text_count" "selector" ".msg-tool"
+               "text" "Tool requested: mcp__sm_harness__echo_text" "count" 1)
+    (%e2e-step "assert_text_count" "selector" ".msg-tool"
+               "text" "Tool completed: echo: browser-actual" "count" 1)
     (%e2e-step "wait_text" "selector" ".msg-assistant"
                "text" "custom tool lifecycle complete")
     (%e2e-step "wait_text" "selector" "#status-chip" "text" "Ready")
-    (%e2e-step "wait_text" "selector" "#canonical-id" "text" "e2e-canon"))))
+    (%e2e-step "wait_text" "selector" "#canonical-id" "text" "e2e-canon")
+    (%e2e-step "click" "selector" "#back-home")
+    (%e2e-step "wait" "selector" "#home-root" "state" "visible")
+    (%e2e-step "click" "selector" ".session-row")
+    (%e2e-step "wait" "selector" "#chat-root" "state" "visible")
+    (%e2e-step "wait_text" "selector" ".msg-tool"
+               "text" "Tool completed: echo: browser-actual")
+    (%e2e-step "assert_text_count" "selector" ".msg-tool"
+               "text" "Tool completed: echo: browser-actual" "count" 1))))
