@@ -5,6 +5,7 @@
   ((chunks :initarg :chunks :accessor e2e-chunks)
    (writes :initform '() :accessor e2e-writes)
    (read-count :initform 0 :accessor e2e-read-count)
+   (mcp-response-count :initform 0 :accessor e2e-mcp-response-count)
    (fail-writes-p :initarg :fail-writes-p :initform nil :accessor e2e-fail-writes-p)
    ;; Lets browser E2E observe the real busy/responding transition without
    ;; arbitrary test-side sleeps.
@@ -23,16 +24,15 @@
   (pop (e2e-chunks tport)))
 
 (defun %e2e-mcp-result-text (input)
-  "Read only the generated result from an SDK MCP control response."
+  "Read the generated result from an SDK MCP control response."
   (handler-case
       (let* ((outer (yason:parse input))
              (response (gethash "response" outer))
-             (payload (and (hash-table-p response) (gethash "response" response)))
-             (mcp-response (and (hash-table-p payload) (gethash "mcp_response" payload)))
-             (result (and (hash-table-p mcp-response) (gethash "result" mcp-response)))
-             (content (and (hash-table-p result) (gethash "content" result)))
-             (first-content (and (listp content) (first content))))
-        (and (hash-table-p first-content) (gethash "text" first-content)))
+             (payload (gethash "response" response))
+             (mcp-response (gethash "mcp_response" payload))
+             (result (gethash "result" mcp-response))
+             (content (gethash "content" result)))
+        (gethash "text" (first content)))
     (error () nil)))
 
 (defun %e2e-tool-followup (result-text)
@@ -60,6 +60,8 @@
       ;; a lifecycle result if that correlation is absent or unexpected.
       (unless (string= result-text "echo: browser-actual")
         (error "fixture MCP tool result did not match the catalog handler"))
+      (unless (= 1 (incf (e2e-mcp-response-count tport)))
+        (error "fixture catalog tool handler ran more than once"))
       (setf (e2e-chunks tport)
             (append (e2e-chunks tport) (list (%e2e-tool-followup result-text))))))
   t)

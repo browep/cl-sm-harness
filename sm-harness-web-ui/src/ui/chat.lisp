@@ -70,7 +70,9 @@
                     (set-busy nil))
                    (t (add-line role text))))))
       (dolist (entry (sm-harness:session-snapshot-transcript snap))
-        (add-line (sm-harness:transcript-entry-role entry)
+        (add-line (if (string= "tool" (sm-harness:transcript-entry-kind entry))
+                      "tool"
+                      (sm-harness:transcript-entry-role entry))
                   (escape-text (sm-harness:transcript-entry-text entry))))
       (multiple-value-bind (snapshot lid cursor)
           (ui-attach session-id (lambda (ev) (ignore-errors (on-event ev))))
