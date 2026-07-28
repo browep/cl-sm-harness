@@ -19,7 +19,8 @@
         (e2e-streaming-layout-scenario)
         (e2e-errors-recovery-scenario)
         (e2e-safe-rendering-scenario)
-        (e2e-accessibility-scenario)))
+        (e2e-accessibility-scenario)
+        (e2e-custom-tool-lifecycle-scenario)))
 
 (defparameter +e2e-supported-ops+
   '("assert_text_count" "wait" "wait_text" "assert_text" "assert_title"

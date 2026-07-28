@@ -54,5 +54,11 @@
                      nl
                      "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"<script>e2e-xss</script> **not bold** [not-link](javascript:alert(1))\"}],\"model\":\"fixture\"}}"
                      nl
+                     "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"e2e-tool-1\",\"name\":\"mcp__sm_harness__echo_text\",\"input\":{\"text\":\"fixture\"}}],\"model\":\"fixture\"}}"
+                     nl
+                     "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e2e-tool-1\",\"content\":\"fixture\",\"is_error\":false}],\"model\":\"fixture\"}}"
+                     nl
+                     "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"custom tool lifecycle complete\"}],\"model\":\"fixture\"}}"
+                     nl
                      "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"e2e-canon\",\"result\":\"ok\"}"
                      nl)))))
