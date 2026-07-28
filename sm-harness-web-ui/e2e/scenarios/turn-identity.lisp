@@ -5,8 +5,15 @@
    "name" "turn-identity" "evidence_suffix" "history-reopen"
    "steps"
    (list
-    (%e2e-step "click" "selector" ".session-row")
+    ;; Provision the durable session in this scenario: suite runs never depend
+    ;; on state created by a previous browser context.
+    (%e2e-step "focus" "selector" "#new-session")
+    (%e2e-step "press" "key" "Enter")
     (%e2e-step "wait" "selector" "#chat-root" "state" "visible")
+    (%e2e-step "fill" "selector" "#prompt" "value" "hello e2e")
+    (%e2e-step "press" "selector" "#prompt" "key" "Enter")
+    (%e2e-step "wait_text" "selector" ".msg-assistant" "text" "e2e hello")
+    (%e2e-step "wait_text" "selector" "#status-chip" "text" "Ready")
     (%e2e-step "click" "selector" "#back-home")
     (%e2e-step "wait" "selector" "#home-root" "state" "visible")
     (%e2e-step "wait_text" "selector" ".session-row" "text" "New session — Ready — e2e-canon")
