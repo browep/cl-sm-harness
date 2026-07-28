@@ -52,6 +52,37 @@
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
+(test idle-eviction-reopens-with-canonical-resume-and-fresh-catalog
+  (let* ((root (temp-data-root))
+         (options-seen '())
+         (cfg (sm-harness:make-harness-config
+               :data-root root :idle-ttl-seconds 1
+               :transport-factory
+               (lambda (options)
+                 (push options options-seen)
+                 (make-simple-turn-transport))))
+         (h (sm-harness:make-harness :config cfg)))
+    (unwind-protect
+         (let* ((snap (sm-harness:start-session h :title "resume"))
+                (sid (sm-harness:session-snapshot-id snap))
+                (rt (sm-harness::%get-runtime h sid)))
+           (sm-harness:submit-turn h sid "first turn")
+           (is (wait-until (lambda ()
+                             (string= "canon-42"
+                                      (sm-harness:session-summary-canonical-id
+                                       (first (sm-harness:list-sessions h)))))))
+           (setf (sm-harness::session-runtime-last-activity rt) 0)
+           (is (equal (list sid) (sm-harness:evict-idle-sessions h)))
+           (is (null (sm-harness::%get-runtime h sid :errorp nil)))
+           (sm-harness:open-session h sid)
+           (sm-harness:submit-turn h sid "resumed turn")
+           (is (wait-until (lambda () (>= (length options-seen) 2))))
+           (let ((resumed-options (first options-seen)))
+             (is (string= "canon-42" (claude-agent-sdk-cl:agent-options-resume resumed-options)))
+             (is (plusp (length (claude-agent-sdk-cl:agent-options-sdk-mcp-servers resumed-options))))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
 (test empty-prompt-rejected
   (let* ((root (temp-data-root))
          (h (sm-harness:make-harness

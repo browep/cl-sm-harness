@@ -121,4 +121,5 @@
                     (set-busy t))
                 (error (c)
                   (setf (clog:text err) (format nil "~A" c))))))))
-      (clog:js-execute body "document.getElementById('prompt').focus()"))))
+      (clog:js-execute body
+                       "window.setTimeout(function () { document.getElementById('prompt').focus(); }, 0)"))))

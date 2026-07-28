@@ -29,7 +29,8 @@ async function executeStep(page, step) {
     case 'fill': return target().fill(step.value);
     case 'click': return target().click();
     case 'assert_title': return assert.equal(await page.title(), step.value);
-    case 'assert_active_id': return assert.equal(await page.evaluate(() => document.activeElement?.id), step.value);
+    case 'assert_active_id': return page.waitForFunction(
+      (value) => document.activeElement?.id === value, step.value, { timeout });
     case 'assert_disabled': return assert.equal(await target().isDisabled(), Boolean(step.value));
     case 'wait_disabled': return page.waitForFunction(({ selector, value }) => document.querySelector(selector)?.disabled === Boolean(value), { selector: step.selector, value: step.value }, { timeout });
     case 'assert_value': return assert.equal(await target().inputValue(), step.value);
@@ -47,7 +48,9 @@ async function executeStep(page, step) {
       }
       return;
     }
-    case 'assert_attribute': return assert.equal(await target().getAttribute(step.name), step.value);
+    case 'assert_attribute': return page.waitForFunction(
+      ({ selector, name, value }) => document.querySelector(selector)?.getAttribute(name) === value,
+      { selector: step.selector, name: step.name, value: step.value }, { timeout });
     case 'assert_overflow_fits': return assert.equal(await target().evaluate((node) => node.scrollWidth <= node.clientWidth), true);
     default: throw new Error(`unsupported E2E contract op: ${step.op}`);
   }

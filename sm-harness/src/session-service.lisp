@@ -46,6 +46,10 @@
 (defun open-session (harness session-id)
   (when (harness-closed-p harness)
     (error 'harness-state-error :message "harness is closed"))
+  ;; Opportunistic sweep makes idle eviction automatic without a second owner
+  ;; thread: reopening an old browser/session always reconstructs from durable
+  ;; state when its client aged out.
+  (evict-idle-sessions harness)
   (let ((existing (sb-thread:with-mutex ((harness-lock harness))
                     (gethash session-id (harness-sessions harness)))))
     (when existing
@@ -70,6 +74,32 @@
         (setf (session-record-active-turn-id (session-runtime-record rt)) turn-id)
         (%enqueue rt (list :turn turn-id prompt))
         turn-id))))
+
+(defun evict-idle-sessions (harness &key (now (get-universal-time)))
+  "Disconnect and unload idle, non-active runtimes while retaining durable records.
+A later OPEN-SESSION constructs a replacement client from the canonical ID."
+  (let ((ttl (harness-config-idle-ttl-seconds (harness-config harness)))
+        (victims '()))
+    (sb-thread:with-mutex ((harness-lock harness))
+      (maphash
+       (lambda (session-id rt)
+         (sb-thread:with-mutex ((session-runtime-lock rt))
+           (when (and (null (session-record-active-turn-id
+                             (session-runtime-record rt)))
+                      (>= (- now (session-runtime-last-activity rt)) ttl))
+             (push (cons session-id rt) victims))))
+       (harness-sessions harness))
+      (dolist (victim victims)
+        (remhash (car victim) (harness-sessions harness))))
+    (dolist (victim victims)
+      (let* ((rt (cdr victim))
+             (client (session-runtime-client rt)))
+        (setf (session-runtime-closed-p rt) t)
+        (%enqueue rt (cons :stop nil))
+        (when client
+          (ignore-errors (disconnect-client client))
+          (setf (session-runtime-client rt) nil))))
+    (mapcar #'car (nreverse victims))))
 
 (defun interrupt-turn (harness session-id &optional turn-id)
   (let* ((rt (%get-runtime harness session-id))
