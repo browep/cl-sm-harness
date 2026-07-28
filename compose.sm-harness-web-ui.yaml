@@ -32,6 +32,7 @@ services:
       SM_HARNESS_HOST: 0.0.0.0
       SM_HARNESS_PORT: "8080"
       WEB_UI_E2E: "1"
+      E2E_SCENARIO: ${E2E_SCENARIO:-}
       CL_SOURCE_REGISTRY: /app//
     volumes:
       - sm-harness-e2e-data:/data

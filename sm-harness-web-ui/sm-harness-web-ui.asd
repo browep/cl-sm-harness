@@ -29,6 +29,8 @@
                              (:file "direct-session-resume")
                              (:file "streaming-layout")
                              (:file "errors-recovery")
+                             (:file "connect-recovery")
+                             (:file "read-recovery")
                              (:file "safe-rendering")
                              (:file "accessibility")
                              (:file "stop-deadline")
