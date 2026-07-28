@@ -6,6 +6,9 @@
    (writes :initform '() :accessor e2e-writes)
    (read-count :initform 0 :accessor e2e-read-count)
    (mcp-response-count :initform 0 :accessor e2e-mcp-response-count)
+   (stop-mode-p :initform nil :accessor e2e-stop-mode-p)
+   (stop-lock :initform (sb-thread:make-mutex :name "e2e-stop") :reader e2e-stop-lock)
+   (stop-cv :initform (sb-thread:make-waitqueue :name "e2e-stop") :reader e2e-stop-cv)
    (fail-writes-p :initarg :fail-writes-p :initform nil :accessor e2e-fail-writes-p)
    ;; Lets browser E2E observe the real busy/responding transition without
    ;; arbitrary test-side sleeps.
@@ -20,8 +23,17 @@
   tport)
 (defmethod claude-agent-sdk-cl:read-client-chunk ((tport e2e-fake-transport))
   (when (= (incf (e2e-read-count tport)) 2)
+    (sb-thread:with-mutex ((e2e-stop-lock tport))
+      (loop while (e2e-stop-mode-p tport) do
+        (sb-thread:condition-wait (e2e-stop-cv tport) (e2e-stop-lock tport))))
     (sleep (e2e-delay-before-second-read-seconds tport)))
   (pop (e2e-chunks tport)))
+
+(defun %e2e-stop-terminal ()
+  (let ((nl (string #\Newline)))
+    (concatenate 'string
+                 "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"request-2\"}}" nl
+                 "{\"type\":\"result\",\"subtype\":\"interrupted\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"e2e-canon\",\"result\":\"stopped by e2e\"}" nl)))
 
 (defun %e2e-mcp-result-text (input)
   "Read the generated result from an SDK MCP control response."
@@ -48,6 +60,14 @@
 
 (defmethod claude-agent-sdk-cl:write-client-input ((tport e2e-fake-transport) input)
   (push input (e2e-writes tport))
+  (when (search "stop e2e" input)
+    (setf (e2e-stop-mode-p tport) t))
+  (when (and (e2e-stop-mode-p tport)
+             (search "\"subtype\":\"interrupt\"" input))
+    (sb-thread:with-mutex ((e2e-stop-lock tport))
+      (setf (e2e-chunks tport) (list (%e2e-stop-terminal))
+            (e2e-stop-mode-p tport) nil)
+      (sb-thread:condition-notify (e2e-stop-cv tport))))
   (when (and *e2e-retry-failure-available*
              (e2e-fail-writes-p tport)
              (search "retry e2e" input))

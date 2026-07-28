@@ -49,6 +49,9 @@
 (defun send-prompt (client prompt &key (session-id "default"))
   (claude-agent-sdk-cl:send client prompt :session-id session-id))
 
+(defun request-interrupt-client (client)
+  (claude-agent-sdk-cl:request-interrupt client))
+
 (defun interrupt-client (client)
   (claude-agent-sdk-cl:interrupt client))
 

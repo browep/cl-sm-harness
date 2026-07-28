@@ -10,6 +10,8 @@
   (mailbox-lock (sb-thread:make-mutex :name "session-mailbox"))
   (mailbox-cv (sb-thread:make-waitqueue :name "session-mailbox"))
   (closed-p nil)
+  cancellation-reason
+  deadline-thread
   last-activity)
 
 (defstruct (harness (:constructor %make-harness))
@@ -130,46 +132,78 @@
        (%publish rt etype payload)
        nil))))
 
+(defun %request-cancellation (rt turn-id reason)
+  "Request a turn stop without waiting behind the session read owner."
+  (let ((client nil))
+    (sb-thread:with-mutex ((session-runtime-lock rt))
+      (when (and (string= turn-id (or (session-record-active-turn-id
+                                       (session-runtime-record rt)) ""))
+                 (null (session-runtime-cancellation-reason rt)))
+        (setf (session-runtime-cancellation-reason rt) reason
+              client (session-runtime-client rt))
+        (%set-status rt :stopping)))
+    (when client
+      ;; This write has no synchronous read/response wait, so the worker remains
+      ;; the sole SDK reader while blocked in RECEIVE-ONE-MESSAGE.
+      (ignore-errors (request-interrupt-client client))
+      ;; The SDK reader owns transport lifecycle.  A deadline therefore emits
+      ;; the same writer-only cancellation request and lets that reader consume
+      ;; the correlated response/terminal event without racing router teardown.
+      )
+    reason))
+
+(defun %start-deadline-watchdog (harness rt turn-id)
+  (let ((seconds (harness-config-turn-deadline-seconds (harness-config harness))))
+    (setf (session-runtime-deadline-thread rt)
+          (sb-thread:make-thread
+           (lambda ()
+             (sleep seconds)
+             (%request-cancellation rt turn-id :deadline))
+           :name (format nil "sm-deadline-~A" turn-id)))))
+
+(defun %finish-cancellation (rt)
+  (case (session-runtime-cancellation-reason rt)
+    (:interrupt
+     (%publish rt :terminal (list :text "turn interrupted" :is-error nil))
+     (%set-status rt :ready))
+    (:deadline
+     (%publish rt :error (list :message "turn deadline exceeded"))
+     (%set-status rt :error))))
+
 (defun %run-turn (harness rt turn-id prompt)
-  (let ((rec (session-runtime-record rt))
-        (deadline (harness-config-turn-deadline-seconds (harness-config harness))))
+  (let ((rec (session-runtime-record rt)))
     (handler-case
         (progn
           (setf (session-record-active-turn-id rec) turn-id)
           (%append-transcript rt "user" prompt)
           (%publish rt :user-message (list :text prompt :turn-id turn-id))
           (repository-save-session (harness-repository harness) rec)
+          (setf (session-runtime-cancellation-reason rt) nil)
           (let* ((resume (session-record-canonical-id rec))
                  (client (%ensure-client harness rt :resume resume))
-                 (start (get-universal-time))
                  (done nil))
             (%set-status rt :responding)
             (send-prompt client prompt
                          :session-id (or (session-record-canonical-id rec)
                                          (session-record-id rec)))
+            (%start-deadline-watchdog harness rt turn-id)
             (loop until done do
-              (when (> (- (get-universal-time) start) deadline)
-                (%set-status rt :stopping)
-                (ignore-errors (interrupt-client client))
-                (%publish rt :error (list :message "turn deadline exceeded"))
-                (ignore-errors (disconnect-client client))
-                (setf (session-runtime-client rt) nil)
-                (%set-status rt :error)
-                (setf done t))
-              (unless done
-                (let ((msg (receive-one-message client)))
-                  (cond
-                    ((null msg)
-                     (%set-status rt :disconnected)
-                     (setf (session-runtime-client rt) nil)
-                     (setf done t))
-                    (t
-                     (dolist (mapped (map-sdk-message msg))
-                       (when (eq :done (%handle-mapped-event rt rec mapped))
-                         (setf done t))))))))
+              (let ((msg (receive-one-message client)))
+                (cond
+                  ((null msg)
+                   (if (session-runtime-cancellation-reason rt)
+                       (%finish-cancellation rt)
+                       (%set-status rt :disconnected))
+                   (setf (session-runtime-client rt) nil
+                         done t))
+                  (t
+                   (dolist (mapped (map-sdk-message msg))
+                     (when (eq :done (%handle-mapped-event rt rec mapped))
+                       (setf done t))))))
+            (setf (session-runtime-cancellation-reason rt) nil)
             (setf (session-record-active-turn-id rec) nil)
             (repository-save-session (harness-repository harness) rec)
-            (%touch rt)))
+            (%touch rt))))
       (error (c)
         (setf (session-record-active-turn-id rec) nil)
         (%publish rt :error (safe-error-payload c))

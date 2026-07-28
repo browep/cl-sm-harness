@@ -72,15 +72,15 @@
         turn-id))))
 
 (defun interrupt-turn (harness session-id &optional turn-id)
-  (let ((rt (%get-runtime harness session-id)))
-    (sb-thread:with-mutex ((session-runtime-lock rt))
-      (let ((active (session-record-active-turn-id (session-runtime-record rt))))
-        (cond
-          ((null active) nil)
-          ((and turn-id (not (string= turn-id active))) nil)
-          (t
-           (%enqueue rt (list :interrupt))
-           active))))))
+  (let* ((rt (%get-runtime harness session-id))
+         (active (sb-thread:with-mutex ((session-runtime-lock rt))
+                   (session-record-active-turn-id (session-runtime-record rt)))))
+    (cond
+      ((null active) nil)
+      ((and turn-id (not (string= turn-id active))) nil)
+      (t
+       (%request-cancellation rt active :interrupt)
+       active))))
 
 (defun attach-session-listener (harness session-id &key callback)
   (let* ((rt (%get-runtime harness session-id))
