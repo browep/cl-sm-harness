@@ -85,7 +85,8 @@
           (when listener-id (ui-detach session-id listener-id))
           (clear-body body)
           (render-home body)
-          (clog:js-execute body "document.getElementById('new-session').focus()")))
+          (clog:js-execute body
+                           "window.setTimeout(function () { document.getElementById('new-session').focus(); }, 0)")))
       (clog:set-on-click send-btn
         (lambda (obj)
           (declare (ignore obj))
@@ -120,4 +121,4 @@
                     (set-busy t))
                 (error (c)
                   (setf (clog:text err) (format nil "~A" c))))))))
-      (clog:focus input))))
+      (clog:js-execute body "document.getElementById('prompt').focus()"))))
