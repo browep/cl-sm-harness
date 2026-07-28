@@ -4,6 +4,13 @@
 set -eu
 compose_file=compose.sm-harness-web-ui.yaml
 project="${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}"
+artifact_dir="${E2E_ARTIFACTS_DIR:-$HOME/evidence/sm-harness-web-ui-e2e/latest}"
+export E2E_ARTIFACTS_DIR="$artifact_dir"
+
+# Caddy serves this host directory directly. Clear stale evidence before each
+# disposable run, then let the browser container write the new artifacts here.
+sudo -n install -d -m 0755 "$artifact_dir"
+sudo -n find "$artifact_dir" -mindepth 1 -maxdepth 1 -type f -delete
 
 docker compose -f "$compose_file" down --remove-orphans
 # Reset only disposable browser state/evidence. Keep the dependency FASL cache so

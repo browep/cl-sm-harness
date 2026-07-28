@@ -51,7 +51,8 @@ services:
       dockerfile: Dockerfile
     image: sm-harness-web-ui-e2e:local
     volumes:
-      - sm-harness-e2e-artifacts:/artifacts
+      # Host bind mount keeps browser evidence available to Caddy immediately.
+      - ${E2E_ARTIFACTS_DIR:-./evidence/sm-harness-web-ui-e2e/latest}:/artifacts
     environment:
       BASE_URL: http://web-ui-e2e-app:8080
       ARTIFACTS: /artifacts
