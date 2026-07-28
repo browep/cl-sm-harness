@@ -2,6 +2,12 @@
 # Host-only retained-volume restart proof. Browser E2E never receives Docker access.
 set -eu
 compose_file=compose.sm-harness-web-ui.yaml
+artifact_dir="${E2E_ARTIFACTS_DIR:-$HOME/evidence/sm-harness-web-ui-e2e/latest}"
+export E2E_ARTIFACTS_DIR="$artifact_dir"
+
+# Keep retained-volume test artifacts directly in Caddy's served evidence tree.
+sudo -n install -d -m 0755 "$artifact_dir"
+sudo -n find "$artifact_dir" -mindepth 1 -maxdepth 1 -type f -delete
 
 wait_for_app() {
   i=0

@@ -15,10 +15,20 @@ docker compose -f compose.sm-harness-web-ui.yaml up --build web-ui
 sg docker -c './scripts/run-web-ui-e2e.sh'
 ```
 
-The host-side script resets the disposable E2E volumes, builds the app/runner,
-waits for the CLOG fixture service, and runs Playwright on an internal-only
-network. The Playwright container has neither Docker access nor provider
-credentials. `WEB_UI_E2E=1` injects a deterministic SDK transport.
+The host-side script resets disposable E2E state, builds the app/runner, waits
+for the CLOG fixture service, and runs Playwright on an internal-only network.
+The Playwright container has neither Docker access nor provider credentials.
+`WEB_UI_E2E=1` injects a deterministic SDK transport.
+
+Evidence defaults to the Caddy-served host directory:
+
+```text
+$HOME/evidence/sm-harness-web-ui-e2e/latest/
+```
+
+Override it per run with `E2E_ARTIFACTS_DIR=/absolute/path`. On this host, the
+default is browsable through the Tailnet at
+`https://frosty-hermes.tail6638cf.ts.net/e2e-evidence/latest/`.
 
 ## Lisp-owned browser E2E contract
 
@@ -76,10 +86,10 @@ Lisp scenario rather than relying on an earlier page/context.
    ```
 
 The generic bridge rejects a scenario absent from the Lisp contract or an
-unsupported action. A successful scenario emits a descriptive PNG and a
-Playwright-native WebM in the disposable `sm-harness-e2e-artifacts` volume.
-Export evidence to a host directory before tearing down a run when it must be
-retained outside Docker.
+unsupported action. Each successful scenario emits a descriptive PNG and a
+UTC-timestamped Playwright-native WebM directly into the default Caddy-served
+host directory (or the `E2E_ARTIFACTS_DIR` override); no Docker-volume export
+step is required.
 
 ### Current recovery coverage
 
