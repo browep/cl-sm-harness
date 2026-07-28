@@ -21,6 +21,31 @@
   (when (= (incf (e2e-read-count tport)) 2)
     (sleep (e2e-delay-before-second-read-seconds tport)))
   (pop (e2e-chunks tport)))
+
+(defun %e2e-mcp-result-text (input)
+  "Read only the generated result from an SDK MCP control response."
+  (handler-case
+      (let* ((outer (yason:parse input))
+             (response (gethash "response" outer))
+             (payload (and (hash-table-p response) (gethash "response" response)))
+             (mcp-response (and (hash-table-p payload) (gethash "mcp_response" payload)))
+             (result (and (hash-table-p mcp-response) (gethash "result" mcp-response)))
+             (content (and (hash-table-p result) (gethash "content" result)))
+             (first-content (and (listp content) (first content))))
+        (and (hash-table-p first-content) (gethash "text" first-content)))
+    (error () nil)))
+
+(defun %e2e-tool-followup (result-text)
+  "Return the post-handler CLI events, derived from the real handler response."
+  (let ((nl (string #\Newline)))
+    (concatenate 'string
+                 (format nil "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e2e-tool-1\",\"content\":\"~A\",\"is_error\":false}],\"model\":\"fixture\"}}" result-text)
+                 nl
+                 "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"custom tool lifecycle complete\"}],\"model\":\"fixture\"}}"
+                 nl
+                 "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"e2e-canon\",\"result\":\"ok\"}"
+                 nl)))
+
 (defmethod claude-agent-sdk-cl:write-client-input ((tport e2e-fake-transport) input)
   (push input (e2e-writes tport))
   (when (and *e2e-retry-failure-available*
@@ -29,6 +54,14 @@
     (setf *e2e-retry-failure-available* nil
           (e2e-fail-writes-p tport) nil)
     (error "fixture protocol secret: send failed"))
+  (let ((result-text (%e2e-mcp-result-text input)))
+    (when result-text
+      ;; A real session-start MCP handler produced this response.  Do not emit
+      ;; a lifecycle result if that correlation is absent or unexpected.
+      (unless (string= result-text "echo: browser-actual")
+        (error "fixture MCP tool result did not match the catalog handler"))
+      (setf (e2e-chunks tport)
+            (append (e2e-chunks tport) (list (%e2e-tool-followup result-text))))))
   t)
 (defmethod claude-agent-sdk-cl:close-client-transport ((tport e2e-fake-transport) &key reason)
   (declare (ignore reason))
@@ -54,11 +87,7 @@
                      nl
                      "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"<script>e2e-xss</script> **not bold** [not-link](javascript:alert(1))\"}],\"model\":\"fixture\"}}"
                      nl
-                     "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"e2e-tool-1\",\"name\":\"mcp__sm_harness__echo_text\",\"input\":{\"text\":\"fixture\"}}],\"model\":\"fixture\"}}"
+                     "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"e2e-tool-1\",\"name\":\"mcp__sm_harness__echo_text\",\"input\":{\"text\":\"browser-actual\"}}],\"model\":\"fixture\"}}"
                      nl
-                     "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e2e-tool-1\",\"content\":\"fixture\",\"is_error\":false}],\"model\":\"fixture\"}}"
-                     nl
-                     "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"custom tool lifecycle complete\"}],\"model\":\"fixture\"}}"
-                     nl
-                     "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"e2e-canon\",\"result\":\"ok\"}"
+                     "{\"type\":\"control_request\",\"request_id\":\"e2e-tool-call\",\"request\":{\"subtype\":\"mcp_message\",\"server_name\":\"sm_harness\",\"message\":{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"echo_text\",\"arguments\":{\"text\":\"browser-actual\"}}}}}"
                      nl)))))

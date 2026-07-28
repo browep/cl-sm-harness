@@ -31,7 +31,8 @@
       (:tool-requested
        (cons "tool" (escape-text (format nil "Tool requested: ~A" (getf payload :name)))))
       (:tool-completed
-       (cons "tool" "Tool completed"))
+       (cons "tool"
+             (escape-text (format nil "Tool completed: ~A" (getf payload :content)))))
       (:tool-failed
        (cons "tool" "Tool failed"))
       (:terminal
