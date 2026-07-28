@@ -23,25 +23,13 @@
 (defun %sdk-catalog (catalog)
   (mapcar #'%sdk-server-from-definition (tool-catalog-servers catalog)))
 
-(defun %can-use-tool-handler (policy)
-  "Adapt product policy data to the SDK's permission-result protocol."
-  (lambda (request)
-    (let ((decision (tool-permission-decision policy request)))
-      (if (getf decision :allow)
-          (claude-agent-sdk-cl:make-permission-result-allow)
-          (claude-agent-sdk-cl:make-permission-result-deny
-           :message (getf decision :message)
-           :interrupt nil)))))
-
 (defun build-agent-options (catalog policy &key resume model)
-  "Map harness catalog/policy to merged session-start SDK options."
+  "Map catalog availability to session-start options with automatic execution."
   (claude-agent-sdk-cl:make-agent-options
    :builtin-tools (tool-policy-builtin-tools policy)
    :sdk-mcp-servers (%sdk-catalog catalog)
    :strict-mcp-config (tool-policy-strict-mcp-p policy)
-   :allowed-tools (tool-policy-allowed-tools policy)
-   :disallowed-tools (tool-policy-disallowed-tools policy)
-   :permission-mode (tool-policy-permission-mode policy)
+   :permission-mode "bypassPermissions"
    :resume resume
    :model model))
 

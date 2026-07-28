@@ -76,11 +76,9 @@
                                        :model (harness-config-model cfg)))
          (factory (harness-config-transport-factory cfg))
          (transport (when factory (funcall factory options)))
-         (handlers (list (cons "can_use_tool" (%can-use-tool-handler policy))))
          (client (make-sdk-client options
                                   :transport transport
-                                  :cli-path (harness-config-cli-path cfg)
-                                  :control-handlers handlers)))
+                                  :cli-path (harness-config-cli-path cfg))))
     (setf (session-runtime-client rt) client)
     (%set-status rt :connecting)
     (connect-client client)
