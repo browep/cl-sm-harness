@@ -40,8 +40,12 @@ COPY --chown=app:app claude-agent-sdk-cl.asd /app/claude-agent-sdk-cl.asd
 COPY --chown=app:app src /app/src
 COPY --chown=app:app sm-harness /app/sm-harness
 COPY --chown=app:app sm-harness-web-ui /app/sm-harness-web-ui
+COPY docker/claude-agent-sdk-cl-supervisor.c /tmp/claude-agent-sdk-cl-supervisor.c
 COPY sm-harness-web-ui/docker/entrypoint.sh /usr/local/bin/sm-harness-web-ui-entrypoint
-RUN chmod 0755 /usr/local/bin/sm-harness-web-ui-entrypoint \
+RUN mkdir -p /usr/local/libexec \
+ && cc -O2 -Wall -Wextra -o /usr/local/libexec/claude-agent-sdk-cl-supervisor /tmp/claude-agent-sdk-cl-supervisor.c \
+ && rm /tmp/claude-agent-sdk-cl-supervisor.c \
+ && chmod 0755 /usr/local/bin/sm-harness-web-ui-entrypoint \
  && mkdir -p /app/static \
  && cp -a /opt/quicklisp/dists/quicklisp/software/clog-*/static-files/. /app/static/ \
  && cp -a /app/sm-harness-web-ui/static/. /app/static/ \
