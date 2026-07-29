@@ -172,3 +172,92 @@ mid-line. `*session-event-log-stream*` is a global (not per-call dynamic)
 binding specifically so it stays swappable by tests despite each session
 running on its own worker thread, which does not inherit another thread's
 `LET` bindings.
+
+## Debugging a stuck session
+
+The procedure below reconstructed a real wedge end-to-end (session
+`sess-3994332033-243035`, 2026-07-29 — see #79/#80/#81 for what it found).
+Work outside-in: event log first, then the container's processes, then the
+harness's own threads.
+
+### 1. Read the session's event timeline
+
+```bash
+docker compose -f compose.sm-harness-web-ui.yaml logs web-ui \
+  | grep SM-HARNESS-EVENT | grep '"session_id":"sess-XXXX"' > /tmp/session.log
+# The status/terminal skeleton is usually enough to see the shape of a turn:
+grep -E '"type":"(status|terminal|error)"' /tmp/session.log
+tail -20 /tmp/session.log
+```
+
+Signatures to recognize in the tail:
+
+- **`status: stopping` at *exactly* `turn-deadline-seconds` (default 120)
+  after the last `status: responding`** — the per-turn deadline watchdog
+  fired (`%start-deadline-watchdog`, `config.lisp`), not a user Stop. A
+  turn whose tool calls legitimately run long will hit this every time
+  (#80).
+- **`stopping` followed by a `terminal` in the same second, then `ready`**
+  — a deadline/interrupt that worked: the CLI aborted and the worker
+  consumed the result. Normal, if abrupt.
+- **`stopping` and then *nothing*, ever** — the worker is wedged. The
+  worker thread is both the sole SDK reader and the synchronous MCP tool
+  executor, so if it is blocked inside a tool handler (e.g. a `bash` child
+  that survived its timeout, #79), no interrupt result can ever be
+  consumed. Go to step 2.
+- **A `tool-requested` with no matching `tool-completed`/`tool-failed`** —
+  identifies the in-flight tool call the worker is blocked on; its
+  `input` shows the exact command.
+
+### 2. Inspect the container's processes
+
+The web-ui image has **no procps** (`ps`, `kill` are absent — see #79);
+use `/proc` directly:
+
+```bash
+docker exec claude-agent-sdk-cl-web-ui-1 sh -c \
+  'for p in /proc/[0-9]*; do pid=${p#/proc/}; \
+     echo "$pid ppid=$(awk "/^PPid:/{print \$2}" $p/status) \
+$(awk "/^State:/{print \$2}" $p/status) $(cat $p/comm) :: \
+$(tr "\0" " " < $p/cmdline | cut -c1-120)"; done'
+```
+
+What to look for: a leftover tool-command process tree (a `/bin/sh -c ...`
+whose start time matches the unmatched `tool-requested`), and whether the
+Claude CLI subprocess is present at all — a dead CLI with a still-blocked
+worker is the #79 wedge. Process-group membership (field 5 of
+`/proc/PID/stat`) tells you what a group signal would have reached.
+
+### 3. Inspect the harness's threads
+
+```bash
+docker exec claude-agent-sdk-cl-web-ui-1 sh -c \
+  'for t in /proc/1/task/*; do echo "${t##*/} \
+$(awk "{print \$3}" $t/stat) wchan=$(cat $t/wchan)"; done'
+```
+
+Threads in state `R` with `wchan=0` are spinning; sample
+`utime`/`stime` (fields 14/15 of `/proc/1/task/TID/stat`) a few seconds
+apart to confirm. Spinning readers after a CLI death are #81.
+
+### 4. Remediation
+
+- A wedged worker cannot be recovered in place — even killing the orphaned
+  tool process group only moves the worker into a spin (#81). **Restart
+  the container.**
+- Graceful shutdown currently crashes on SIGTERM (#82), which leaves the
+  data-root lock behind; a same-boot restart then refuses to boot with
+  `"data root is locked by another sm-harness process"` (#83). Clear it
+  with:
+
+  ```bash
+  docker run --rm -v claude-agent-sdk-cl_sm-harness-data:/data \
+    busybox rm /data/.harness.lock
+  docker compose -f compose.sm-harness-web-ui.yaml up -d web-ui
+  ```
+
+- Kill any orphaned tool process group first (shell builtin, since the
+  image has no `kill` binary): `docker exec claude-agent-sdk-cl-web-ui-1
+  sh -c 'kill -KILL -<pgid>'`. Note the harness (PID 1) does not reap
+  reparented grandchildren, so expect a harmless zombie until restart
+  (#81).
