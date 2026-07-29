@@ -81,6 +81,12 @@
           (error "WEB_UI_E2E requires the sm-harness-web-ui/e2e-contract ASDF system"))
         (funcall (symbol-function writer))))
     (start-web-ui :harness harness
-                  :config (make-web-ui-config :host host :port port
-                                              :static-root #P"/app/static/"))
+                  :config (make-web-ui-config
+                           :host host :port port
+                           ;; Overridable because the image assembles CLOG's
+                           ;; static files outside /app (#90): a bind-mounted
+                           ;; repo at /app would shadow a baked /app/static.
+                           :static-root (uiop:ensure-directory-pathname
+                                         (or (uiop:getenv "SM_HARNESS_STATIC_ROOT")
+                                             "/app/static/"))))
     (%run-until-shutdown)))

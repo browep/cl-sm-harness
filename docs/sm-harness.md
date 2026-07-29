@@ -99,11 +99,12 @@ own working directory.
 
 Recompiles and reloads changed Lisp source into the *running* image via
 ASDF (see #65), so an edit made with `write_file` to this project's own
-source takes effect without a container restart. This works today because
-the `web-ui` image's filesystem is writable (no `read_only: true`, running
-as the existing non-root `app` user) and `CL_SOURCE_REGISTRY=/app//` is
-already configured, even though the image bakes source in at build time
-rather than mounting it live.
+source takes effect without a container restart. `CL_SOURCE_REGISTRY=/app//`
+covers everything under `/app`, and since #90 the compose `web-ui` service
+bind-mounts the host repo at `/app` (container user uid-matched to the
+repo owner), so those edits also **persist on the host across container
+restarts** instead of dying with the container. The image still bakes a
+source copy at build time for the bind-mount-free e2e services.
 
 Calling `(asdf:load-system *reload-harness-system* :force force)` *is* the
 implementation: ASDF's own timestamp-aware incremental compilation already

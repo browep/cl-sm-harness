@@ -4,13 +4,19 @@ services:
       context: .
       dockerfile: sm-harness-web-ui/Dockerfile
     image: sm-harness-web-ui:local
-    user: "10001:10001"
+    # Matches the host repo owner so the /app bind mount below is writable
+    # (#90); the image's app user is built with this uid.
+    user: "1000:1000"
     environment:
       SM_HARNESS_DATA: /data
       SM_HARNESS_HOST: 0.0.0.0
       SM_HARNESS_PORT: "8080"
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
     volumes:
+      # Live repo at /app (#90): write_file/reload_harness edits persist on
+      # the host instead of dying with the container. CLOG static assets are
+      # baked at /opt/app-static so this mount cannot shadow them.
+      - .:/app
       - sm-harness-data:/data
       - sm-harness-cache:/cache
     ports:
@@ -28,7 +34,7 @@ services:
       context: .
       dockerfile: sm-harness-web-ui/Dockerfile
     image: sm-harness-web-ui:local
-    user: "10001:10001"
+    user: "1000:1000"
     environment:
       SM_HARNESS_DATA: /data
       SM_HARNESS_HOST: 0.0.0.0

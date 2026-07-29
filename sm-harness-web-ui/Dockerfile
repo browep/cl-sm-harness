@@ -4,6 +4,9 @@ FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca440
 
 ARG SBCL_VERSION
 ARG CLAUDE_CODE_VERSION=2.1.219
+# Matches the host repo owner so the /app bind mount (#90) is writable by
+# the container user and edits land on the host with the right ownership.
+ARG APP_UID=1000
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
@@ -17,8 +20,17 @@ RUN apt-get update \
       build-essential \
       libsqlite3-dev \
       procps \
+      sudo \
  && npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
- && useradd --create-home --uid 10001 --shell /usr/sbin/nologin app \
+ # The base image's "node" user already holds uid 1000; replace it rather
+ # than stacking a second uid (#90).
+ && userdel -r node \
+ && useradd --create-home --uid ${APP_UID} --shell /usr/sbin/nologin app \
+ # Passwordless sudo for the app user (#89): a deliberate extension of this
+ # project's documented no-sandbox posture (#61) -- the harness's own
+ # container/tailnet boundary is the isolation layer, nothing inside it is.
+ && printf 'app ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/app \
+ && chmod 0440 /etc/sudoers.d/app \
  && mkdir -p /cache /data /opt/quicklisp /app \
  && chown -R app:app /cache /data /opt/quicklisp /app \
  && apt-get clean \
@@ -47,10 +59,12 @@ RUN mkdir -p /usr/local/libexec \
  && cc -O2 -Wall -Wextra -o /usr/local/libexec/claude-agent-sdk-cl-supervisor /tmp/claude-agent-sdk-cl-supervisor.c \
  && rm /tmp/claude-agent-sdk-cl-supervisor.c \
  && chmod 0755 /usr/local/bin/sm-harness-web-ui-entrypoint \
- && mkdir -p /app/static \
- && cp -a /opt/quicklisp/dists/quicklisp/software/clog-*/static-files/. /app/static/ \
- && cp -a /app/sm-harness-web-ui/static/. /app/static/ \
- && chown -R app:app /app /home/app
+ # Assembled OUTSIDE /app on purpose: the compose web-ui service bind-mounts
+ # the host repo over /app (#90), which would shadow anything baked there.
+ && mkdir -p /opt/app-static \
+ && cp -a /opt/quicklisp/dists/quicklisp/software/clog-*/static-files/. /opt/app-static/ \
+ && cp -a /app/sm-harness-web-ui/static/. /opt/app-static/ \
+ && chown -R app:app /app /home/app /opt/app-static
 
 USER app
 WORKDIR /app
@@ -59,7 +73,8 @@ ENV HOME=/home/app \
     XDG_CACHE_HOME=/cache \
     SM_HARNESS_DATA=/data \
     SM_HARNESS_HOST=0.0.0.0 \
-    SM_HARNESS_PORT=8080
+    SM_HARNESS_PORT=8080 \
+    SM_HARNESS_STATIC_ROOT=/opt/app-static
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/sm-harness-web-ui-entrypoint"]
 CMD ["web"]

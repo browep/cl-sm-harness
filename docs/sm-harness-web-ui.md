@@ -14,6 +14,29 @@ logged to this container's stdout as they happen, tagged with the session
 id — see [Operator diagnostics in docs/sm-harness.md](sm-harness.md#operator-diagnostics-per-session-event-logging)
 for the log format and how to grep it per session.
 
+## Container privileges and the live repo mount
+
+Two deliberate extensions of the project's documented no-sandbox posture
+(#61) — the container/tailnet boundary is the isolation layer, nothing
+inside it is:
+
+- **Passwordless sudo (#89)**: the `app` user has `NOPASSWD:ALL` via
+  `/etc/sudoers.d/app`, so `bash`-tool commands can install packages and
+  act as root inside the container.
+- **Live repo at `/app` (#90)**: the compose `web-ui` service bind-mounts
+  the host repo over `/app`. `write_file`/`reload_harness` edits therefore
+  persist on the host across container restarts, and are ordinary git
+  changes there. To make the mount writable, the image's `app` user is
+  built with uid 1000 (`APP_UID` build arg) matching the host repo owner —
+  the base image's `node` user, which held uid 1000, is removed at build.
+  CLOG's static assets are assembled at `/opt/app-static`
+  (`SM_HARNESS_STATIC_ROOT`), outside the mount's shadow. The entrypoint
+  self-heals `/data`/`/cache` volume ownership via sudo when those volumes
+  were created under the old image uid (10001).
+
+The `web-ui-e2e-app` service keeps its narrower read-only source mounts and
+the baked-in source copy; only `web-ui` gets the writable repo mount.
+
 ## Fixture E2E
 
 ```bash
