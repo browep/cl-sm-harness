@@ -201,7 +201,7 @@ already refetches those fresh on every page load; only the *routing* and
 
 ## Turn deadline
 
-`turn-deadline-seconds` (default 240, `make-harness-config`) bounds
+`turn-deadline-seconds` (default 600, `make-harness-config`) bounds
 model/CLI *stall*, not total turn time. The watchdog wakes every
 `turn-deadline-seconds` and cancels the turn **only if no conversational
 tool call is in flight** (requested but not yet completed/failed) at that
@@ -280,7 +280,7 @@ tail -20 /tmp/session.log
 
 Signatures to recognize in the tail:
 
-- **`status: stopping` at *exactly* `turn-deadline-seconds` (default 240)
+- **`status: stopping` at *exactly* `turn-deadline-seconds` (default 600)
   after the last `status: responding`** — the per-turn deadline watchdog
   fired (`%start-deadline-watchdog`, `config.lisp`), not a user Stop. A
   turn whose tool calls legitimately run long will hit this every time
