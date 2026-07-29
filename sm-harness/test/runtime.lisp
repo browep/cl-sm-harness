@@ -851,3 +851,142 @@
              (is (= (1+ sm-harness::+max-consecutive-synthetic-followups+) synthetic-count))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test deadline-re-arms-while-a-tool-call-is-in-flight
+  ;; 1s deadline; the tool_result only arrives after 1.6s.  The watchdog
+  ;; wakes mid-call, must observe the in-flight tool call and re-arm
+  ;; instead of cancelling the turn (#80) -- expiring here is exactly what
+  ;; doomed every legitimately slow tool call in the 2026-07-29 incident.
+  (let* ((root (temp-data-root))
+         (events '())
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root :turn-deadline-seconds 1
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-instance 'harness-fake-transport
+                                       :chunks
+                                       (list (concatenate 'string +init-ok+ +nl+)
+                                             (concatenate 'string +conversational-tool-use+ +nl+)
+                                             (lambda ()
+                                               (sleep 1.6)
+                                               (concatenate 'string
+                                                            +conversational-tool-result+ +nl+
+                                                            +conversational-final-text+ +nl+
+                                                            +conversational-result+ +nl+))))))))
+         (snapshot (sm-harness:start-session h :title "deadline re-arm"))
+         (session-id (sm-harness:session-snapshot-id snapshot))
+         (listener-id nil))
+    (unwind-protect
+         (progn
+           (multiple-value-bind (snap lid cursor)
+               (sm-harness:attach-session-listener
+                h session-id :callback (lambda (ev) (push ev events)))
+             (declare (ignore snap cursor))
+             (setf listener-id lid))
+           (sm-harness:submit-turn h session-id "slow tool turn")
+           (is (wait-until
+                (lambda ()
+                  (string= "canon-42"
+                           (or (sm-harness:session-snapshot-canonical-id
+                                (sm-harness:open-session h session-id))
+                               "")))
+                :timeout 6))
+           (sm-harness:detach-session-listener h session-id listener-id)
+           (setf events (nreverse events))
+           (is (find :terminal events :key #'sm-harness:event-type))
+           ;; Neither a stopping status nor a deadline error may appear.
+           (is (notany (lambda (ev)
+                         (and (eq :status (sm-harness:event-type ev))
+                              (eq :stopping (getf (sm-harness:event-payload ev) :status))))
+                       events))
+           (is (notany (lambda (ev)
+                         (and (eq :error (sm-harness:event-type ev))
+                              (search "deadline"
+                                      (or (getf (sm-harness:event-payload ev) :message) ""))))
+                       events)))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test deadline-still-cancels-a-stalled-turn-with-no-tool-in-flight
+  ;; The re-arm must not neuter the watchdog: a turn stalled with nothing
+  ;; in flight is still cancelled, and the transport sees the writer-only
+  ;; interrupt request.
+  (let* ((root (temp-data-root))
+         (transport nil)
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root :turn-deadline-seconds 1
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (setf transport
+                              (make-instance 'harness-fake-transport
+                                             :chunks
+                                             (list (concatenate 'string +init-ok+ +nl+)
+                                                   (concatenate 'string +assistant+ +nl+)
+                                                   (lambda () (sleep 2) nil))))))))
+         (snapshot (sm-harness:start-session h :title "deadline stall"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "stall out")
+           (is (wait-until (lambda () (eq :error (sm-harness:session-status h session-id)))
+                           :timeout 6))
+           (is (find-if (lambda (w) (search "\"subtype\":\"interrupt\"" w))
+                        (fake-writes transport))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test deadline-abort-that-ends-in-a-terminal-reports-the-deadline
+  ;; When the CLI answers the deadline interrupt with its own terminal
+  ;; event, the loop ends via :done and %FINISH-CANCELLATION never runs.
+  ;; The turn must still say why it stopped instead of ending silently --
+  ;; the 2026-07-29 sessions ended with a bare empty-text
+  ;; error_during_execution and nothing else (#80).
+  (let* ((root (temp-data-root))
+         (events '())
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root :turn-deadline-seconds 1
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-instance 'harness-fake-transport
+                                       :chunks
+                                       (list (concatenate 'string +init-ok+ +nl+)
+                                             (concatenate 'string +assistant+ +nl+)
+                                             (lambda ()
+                                               (sleep 1.5)
+                                               (concatenate 'string +result+ +nl+))))))))
+         (snapshot (sm-harness:start-session h :title "deadline reported"))
+         (session-id (sm-harness:session-snapshot-id snapshot))
+         (listener-id nil))
+    (unwind-protect
+         (progn
+           (multiple-value-bind (snap lid cursor)
+               (sm-harness:attach-session-listener
+                h session-id :callback (lambda (ev) (push ev events)))
+             (declare (ignore snap cursor))
+             (setf listener-id lid))
+           (sm-harness:submit-turn h session-id "abort via terminal")
+           (is (wait-until
+                (lambda ()
+                  (find-if (lambda (ev)
+                             (and (eq :error (sm-harness:event-type ev))
+                                  (equal "turn deadline exceeded"
+                                         (getf (sm-harness:event-payload ev) :message))))
+                           events))
+                :timeout 6))
+           (sm-harness:detach-session-listener h session-id listener-id)
+           (setf events (nreverse events))
+           ;; The deadline really fired (stopping was observed) and the CLI
+           ;; terminal still came through before the explanation.
+           (is (find-if (lambda (ev)
+                          (and (eq :status (sm-harness:event-type ev))
+                               (eq :stopping (getf (sm-harness:event-payload ev) :status))))
+                        events))
+           (is (find :terminal events :key #'sm-harness:event-type)))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

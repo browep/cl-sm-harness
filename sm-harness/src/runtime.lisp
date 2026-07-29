@@ -31,7 +31,13 @@
   ;; Resets to 0 whenever a turn completes without queueing another one;
   ;; bounded by +MAX-CONSECUTIVE-SYNTHETIC-FOLLOWUPS+ so a model stuck in a
   ;; reload/fail/retry loop cannot run unbounded, unnoticed.
-  (synthetic-followup-chain-length 0))
+  (synthetic-followup-chain-length 0)
+  ;; Conversational tool calls requested but not yet completed/failed this
+  ;; turn.  The deadline watchdog re-arms instead of cancelling while this
+  ;; is positive: a tool call owns its own timeout (the bash tool enforces
+  ;; one), so the turn deadline measures model/CLI stall, not tool
+  ;; runtime (#80).
+  (inflight-tool-calls 0 :type integer))
 
 (defstruct (harness (:constructor %make-harness))
   config
@@ -198,6 +204,7 @@ chain so a later, genuine attempt gets a fresh allowance."
                            (format nil "Tool requested: ~A" (getf payload :name))
                            :kind "tool" :meta payload)
        (%publish rt :tool-requested payload)
+       (incf (session-runtime-inflight-tool-calls rt))
        nil)
       (:tool-completed
        (let ((name (gethash (getf payload :tool-use-id) (session-runtime-pending-tool-names rt))))
@@ -211,12 +218,16 @@ chain so a later, genuine attempt gets a fresh allowance."
                            (format nil "Tool completed: ~A" (getf payload :content))
                            :kind "tool" :meta payload)
        (%publish rt :tool-completed payload)
+       (setf (session-runtime-inflight-tool-calls rt)
+             (max 0 (1- (session-runtime-inflight-tool-calls rt))))
        nil)
       (:tool-failed
        (remhash (getf payload :tool-use-id) (session-runtime-pending-tool-names rt))
        (%append-transcript rt "assistant" "Tool failed"
                            :kind "tool" :meta payload)
        (%publish rt :tool-failed payload)
+       (setf (session-runtime-inflight-tool-calls rt)
+             (max 0 (1- (session-runtime-inflight-tool-calls rt))))
        nil)
       (:system
        (%publish rt :system payload)
@@ -274,12 +285,35 @@ chain so a later, genuine attempt gets a fresh allowance."
     reason))
 
 (defun %start-deadline-watchdog (harness rt turn-id)
+  "Cancel TURN-ID after TURN-DEADLINE-SECONDS of model/CLI stall.  A wake
+that finds a conversational tool call still in flight re-arms instead of
+cancelling: the tool call owns its own timeout (the bash tool enforces one
+explicitly, up to 600s -- longer than the 120s default here), so expiring
+the whole turn mid-call guaranteed a doomed turn for every legitimately
+slow tool call (#80).  Stall is therefore measured at watchdog wakeups: a
+turn keeps running as long as tool calls are still in flight whenever the
+watchdog looks."
   (let ((seconds (harness-config-turn-deadline-seconds (harness-config harness))))
     (setf (session-runtime-deadline-thread rt)
           (sb-thread:make-thread
            (lambda ()
-             (sleep seconds)
-             (%request-cancellation rt turn-id :deadline))
+             (loop
+               (sleep seconds)
+               (case (sb-thread:with-mutex ((session-runtime-lock rt))
+                       (cond
+                         ((not (string= turn-id
+                                        (or (session-record-active-turn-id
+                                             (session-runtime-record rt))
+                                            "")))
+                          :turn-over)
+                         ((plusp (session-runtime-inflight-tool-calls rt))
+                          :re-arm)
+                         (t :expire)))
+                 (:turn-over (return))
+                 (:re-arm)
+                 (:expire
+                  (%request-cancellation rt turn-id :deadline)
+                  (return)))))
            :name (format nil "sm-deadline-~A" turn-id)))))
 
 (defun %finish-cancellation (rt)
@@ -297,7 +331,8 @@ chain so a later, genuine attempt gets a fresh allowance."
         (progn
           (setf (session-record-active-turn-id rec) turn-id
                 (session-runtime-cancellation-reason rt) nil
-                (session-runtime-pending-assistant-text rt) nil)
+                (session-runtime-pending-assistant-text rt) nil
+                (session-runtime-inflight-tool-calls rt) 0)
           ;; A pre-connect failure has not accepted the prompt.  Do not create a
           ;; durable user record until the client connection is usable; the web
           ;; presentation retains its draft locally for retry.
@@ -330,7 +365,16 @@ chain so a later, genuine attempt gets a fresh allowance."
                    (dolist (mapped (map-sdk-message msg))
                      (when (eq :done (%handle-mapped-event rt rec mapped))
                        (setf done t)))))))
-            (setf (session-runtime-cancellation-reason rt) nil)
+            (let ((reason (session-runtime-cancellation-reason rt)))
+              (setf (session-runtime-cancellation-reason rt) nil)
+              ;; A deadline abort usually ends through the CLI's own
+              ;; terminal event (error_during_execution with no text), which
+              ;; the loop treats as :done -- so %FINISH-CANCELLATION never
+              ;; runs and the turn would end with no visible explanation at
+              ;; all.  That silent stop is exactly what made the 2026-07-29
+              ;; incident look like the session died for no reason (#80).
+              (when (eq reason :deadline)
+                (%publish rt :error (list :message "turn deadline exceeded"))))
             (setf (session-record-active-turn-id rec) nil)
             (repository-save-session (harness-repository harness) rec)
             (%touch rt)
