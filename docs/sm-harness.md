@@ -18,6 +18,34 @@ docker compose run --rm sm-harness-test
 
 Uses merged session-start SDK MCP catalogs (`make-sdk-tool`, `:builtin-tools`, `:strict-mcp-config`) only inside `sdk-adapter.lisp`.
 
+## Product tool catalog
+
+`sm-harness/src/tool-catalog.lisp`'s `default-tool-catalog` defines the tools
+every session advertises. Every catalog tool executes automatically with
+**no approval gate** (`bypassPermissions`, no `can_use_tool` callback, per
+`catalog-tools-use-an-automatic-no-approval-session-policy`) — the safety
+boundary for each tool has to live in its own handler, not in a confirmation
+step, because there isn't one.
+
+A tool-definition handler returns either a bare string (success, `is-error`
+nil) or `(values text t)` to report a domain-level failure as a normal MCP
+tool result rather than a Lisp condition (`%sdk-tool-from-definition` in
+`sdk-adapter.lisp` maps this). Raising an actual Lisp error from a handler
+still maps to a generic, safe JSON-RPC error instead, per the existing
+`session-start-tool-handler-failure-emits-correlated-safe-mcp-error-once`
+contract — reserve that path for genuine handler bugs/crashes, not expected
+domain failures like a missing file.
+
+### `read_file`
+
+Reads a file's contents. **No sandboxing** (see #61): `path` can be any
+path the harness process can reach, not confined to a project directory.
+`offset` (1-indexed) and `limit` select a line range; output is
+line-numbered (`"<n>\t<text>"`). Content beyond `+read-tool-max-chars+`
+(2MB, a character count, not a strict byte count) is truncated with an
+explicit notice rather than silently dropped. A missing file or non-UTF-8
+binary content is reported as a safe result, not a crash.
+
 ## Operator diagnostics: per-session event logging
 
 Every normalized harness event that passes through `%publish` in
