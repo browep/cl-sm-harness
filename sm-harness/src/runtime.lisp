@@ -31,10 +31,45 @@
 (defun %touch (rt)
   (setf (session-runtime-last-activity rt) (get-universal-time)))
 
+(defvar *session-event-log-lock* (sb-thread:make-mutex :name "session-event-log")
+  "Serializes SM-HARNESS-EVENT log lines so concurrent sessions' worker
+threads cannot interleave a single line.")
+
+(defvar *session-event-log-stream* *standard-output*
+  "Destination for SM-HARNESS-EVENT lines. A global (not per-call dynamic)
+binding so a worker thread, which does not inherit another thread's LET
+bindings, still observes a test's temporary swap of this stream.")
+
+(defun %log-session-event (session-id sequence type payload)
+  "Permanent, session-tagged operator diagnostic for every normalized harness
+event, including its full payload. This is a deliberate exception to this
+project's usual browser-facing redaction boundary (see SAFE-ERROR-PAYLOAD):
+the payloads normalized here are product/tool content, not credentials or
+raw provider transport frames, and this log is operator-only (container
+stdout), never rendered to the browser. See docs/sm-harness-web-ui.md
+under \"Operator diagnostics\" for how to locate and read it."
+  (let ((line (with-output-to-string (s)
+                (yason:encode
+                 (let ((o (make-hash-table :test #'equal)))
+                   (setf (gethash "ts" o) (%now-iso)
+                         (gethash "session_id" o) session-id
+                         (gethash "sequence" o) sequence
+                         (gethash "type" o) (string-downcase (symbol-name type))
+                         (gethash "payload" o)
+                         (if (and (listp payload) (keywordp (first payload)))
+                             (%plist->json payload)
+                             payload))
+                   o)
+                 s))))
+    (sb-thread:with-mutex (*session-event-log-lock*)
+      (format *session-event-log-stream* "~&SM-HARNESS-EVENT ~A~%" line)
+      (force-output *session-event-log-stream*))))
+
 (defun %publish (rt type payload)
   (let* ((rec (session-runtime-record rt))
          (seq (incf (session-record-sequence rec)))
          (ev (%event type (session-record-id rec) seq payload)))
+    (%log-session-event (session-record-id rec) seq type payload)
     (maphash (lambda (id lst)
                (declare (ignore id))
                (listener-push lst ev)

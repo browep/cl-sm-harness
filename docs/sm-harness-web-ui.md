@@ -9,6 +9,11 @@ docker compose -f compose.sm-harness-web-ui.yaml up --build web-ui
 # http://127.0.0.1:8080
 ```
 
+Every turn's normalized harness events (including full payload content) are
+logged to this container's stdout as they happen, tagged with the session
+id — see [Operator diagnostics in docs/sm-harness.md](sm-harness.md#operator-diagnostics-per-session-event-logging)
+for the log format and how to grep it per session.
+
 ## Fixture E2E
 
 ```bash
