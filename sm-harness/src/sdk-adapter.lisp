@@ -65,6 +65,23 @@
         (claude-agent-sdk-cl:text-block
          (write-string (claude-agent-sdk-cl:text-block-text block) out))))))
 
+(defun %mcp-content-text (content)
+  "Best-effort readable text from a tool-result-block's CONTENT: a list of
+MCP content blocks (each typically a {\"type\":\"text\",\"text\":...} hash
+table, the shape MAKE-SDK-TOOL-RESULT's :TEXT produces on the wire), a bare
+string, or an opaque JSON value from a content shape this catalog does not
+model further. Never the raw Lisp print representation of a decoded value."
+  (cond
+    ((stringp content) content)
+    ((listp content)
+     (with-output-to-string (out)
+       (dolist (block content)
+         (when (and (hash-table-p block)
+                    (equal (gethash "type" block) "text")
+                    (stringp (gethash "text" block)))
+           (write-string (gethash "text" block) out)))))
+    (t "")))
+
 (defun map-sdk-message (message)
   "Convert a typed SDK message into a list of frontend-neutral event payloads.
 Each item is (event-type . plist-or-string)."
@@ -98,7 +115,8 @@ Each item is (event-type . plist-or-string)."
                             :tool-failed
                             :tool-completed)
                         :tool-use-id (claude-agent-sdk-cl:tool-result-block-tool-use-id block)
-                        :content (claude-agent-sdk-cl:tool-result-block-content block)
+                        :content (%mcp-content-text
+                                  (claude-agent-sdk-cl:tool-result-block-content block))
                         :is-error (claude-agent-sdk-cl:tool-result-block-is-error block))
                   events))))
        (nreverse events)))
