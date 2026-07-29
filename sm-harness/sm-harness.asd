@@ -3,7 +3,9 @@
   :author "Paul Brower"
   :license "MIT"
   :version "0.1.0"
-  :depends-on (#:claude-agent-sdk-cl #:yason)
+  ;; sb-posix: the bash tool's timeout kill uses killpg directly so it can
+  ;; never silently no-op in an image that ships no kill binary (#79).
+  :depends-on (#:claude-agent-sdk-cl #:yason (:require #:sb-posix))
   :serial t
   :components ((:module "src"
                 :components
