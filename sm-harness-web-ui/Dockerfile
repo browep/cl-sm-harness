@@ -54,6 +54,14 @@ RUN curl -fsSL https://beta.quicklisp.org/quicklisp.lisp -o /tmp/quicklisp.lisp 
       --eval '(ql:quickload :clog)' \
  && rm -f /tmp/quicklisp.lisp \
  && printf '%s\n' '(load "/opt/quicklisp/setup.lisp")' > /home/app/.sbclrc
+# Wire git to use `gh` as its credential helper for github.com, written to
+# the app user's *global* (~/.gitconfig) config -- deliberately not the
+# /app repo's local config, since /app is the host repo bind mount (#90)
+# and a local-config write would land on the host. `--force` is required
+# here because no host is authenticated at build time; at runtime `gh`
+# picks up credentials from the GH_TOKEN/GITHUB_TOKEN environment variable
+# with no further setup (e.g. via the compose file's env_file: .env).
+RUN gh auth setup-git --hostname github.com --force
 
 USER root
 COPY --chown=app:app claude-agent-sdk-cl.asd /app/claude-agent-sdk-cl.asd

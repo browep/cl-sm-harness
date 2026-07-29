@@ -12,6 +12,9 @@ services:
       SM_HARNESS_HOST: 0.0.0.0
       SM_HARNESS_PORT: "8080"
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      # Consumed by gh's credential-helper wiring (sm-harness-web-ui/Dockerfile)
+      # so plain git/gh operations against github.com authenticate automatically.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     volumes:
       # Live repo at /app (#90): write_file/reload_harness edits persist on
       # the host instead of dying with the container. CLOG static assets are
