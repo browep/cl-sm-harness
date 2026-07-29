@@ -314,6 +314,42 @@
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
+(test every-published-event-is-logged-with-session-id-and-full-payload
+  (let* ((root (temp-data-root))
+         (original-stream sm-harness::*session-event-log-stream*)
+         (captured (make-string-output-stream))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-simple-turn-transport)))))
+         (snapshot (sm-harness:start-session h :title "diagnostics"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (setf sm-harness::*session-event-log-stream* captured)
+           (sm-harness:submit-turn h session-id "say hi")
+           (is (wait-until
+                (lambda ()
+                  (string= "canon-42"
+                           (or (sm-harness:session-snapshot-canonical-id
+                                (sm-harness:open-session h session-id))
+                               "")))))
+           (let ((log (get-output-stream-string captured)))
+             ;; Tied to the session: every line names it.
+             (is (every (lambda (line) (search session-id line))
+                        (remove "" (uiop:split-string log :separator '(#\Newline))
+                                :test #'string=)))
+             ;; Full payload content, not a redacted/truncated summary.
+             (is (search "\"type\":\"assistant-text\"" log))
+             (is (search "\"text\":\"hello from fixture\"" log))
+             (is (search "\"type\":\"terminal\"" log))
+             (is (search "\"session-id\":\"canon-42\"" log))))
+      (setf sm-harness::*session-event-log-stream* original-stream)
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
 (test malformed-sdk-event-is-safe-terminal-and-a-fresh-retry-can-complete
   (let* ((root (temp-data-root))
