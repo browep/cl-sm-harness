@@ -51,15 +51,10 @@
 (defun %run-until-shutdown ()
   "Block until Docker's TERM/INT request is received, then release durable state."
   (let ((shutdown-requested nil))
-    (flet ((request-shutdown ()
-             (setf shutdown-requested t)))
-      (sb-sys:enable-interrupt sb-unix:sigterm
-                               (lambda () (request-shutdown)))
-      (sb-sys:enable-interrupt sb-unix:sigint
-                               (lambda () (request-shutdown)))
-      (unwind-protect
-           (loop until shutdown-requested do (sleep 0.1))
-        (stop-web-ui)))))
+    (%install-shutdown-signal-handlers (lambda () (setf shutdown-requested t)))
+    (unwind-protect
+         (loop until shutdown-requested do (sleep 0.1))
+      (stop-web-ui))))
 
 (defun main ()
   "Docker entrypoint helper."
