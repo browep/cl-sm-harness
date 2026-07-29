@@ -336,6 +336,77 @@ result, not a tool failure -- check the reported exit code."
    :input-schema (%bash-schema)
    :handler #'%bash-tool-handler))
 
+(defparameter *reload-harness-system* :sm-harness
+  "ASDF system RELOAD_HARNESS recompiles and reloads. Defaults to
+:sm-harness itself so this tool (and its tests) work standalone: sm-harness
+must load and run without CLOG (see docs/sm-harness.md), so it cannot
+depend on sm-harness-web-ui to know its name. The web UI application layer
+overrides this at startup to :sm-harness-web-ui, since ASDF's own
+dependency graph then transitively covers sm-harness and
+claude-agent-sdk-cl too in a single call.")
+
+(defun %reload-schema ()
+  (let ((schema (%json-object "type" "object"))
+        (props (%json-object))
+        (force-field (%json-object "type" "boolean")))
+    (setf (gethash "force" props) force-field
+          (gethash "properties" schema) props)
+    schema))
+
+(defun %reload-harness-tool-handler (arguments context)
+  (declare (ignore context))
+  (let ((force (and (gethash "force" arguments) t))
+        (warnings '()))
+    (handler-case
+        (handler-bind ((warning (lambda (w)
+                                  (push (princ-to-string w) warnings)
+                                  (muffle-warning w))))
+          ;; :OVERRIDE T starts a fresh ASDF session: ASDF forbids :FORCE
+          ;; disagreeing with an already-active session's own force setting
+          ;; in a nested OPERATE call, which this would otherwise be if
+          ;; invoked (e.g. in a test) from inside another ASDF operation.
+          (asdf/session:call-with-asdf-session
+           (lambda () (asdf:load-system *reload-harness-system* :force force))
+           :override t :override-cache t))
+      (error (c)
+        (return-from %reload-harness-tool-handler
+          (values
+           (format nil "reload failed: ~A~%~
+Compile/load errors from an incompatible structure or class redefinition ~
+can leave this Lisp image permanently unable to reload that type again: ~
+every further reload_harness call will fail identically, even after ~
+reverting the source, until the container is restarted."
+                   c)
+           t))))
+    (let ((collected (nreverse warnings)))
+      (values
+       (format nil "reloaded ~(~A~)~:[~; (forced)~]~@[~%warnings:~%~{  ~A~%~}~]"
+               *reload-harness-system* force collected collected)
+       nil))))
+
+(defun make-reload-tool-definition ()
+  "No sandboxing beyond what ASDF/SBCL themselves provide (see issue #65).
+An incompatible structure/class redefinition (e.g. changing a defstruct's
+slots) can leave this Lisp image permanently unable to reload that type
+again for the rest of the process's life, even after reverting the
+source -- empirically confirmed, not theoretical; a container restart is
+the only fix at that point."
+  (make-tool-definition
+   :name "reload_harness"
+   :description "Recompile and reload changed Lisp source files into the
+running harness image via ASDF, so an edit (e.g. made with write_file) to
+this project's own source takes effect without a container restart. ASDF
+only recompiles files that actually changed unless FORCE (boolean,
+default false) is set, which bypasses that check and recompiles
+everything. Ordinary compile/load errors are reported as a failed
+result, not a crash -- but an incompatible structure/class redefinition
+(e.g. changing a defstruct's slot list) can leave this image permanently
+unable to reload that type again, even after reverting the source: if an
+error mentions instance length or layout, only a container restart will
+fix it, not another reload_harness call."
+   :input-schema (%reload-schema)
+   :handler #'%reload-harness-tool-handler))
+
 (defun default-tool-catalog ()
   "Return product-owned tool metadata, not SDK objects."
   (make-tool-catalog
@@ -346,4 +417,5 @@ result, not a tool failure -- check the reported exit code."
           :tools (list (make-echo-tool-definition)
                        (make-read-tool-definition)
                        (make-write-tool-definition)
-                       (make-bash-tool-definition))))))
+                       (make-bash-tool-definition)
+                       (make-reload-tool-definition))))))

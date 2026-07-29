@@ -702,3 +702,30 @@
                (is (search "through the catalog" result)))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test reload-harness-tool-executes-through-the-real-catalog
+  (let* ((root (temp-data-root))
+         (catalog (sm-harness:default-tool-catalog))
+         (arguments (make-hash-table :test #'equal))
+         (tool-call-json (make-catalog-tool-call-json :name "reload_harness" :arguments arguments))
+         (transport (make-named-catalog-tool-turn-transport tool-call-json))
+         (h (sm-harness:make-harness
+             :catalog catalog
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "real reload"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "reload the harness")
+           (let ((wire (wait-for-mcp-response transport)))
+             (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
+             ;; No arguments -> force nil, matching this test's own ambient
+             ;; ASDF session forcing; reloading :sm-harness (the default
+             ;; *reload-harness-system*, already loaded in this test binary)
+             ;; is a safe no-op here.
+             (is (search "reloaded" (echoed-mcp-result-text wire)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

@@ -63,6 +63,10 @@
 
 (defun main ()
   "Docker entrypoint helper."
+  ;; reload_harness (issue #65) targets this system, not bare sm-harness:
+  ;; ASDF's own dependency graph then transitively covers sm-harness and
+  ;; claude-agent-sdk-cl too in a single call.
+  (setf sm-harness:*reload-harness-system* :sm-harness-web-ui)
   (let* ((data (or (uiop:getenv "SM_HARNESS_DATA") "/data"))
          (port (parse-integer (or (uiop:getenv "SM_HARNESS_PORT") "8080")))
          (host (or (uiop:getenv "SM_HARNESS_HOST") "0.0.0.0"))

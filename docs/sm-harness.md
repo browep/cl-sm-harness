@@ -84,6 +84,51 @@ pipe deadlock when a command fills both simultaneously — so this is not a
 single precise combined budget). `cwd` defaults to the harness process's
 own working directory.
 
+### `reload_harness`
+
+Recompiles and reloads changed Lisp source into the *running* image via
+ASDF (see #65), so an edit made with `write_file` to this project's own
+source takes effect without a container restart. This works today because
+the `web-ui` image's filesystem is writable (no `read_only: true`, running
+as the existing non-root `app` user) and `CL_SOURCE_REGISTRY=/app//` is
+already configured, even though the image bakes source in at build time
+rather than mounting it live.
+
+Calling `(asdf:load-system *reload-harness-system* :force force)` *is* the
+implementation: ASDF's own timestamp-aware incremental compilation already
+means an unchanged file is skipped, satisfying "reload changed files" with
+no file-watching of its own. `*reload-harness-system*` defaults to
+`:sm-harness` (so this tool and its tests work standalone — `sm-harness`
+must load and run without CLOG, so it cannot itself reference
+`sm-harness-web-ui`); the web UI overrides it to `:sm-harness-web-ui` at
+startup, which transitively covers `sm-harness` and `claude-agent-sdk-cl`
+too via ASDF's dependency graph. `force` (boolean, default false) bypasses
+the timestamp check and recompiles everything — direct fix for a stale
+compiled-`.fasl`-cache problem encountered firsthand while building the
+`bash` tool.
+
+**An incompatible structure/class redefinition can permanently disable
+further reloads for the rest of the process's life — empirically
+confirmed, not theoretical.** Changing a `defstruct`'s slots while live
+instances of the old shape exist (any active session) makes SBCL signal an
+error during the reload. That error is caught here — the process does not
+crash, and the failure is reported as a normal (`is-error t`) tool result —
+but the Lisp image's *compile-time* tracking of that struct's layout is left
+permanently inconsistent: every subsequent `reload_harness` call touching
+that type fails identically, even after reverting the source back to its
+original, previously-working shape. Verified directly: a second reload
+attempt with the reverted source still failed the same way. Only a
+container restart clears this. If a reload failure mentions instance
+length or layout, that is the signal to restart rather than retry.
+
+Because `asdf:load-system` cannot honor a `:force` that disagrees with an
+already-active outer ASDF operation in a *nested* call, the handler starts
+its own fresh ASDF session (`asdf/session:call-with-asdf-session` with
+`:override t :override-cache t`) before loading — relevant mainly for
+testing (offline tests run inside `(asdf:test-system ...)`, itself an
+active ASDF operation), since production never invokes this tool from
+inside one.
+
 ## Operator diagnostics: per-session event logging
 
 Every normalized harness event that passes through `%publish` in
