@@ -49,40 +49,79 @@
       (string-trim '(#\Space #\Tab #\Newline #\Return)
                    (uiop:read-file-string path)))))
 
-(defun %lock-boot-id (path)
-  (when (probe-file path)
-    (let* ((raw (uiop:read-file-string path))
-           (prefix "boot_id=")
-           (start (search prefix raw)))
-      (when start
-        (let* ((value-start (+ start (length prefix)))
-               (end (or (position #\Newline raw :start value-start)
-                        (length raw))))
-          (subseq raw value-start end))))))
+(defvar *inprocess-data-lock-roots* (make-hash-table :test #'equal)
+  "Data roots (truename strings) locked by THIS process.  POSIX fcntl
+record locks never conflict between opens within one process (and closing
+any fd on the file would silently drop them), so same-process exclusion
+needs its own registry alongside the kernel lock.")
 
-(defun %stale-lock-from-prior-boot-p (path)
-  (let ((owner-boot-id (%lock-boot-id path))
-        (current-boot-id (%current-boot-id)))
-    (and owner-boot-id current-boot-id
-         (not (string= owner-boot-id current-boot-id)))))
+(defvar *inprocess-data-lock-roots-lock*
+  (sb-thread:make-mutex :name "inprocess-data-lock-roots"))
+
+(defun %data-lock-registry-key (root)
+  (namestring (truename root)))
+
+(defun %lock-diagnostics (path)
+  (let ((raw (ignore-errors (uiop:read-file-string path))))
+    (if (and raw (plusp (length raw)))
+        (string-trim '(#\Space #\Tab #\Newline #\Return) raw)
+        "no diagnostics recorded")))
+
+(defun %locked-data-root-error (path)
+  (error 'harness-state-error
+         :message (format nil "data root is locked by another sm-harness process (lock file: ~A; owner: ~A)"
+                          (namestring path) (%lock-diagnostics path))))
+
+(defun %try-fcntl-write-lock (stream)
+  "Take a whole-file exclusive fcntl record lock on STREAM's fd without
+blocking.  True on success; NIL when another live process holds it."
+  (handler-case
+      (progn
+        (sb-posix:fcntl (sb-sys:fd-stream-fd stream) sb-posix:f-setlk
+                        (make-instance 'sb-posix:flock
+                                       :type sb-posix:f-wrlck
+                                       :whence sb-posix:seek-set
+                                       :start 0 :len 0))
+        t)
+    (sb-posix:syscall-error () nil)))
 
 (defun %acquire-data-lock (root)
-  "Fail closed for a current-boot lock; recover only a lock from a prior boot."
+  "Fail closed while any LIVE process (including this one) holds ROOT;
+recover automatically from any dead owner.  The on-disk lock is a POSIX
+fcntl record lock, which the kernel releases when the owning process dies
+however it died -- so a crash, an OOM kill, or a broken shutdown handler
+(#82) can never wedge the next start.  This replaces a boot-id heuristic
+that refused every same-boot takeover, turning any crash into persistent
+startup failure until an operator deleted the lock file by hand (#83).
+The lock file's content (boot id, pid) is diagnostics only, surfaced in
+the fail-closed error message; the kernel lock is the actual authority.
+The file is deliberately opened WITHOUT superseding: replacing the inode
+would sidestep a live owner's record lock entirely."
   (ensure-directories-exist root)
-  (let ((path (merge-pathnames ".harness.lock" root)))
-    (labels ((acquire ()
-               (handler-case
-                   (let ((stream (open path :direction :output :if-exists :error
-                                             :if-does-not-exist :create)))
-                     (format stream "boot_id=~A~%" (%current-boot-id))
-                     (finish-output stream)
-                     stream)
-                 (file-error ()
-                   (if (%stale-lock-from-prior-boot-p path)
-                       (progn (delete-file path) (acquire))
-                       (error 'harness-state-error
-                              :message "data root is locked by another sm-harness process"))))))
-      (acquire))))
+  (let ((path (merge-pathnames ".harness.lock" root))
+        (key (%data-lock-registry-key root)))
+    (sb-thread:with-mutex (*inprocess-data-lock-roots-lock*)
+      (when (gethash key *inprocess-data-lock-roots*)
+        (%locked-data-root-error path))
+      (setf (gethash key *inprocess-data-lock-roots*) t))
+    (let ((stream nil) (locked nil))
+      (unwind-protect
+           (progn
+             (setf stream (open path :direction :output
+                                     :if-exists :overwrite
+                                     :if-does-not-exist :create))
+             (unless (%try-fcntl-write-lock stream)
+               (%locked-data-root-error path))
+             (setf locked t)
+             (sb-posix:ftruncate (sb-sys:fd-stream-fd stream) 0)
+             (format stream "boot_id=~A~%pid=~A~%"
+                     (%current-boot-id) (sb-posix:getpid))
+             (finish-output stream)
+             stream)
+        (unless locked
+          (when stream (ignore-errors (close stream)))
+          (sb-thread:with-mutex (*inprocess-data-lock-roots-lock*)
+            (remhash key *inprocess-data-lock-roots*)))))))
 
 (defun open-session-repository (&key root project-key)
   (let* ((root (uiop:ensure-directory-pathname (pathname root)))
@@ -98,9 +137,15 @@
 
 (defun close-session-repository (repo)
   (when (session-repository-lock-stream repo)
+    ;; Closing the stream is what releases the kernel fcntl lock; deleting
+    ;; the file afterwards is only tidiness (a leftover file is harmless
+    ;; now -- with no live lock on it, the next open recovers it).
     (ignore-errors (close (session-repository-lock-stream repo) :abort nil))
     (ignore-errors (delete-file (%repo-lock-path repo)))
-    (setf (session-repository-lock-stream repo) nil))
+    (setf (session-repository-lock-stream repo) nil)
+    (sb-thread:with-mutex (*inprocess-data-lock-roots-lock*)
+      (remhash (%data-lock-registry-key (session-repository-root repo))
+               *inprocess-data-lock-roots*)))
   t)
 
 (defun %plist->json (plist)
