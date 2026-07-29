@@ -4,6 +4,9 @@ FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca440
 
 ARG SBCL_VERSION
 ARG CLAUDE_CODE_VERSION=2.1.219
+# Pinned GitHub CLI release (installed from the upstream .deb below rather
+# than adding cli.github.com's apt repo, keeping this to one apt source).
+ARG GH_CLI_VERSION=2.96.0
 # Matches the host repo owner so the /app bind mount (#90) is writable by
 # the container user and edits land on the host with the right ownership.
 ARG APP_UID=1000
@@ -22,6 +25,10 @@ RUN apt-get update \
       procps \
       sudo \
  && npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+ && curl -fsSL -o /tmp/gh.deb \
+      "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_$(dpkg --print-architecture).deb" \
+ && DEBIAN_FRONTEND=noninteractive apt-get install --yes /tmp/gh.deb \
+ && rm -f /tmp/gh.deb \
  # The base image's "node" user already holds uid 1000; replace it rather
  # than stacking a second uid (#90).
  && userdel -r node \
