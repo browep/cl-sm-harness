@@ -37,6 +37,10 @@ body {
 .msg-assistant { background: #1a2a22; }
 .msg-tool, .msg-system, .msg-result { background: #2a2430; color: #c9bfd6; font-size: 0.92rem; }
 .msg-error { background: #3a1d1d; color: #ffb4b4; }
+/* A harness-initiated synthetic follow-up turn (#76): never look like the
+   human typed it. Dashed border plus a distinct amber tint signal
+   "automated", not a real user message. */
+.msg-harness { background: #2e2712; color: #e3c98b; border: 1px dashed #6b5a2a; }
 .composer { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
 .prompt { flex: 1; min-height: 72px; border-radius: 8px; border: 1px solid #3a4656; background: #0f1419; color: #e7ecf3; padding: 0.5rem; }
 .status-chip { padding: 0.2rem 0.55rem; border-radius: 999px; background: #243044; font-size: 0.85rem; }

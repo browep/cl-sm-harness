@@ -129,6 +129,36 @@ testing (offline tests run inside `(asdf:test-system ...)`, itself an
 active ASDF operation), since production never invokes this tool from
 inside one.
 
+#### Automatic follow-up after a successful reload (#76)
+
+Once `reload_harness` completes without error, the harness automatically
+submits a synthetic follow-up turn — no human message involved — so the
+model can exercise a tool it just added or changed within the same session,
+rather than the human having to notice the reload happened and manually
+prompt it to try. A failed reload does not schedule one: the error is
+already visible in that turn's own tool result, so no extra nudge is
+needed. Completing a *different* tool does not schedule one either — this
+is specifically tied to `reload_harness`, via a tool-use-id → tool-name
+correlation table on `session-runtime` (`:tool-completed`/`:tool-failed`
+payloads carry the id but not the name; `:tool-requested` carries both).
+
+The follow-up is submitted through the exact same `submit-turn` path a
+human message would use, tagged with `:kind "synthetic"` so its transcript
+entry (and the live `:user-message` event's `:synthetic t` payload flag)
+render distinctly — role `"harness"`, not `"user"`, in the web UI — and are
+never mistaken for something a human actually typed.
+
+**Consecutive-followup cap.** A model stuck in a reload/fail/retry loop
+could otherwise keep triggering new follow-ups indefinitely, unnoticed,
+consuming the operator's provider budget: `+max-consecutive-synthetic-followups+`
+(default 3) bounds a single chain. Hitting it does not submit a fourth
+follow-up; instead it records a safe `"[harness] automatic reload_harness
+follow-up limit ... reached"` transcript notice and resets the counter, so
+a later, independent chain still gets a fresh allowance. The counter itself
+resets to 0 whenever any turn completes without queueing a new follow-up
+(a normal reply, a failed reload, or a different tool call) — it bounds one
+chain, not a session's lifetime total.
+
 ## Operator diagnostics: per-session event logging
 
 Every normalized harness event that passes through `%publish` in
