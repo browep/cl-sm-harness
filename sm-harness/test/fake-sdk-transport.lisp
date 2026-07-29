@@ -131,6 +131,15 @@ not just the fixed echo_text call scripted by +ECHO-TOOL-CALL+."
                        (concatenate 'string tool-call-json +nl+
                                     +assistant+ +nl+ +result+ +nl+))))
 
+(defun wait-for-mcp-response (transport)
+  "Wait for and return the transport write containing an mcp_response, not
+just the Nth write: an earlier, unrelated write (e.g. a handshake message)
+can satisfy a bare write-count threshold before the actual tool response
+exists, making (FIRST (FAKE-WRITES TRANSPORT)) read the wrong message."
+  (wait-until (lambda () (find-if (lambda (line) (search "mcp_response" line))
+                                  (fake-writes transport))))
+  (find-if (lambda (line) (search "mcp_response" line)) (fake-writes transport)))
+
 (defun echoed-mcp-result-text (wire)
   (let* ((outer (yason:parse wire))
          (response (gethash "response" outer))
