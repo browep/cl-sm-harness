@@ -234,6 +234,87 @@
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
+(test text-only-turn-renders-and-persists-the-response-exactly-once
+  (let* ((root (temp-data-root))
+         (events '())
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-duplicate-response-turn-transport)))))
+         (snapshot (sm-harness:start-session h :title "dedup"))
+         (session-id (sm-harness:session-snapshot-id snapshot))
+         (listener-id nil))
+    (unwind-protect
+         (progn
+           (multiple-value-bind (snap lid cursor)
+               (sm-harness:attach-session-listener
+                h session-id
+                :callback (lambda (ev) (push ev events)))
+             (declare (ignore snap cursor))
+             (setf listener-id lid))
+           (sm-harness:submit-turn h session-id "say hi")
+           ;; :ready is also the session's untouched initial status, so wait
+           ;; on the canonical id (only ever set by the terminal event) as
+           ;; unambiguous proof the turn actually completed.
+           (is (wait-until
+                (lambda ()
+                  (string= "canon-42"
+                           (or (sm-harness:session-snapshot-canonical-id
+                                (sm-harness:open-session h session-id))
+                               "")))))
+           (sm-harness:detach-session-listener h session-id listener-id)
+           (setf events (nreverse events))
+           ;; The CLI's terminal result text ("e2e hello") mirrors the
+           ;; assistant text verbatim: exactly one durable entry for the
+           ;; response, via the assistant stream, not a second "result"/system
+           ;; duplicate.
+           (let* ((reopened (sm-harness:open-session h session-id))
+                  (transcript (sm-harness:session-snapshot-transcript reopened)))
+             (is (equal '("user" "assistant")
+                        (mapcar #'sm-harness:transcript-entry-role transcript))))
+           ;; The terminal event still fires (status/canonical-id side
+           ;; effects), but its published text is suppressed so the UI does
+           ;; not paint a second copy of the same response.
+           (let ((terminal (find :terminal events :key #'sm-harness:event-type)))
+             (is (not (null terminal)))
+             (is (null (getf (sm-harness:event-payload terminal) :text)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test distinct-terminal-outcome-still-renders-and-persists-its-own-entry
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-simple-turn-transport)))))
+         (snapshot (sm-harness:start-session h :title "distinct"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "say hi")
+           (is (wait-until
+                (lambda ()
+                  (string= "canon-42"
+                           (or (sm-harness:session-snapshot-canonical-id
+                                (sm-harness:open-session h session-id))
+                               "")))))
+           ;; make-simple-turn-transport's assistant text ("hello from
+           ;; fixture") and terminal result text ("done") genuinely differ:
+           ;; a broad role/type match must not hide the distinct outcome.
+           (let* ((reopened (sm-harness:open-session h session-id))
+                  (transcript (sm-harness:session-snapshot-transcript reopened)))
+             (is (equal '("user" "assistant" "system")
+                        (mapcar #'sm-harness:transcript-entry-role transcript)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+
 (test malformed-sdk-event-is-safe-terminal-and-a-fresh-retry-can-complete
   (let* ((root (temp-data-root))
          (factory-count 0)

@@ -14,7 +14,9 @@ services:
       - sm-harness-data:/data
       - sm-harness-cache:/cache
     ports:
-      - "127.0.0.1:8080:8080"
+      # Direct tailnet endpoint; avoids Caddy path rewriting for CLOG's
+      # root-relative HTTP, WebSocket, CSS, and JavaScript routes.
+      - "100.65.98.70:17881:8080"
     healthcheck:
       test: ["CMD", "sbcl", "--non-interactive", "--eval", "(quit)"]
       interval: 30s
