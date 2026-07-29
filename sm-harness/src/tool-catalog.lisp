@@ -134,6 +134,72 @@ return a size summary instead of their content."
    :input-schema (%read-schema)
    :handler #'%read-file-tool-handler))
 
+(defparameter +write-tool-max-chars+ (* 5 1024 1024)
+  "Cap on write_file's content length, rejected outright rather than
+truncated: a truncated write would silently corrupt the caller's intended
+file content, which is worse than refusing the write entirely.")
+
+(defun %write-schema ()
+  (let ((schema (%json-object "type" "object"))
+        (props (%json-object))
+        (path-field (%json-object "type" "string"))
+        (content-field (%json-object "type" "string")))
+    (setf (gethash "path" props) path-field
+          (gethash "content" props) content-field
+          (gethash "properties" schema) props
+          (gethash "required" schema) (list "path" "content"))
+    schema))
+
+(defun %write-file-atomic (path content)
+  "Write CONTENT to PATH via temp-file-then-rename so a failure partway
+through never leaves a partially-written file at PATH."
+  (ensure-directories-exist path)
+  (let ((tmp (make-pathname :defaults path :type "tmp")))
+    (with-open-file (out tmp :direction :output :if-exists :supersede
+                         :if-does-not-exist :create :external-format :utf-8)
+      (write-string content out)
+      (finish-output out))
+    (uiop:rename-file-overwriting-target tmp path)))
+
+(defun %write-file-tool-handler (arguments context)
+  (declare (ignore context))
+  (let ((path (gethash "path" arguments))
+        (content (gethash "content" arguments)))
+    (cond
+      ((not (and (stringp path) (plusp (length path))))
+       (values "write_file requires a non-empty path" t))
+      ((not (stringp content))
+       (values "write_file requires string content" t))
+      ((> (length content) +write-tool-max-chars+)
+       (values (format nil "content exceeds the ~:D character limit; write rejected, no file was changed"
+                       +write-tool-max-chars+)
+               t))
+      (t
+       (handler-case
+           (progn
+             (%write-file-atomic path content)
+             (values (format nil "wrote ~:D bytes to ~A" (%file-byte-size path) path) nil))
+         (error ()
+           (values (format nil "unable to write file: ~A" path) t)))))))
+
+(defun make-write-tool-definition ()
+  "No sandboxing: any path the harness process can reach can be written or
+overwritten (see issue #61/#63). Overwrites without confirmation, by
+design -- every catalog tool executes with no approval gate. Writes
+atomically (temp file + rename); content over +WRITE-TOOL-MAX-CHARS+ is
+rejected outright rather than truncated, since a truncated write would
+silently corrupt the caller's intended file content."
+  (make-tool-definition
+   :name "write_file"
+   :description "Write (creating or overwriting) a file's contents on the
+container's filesystem. No sandboxing: any path the harness process can
+reach is writable, not just a project directory. Overwrites an existing
+file without confirmation. PATH and CONTENT are both required. Creates
+parent directories as needed. Content over 5MB is rejected outright (the
+write does not happen) rather than truncated."
+   :input-schema (%write-schema)
+   :handler #'%write-file-tool-handler))
+
 (defun default-tool-catalog ()
   "Return product-owned tool metadata, not SDK objects."
   (make-tool-catalog
@@ -142,4 +208,5 @@ return a size summary instead of their content."
           :name "sm_harness"
           :version "0.1.0"
           :tools (list (make-echo-tool-definition)
-                       (make-read-tool-definition))))))
+                       (make-read-tool-definition)
+                       (make-write-tool-definition))))))

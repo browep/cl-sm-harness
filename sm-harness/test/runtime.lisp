@@ -647,3 +647,31 @@
                         (echoed-mcp-result-text (first (fake-writes transport))))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test write-file-tool-executes-through-the-real-catalog-and-writes-a-file
+  (let* ((root (temp-data-root))
+         (file-path (merge-pathnames "catalog-write.txt" root))
+         (catalog (sm-harness:default-tool-catalog))
+         (arguments (let ((h (make-hash-table :test #'equal)))
+                      (setf (gethash "path" h) (namestring file-path))
+                      (setf (gethash "content" h) "written through the catalog")
+                      h))
+         (tool-call-json (make-catalog-tool-call-json :name "write_file" :arguments arguments))
+         (transport (make-named-catalog-tool-turn-transport tool-call-json))
+         (h (sm-harness:make-harness
+             :catalog catalog
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "real write_file"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "write the file")
+           (is (wait-until (lambda () (>= (length (fake-writes transport)) 1))))
+           (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
+           (is (search "wrote" (echoed-mcp-result-text (first (fake-writes transport)))))
+           (is (string= "written through the catalog" (%read-whole-file file-path))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
