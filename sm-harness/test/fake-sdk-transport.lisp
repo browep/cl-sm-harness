@@ -71,6 +71,29 @@ Claude Code CLI turn commonly does."
                        (concatenate 'string +echo-tool-call+ +nl+
                                     +assistant+ +nl+ +result+ +nl+))))
 
+(defparameter +conversational-tool-use+
+  "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_99\",\"name\":\"Bash\",\"input\":{\"command\":\"echo hi\"}}],\"model\":\"fixture\"}}")
+(defparameter +conversational-tool-result+
+  "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_99\",\"content\":\"hi\",\"is_error\":false}]}}")
+(defparameter +conversational-final-text+
+  "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"the command printed hi\"}],\"model\":\"fixture\"}}")
+(defparameter +conversational-result+
+  "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"canon-42\",\"result\":\"the command printed hi\"}")
+
+(defun make-conversational-tool-round-trip-transport ()
+  "Script a real built-in-tool round trip through the conversational message
+stream: an assistant tool_use block, then the CLI's type=\"user\" tool_result
+message, then a final assistant text and result. Distinct from
+make-catalog-tool-turn-transport, which scripts a session-start SDK MCP
+control-plane call instead."
+  (make-instance 'harness-fake-transport
+                 :chunks
+                 (list (concatenate 'string +init-ok+ +nl+)
+                       (concatenate 'string +conversational-tool-use+ +nl+
+                                    +conversational-tool-result+ +nl+
+                                    +conversational-final-text+ +nl+
+                                    +conversational-result+ +nl+))))
+
 (defun echoed-mcp-result-text (wire)
   (let* ((outer (yason:parse wire))
          (response (gethash "response" outer))
