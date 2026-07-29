@@ -125,3 +125,66 @@
              (is (search "reload failed" text))))
       (setf asdf:*central-registry* (remove root asdf:*central-registry* :test #'equal))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test post-reload-hook-runs-after-a-successful-reload
+  ;; #78: sm-harness-web-ui installs *POST-RELOAD-HOOK* to re-point CLOG's
+  ;; routing and refresh open browser tabs once a reload actually succeeds.
+  (let* ((root (temp-data-root))
+         (sm-harness::*reload-harness-system* :reload-fixture)
+         (called nil)
+         (sm-harness:*post-reload-hook* (lambda () (setf called t))))
+    (unwind-protect
+         (progn
+           (%write-reload-fixture root "\"v1\"")
+           (%push-fixture-registry root)
+           (destructuring-bind (text is-error) (%call-reload-tool)
+             (is (null is-error))
+             (is (search "reloaded" text)))
+           (is (eq t called)))
+      (setf asdf:*central-registry* (remove root asdf:*central-registry* :test #'equal))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test post-reload-hook-does-not-run-after-a-failed-reload
+  ;; A failed reload's error is already visible in that turn's own tool
+  ;; result; nothing successfully reloaded, so nothing should be
+  ;; re-pointed or refreshed.
+  (let* ((root (temp-data-root))
+         (sm-harness::*reload-harness-system* :reload-fixture)
+         (called nil)
+         (sm-harness:*post-reload-hook* (lambda () (setf called t))))
+    (unwind-protect
+         (progn
+           (%write-reload-fixture root "\"v1\"")
+           (%push-fixture-registry root)
+           (%call-reload-tool)
+           ;; The hook fires on this first, genuinely successful load; only
+           ;; the *second* (broken) reload below is under test.
+           (setf called nil)
+           (sleep 1.1) ; ensure a strictly newer source mtime than the fasl
+           (%write-text-file
+            (merge-pathnames "fixture.lisp" root)
+            (format nil "(in-package #:reload-fixture)~%(defun value ( ~%"))
+           (destructuring-bind (text is-error) (%call-reload-tool)
+             (is (eq t is-error))
+             (is (search "reload failed" text)))
+           (is (null called)))
+      (setf asdf:*central-registry* (remove root asdf:*central-registry* :test #'equal))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test post-reload-hook-failure-is-folded-into-warnings-not-a-tool-error
+  ;; A misbehaving hook (e.g. a browser vanished mid-broadcast) must not
+  ;; turn an otherwise-successful reload into a reported failure.
+  (let* ((root (temp-data-root))
+         (sm-harness::*reload-harness-system* :reload-fixture)
+         (sm-harness:*post-reload-hook* (lambda () (error "fixture hook secret"))))
+    (unwind-protect
+         (progn
+           (%write-reload-fixture root "\"v1\"")
+           (%push-fixture-registry root)
+           (destructuring-bind (text is-error) (%call-reload-tool)
+             (is (null is-error))
+             (is (search "reloaded" text))
+             (is (search "post-reload hook failed" text))
+             (is (search "fixture hook secret" text))))
+      (setf asdf:*central-registry* (remove root asdf:*central-registry* :test #'equal))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

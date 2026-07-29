@@ -415,6 +415,15 @@ overrides this at startup to :sm-harness-web-ui, since ASDF's own
 dependency graph then transitively covers sm-harness and
 claude-agent-sdk-cl too in a single call.")
 
+(defparameter *post-reload-hook* nil
+  "Optional zero-argument function RELOAD_HARNESS calls (best-effort, never
+allowed to turn a successful reload into a failure -- see #78) once
+*RELOAD-HARNESS-SYSTEM* has finished reloading without error. Defaults to
+nil so sm-harness stays usable standalone/headless. sm-harness-web-ui
+installs one at startup to re-point CLOG's routing at the freshly reloaded
+code and push a page refresh to every currently open browser tab, so a
+successful reload is visible without a human noticing and hitting F5.")
+
 (defun %reload-schema ()
   (let ((schema (%json-object "type" "object"))
         (props (%json-object))
@@ -448,6 +457,14 @@ every further reload_harness call will fail identically, even after ~
 reverting the source, until the container is restarted."
                    c)
            t))))
+    ;; A successful reload is worth reporting even if the (optional, #78)
+    ;; post-reload hook itself misbehaves -- e.g. a browser that vanished
+    ;; mid-broadcast -- so a hook failure is folded into the warnings text
+    ;; rather than escalated to IS-ERROR T.
+    (when *post-reload-hook*
+      (handler-case (funcall *post-reload-hook*)
+        (error (c)
+          (push (format nil "post-reload hook failed: ~A" c) warnings))))
     (let ((collected (nreverse warnings)))
       (values
        (format nil "reloaded ~(~A~)~:[~; (forced)~]~@[~%warnings:~%~{  ~A~%~}~]"

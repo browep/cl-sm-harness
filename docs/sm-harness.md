@@ -171,6 +171,34 @@ resets to 0 whenever any turn completes without queueing a new follow-up
 (a normal reply, a failed reload, or a different tool call) — it bounds one
 chain, not a session's lifetime total.
 
+#### Post-reload hook and browser live-refresh (#78)
+
+Once `reload_harness` completes without error, it also calls an optional,
+best-effort `*post-reload-hook*` (a zero-argument function, default `nil`)
+if one is installed. `sm-harness` itself stays CLOG-free (see above), so
+this hook is how `sm-harness-web-ui` reaches back in without `sm-harness`
+depending on it: `start-web-ui` installs a hook that
+
+1. re-points CLOG's own routing table at the just-reloaded
+   `on-new-window` — CLOG captures that function object exactly once, at
+   `clog:initialize`/`clog:set-on-new-window` time, into a private routing
+   table; redefining `on-new-window` (or anything it calls, e.g.
+   `render-home`/`render-chat`/the presenter) via a reload rebinds the
+   *symbol's* function cell but does not touch that already-captured
+   function object, so a *new* browser connection would otherwise keep
+   hitting stale pre-reload code until the process restarts; and
+2. pushes a page reload to every currently open browser tab (tracked in
+   `*live-browser-windows*` as each one connects) via CLOG's own
+   `clog:reload`, pruning any tab that has since closed.
+
+A misbehaving hook is folded into the tool result's warnings text, not
+escalated to `is-error t`: a successful reload stays reported as a
+success even if, say, a tracked browser vanished mid-broadcast.
+
+Static assets (`app.css`, etc.) needed no such mechanism — the browser
+already refetches those fresh on every page load; only the *routing* and
+*already-open tabs* needed an explicit nudge.
+
 ## Turn deadline
 
 `turn-deadline-seconds` (default 240, `make-harness-config`) bounds

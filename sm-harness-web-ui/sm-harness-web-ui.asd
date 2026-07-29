@@ -14,6 +14,7 @@
                  (:file "harness-adapter")
                  (:file "ui/home")
                  (:file "ui/chat")
+                 (:file "live-reload")
                  (:file "application")))))
 
 (asdf:defsystem #:sm-harness-web-ui/e2e-contract

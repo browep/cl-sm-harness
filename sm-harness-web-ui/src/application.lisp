@@ -9,6 +9,9 @@
 
 (defun on-new-window (body)
   (clog:load-css (clog:html-document body) "/app.css")
+  ;; Tracked so a later successful reload_harness can refresh this tab
+  ;; (#78).
+  (%track-live-browser-window body)
   (let ((session-id (%session-id-from-route
                      (clog:path-name (clog:location body)))))
     (if session-id
@@ -29,6 +32,9 @@
                            :boot-file "/boot.html"
                            :extended-routing t))
     (clog:set-on-new-window #'on-new-window :path "/sessions" :boot-file "/boot.html")
+    ;; Once this system's own source reloads, re-point CLOG's routing at
+    ;; fresh code and push open tabs a refresh (#78).
+    (setf sm-harness:*post-reload-hook* #'%refresh-after-reload)
     (format t "sm-harness-web-ui listening on ~A:~A~%"
             (web-ui-config-host cfg)
             (web-ui-config-port cfg))
@@ -39,6 +45,11 @@
     (ignore-errors (sm-harness:close-harness *app-harness*))
     (setf *app-harness* nil))
   (setf *clog-server* nil)
+  ;; Drop tracked windows/hook too (#78): stale entries from a previous
+  ;; start-web-ui must not survive into whatever runs next in this image.
+  (setf *live-browser-windows* nil)
+  (when (eq sm-harness:*post-reload-hook* #'%refresh-after-reload)
+    (setf sm-harness:*post-reload-hook* nil))
   t)
 
 (defun %fixture-transport-factory ()
