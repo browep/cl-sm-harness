@@ -80,6 +80,19 @@ Each item is (event-type . plist-or-string)."
                         :name (claude-agent-sdk-cl:tool-use-block-name block)
                         :input (claude-agent-sdk-cl:tool-use-block-input block))
                   events))
+           (claude-agent-sdk-cl:thinking-block
+            (push (list :system :subtype "thinking" :text "[thinking omitted]") events))))
+       (when (and text (plusp (length text)))
+         (push (list :assistant-text :text text) events))
+       (nreverse events)))
+    ((typep message 'claude-agent-sdk-cl:user-message)
+     ;; The CLI returns a tool result wrapped in a type="user" message; its
+     ;; tool-result-block never appears inside an assistant message. A
+     ;; user-message with no tool-result content originates nothing new here
+     ;; (the harness itself is the sole source of outbound user turns).
+     (let ((events '()))
+       (dolist (block (claude-agent-sdk-cl:user-message-content message))
+         (typecase block
            (claude-agent-sdk-cl:tool-result-block
             (push (list (if (claude-agent-sdk-cl:tool-result-block-is-error block)
                             :tool-failed
@@ -87,11 +100,7 @@ Each item is (event-type . plist-or-string)."
                         :tool-use-id (claude-agent-sdk-cl:tool-result-block-tool-use-id block)
                         :content (claude-agent-sdk-cl:tool-result-block-content block)
                         :is-error (claude-agent-sdk-cl:tool-result-block-is-error block))
-                  events))
-           (claude-agent-sdk-cl:thinking-block
-            (push (list :system :subtype "thinking" :text "[thinking omitted]") events))))
-       (when (and text (plusp (length text)))
-         (push (list :assistant-text :text text) events))
+                  events))))
        (nreverse events)))
     ((typep message 'claude-agent-sdk-cl:result-message)
      (list (list :terminal

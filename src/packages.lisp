@@ -27,6 +27,7 @@
            #:filesystem-session-store #:make-filesystem-session-store #:filesystem-session-store-root
            #:session-store-mirror-message
            #:message #:user-message #:assistant-message #:message-extra
+           #:user-message-content
            #:assistant-message-content #:assistant-message-model
            #:text-block #:text-block-text #:thinking-block #:tool-use-block
            #:tool-use-block-id #:tool-use-block-name #:tool-use-block-input

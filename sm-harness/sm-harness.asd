@@ -30,6 +30,7 @@
                  (:file "support")
                  (:file "session-repository")
                  (:file "session-service")
+                 (:file "sdk-adapter")
                  (:file "runtime"))))
   :perform (asdf:test-op (op c)
              (declare (ignore op c))
