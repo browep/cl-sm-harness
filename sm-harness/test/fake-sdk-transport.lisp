@@ -50,6 +50,19 @@
                  (list (concatenate 'string +init-ok+ +nl+)
                       (concatenate 'string +assistant+ +nl+ +result+ +nl+))))
 
+(defparameter +echo-assistant+
+  "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"e2e hello\"}],\"model\":\"fixture\"}}")
+(defparameter +echo-result+
+  "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"canon-42\",\"result\":\"e2e hello\"}")
+
+(defun make-duplicate-response-turn-transport ()
+  "The terminal result's text mirrors the assistant text verbatim, as a real
+Claude Code CLI turn commonly does."
+  (make-instance 'harness-fake-transport
+                 :chunks
+                 (list (concatenate 'string +init-ok+ +nl+)
+                      (concatenate 'string +echo-assistant+ +nl+ +echo-result+ +nl+))))
+
 (defun make-catalog-tool-turn-transport ()
   "Script a real session-start MCP tools/call request through the SDK client."
   (make-instance 'harness-fake-transport

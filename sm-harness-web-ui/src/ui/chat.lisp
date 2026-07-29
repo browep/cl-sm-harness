@@ -56,7 +56,12 @@
                    ((eq (sm-harness:event-type ev) :status)
                     (setf (clog:text status-el) text))
                    ((eq (sm-harness:event-type ev) :terminal)
-                    (add-line role text)
+                    ;; A blank terminal text means the harness already showed
+                    ;; this exact response via the assistant stream; only a
+                    ;; genuinely distinct outcome (error, interrupt, tool-only
+                    ;; turn) gets its own line here.
+                    (when (and text (plusp (length text)))
+                      (add-line role text))
                     (let ((cid (getf (sm-harness:event-payload ev) :session-id)))
                       (when cid (setf (clog:text canon-el) cid)))
                     (setf pending-prompt nil)

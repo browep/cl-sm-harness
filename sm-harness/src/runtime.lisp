@@ -12,7 +12,12 @@
   (closed-p nil)
   cancellation-reason
   deadline-thread
-  last-activity)
+  last-activity
+  ;; Most recent assistant text streamed this turn.  The terminal result's
+  ;; text commonly mirrors the last assistant message verbatim; tracking
+  ;; this lets the terminal handler skip re-showing/re-persisting it as a
+  ;; second, duplicate response.
+  pending-assistant-text)
 
 (defstruct (harness (:constructor %make-harness))
   config
@@ -95,6 +100,7 @@
        (let ((text (getf payload :text)))
          (%append-transcript rt "assistant" text)
          (%publish rt :assistant-text payload)
+         (setf (session-runtime-pending-assistant-text rt) text)
          nil))
       (:tool-requested
        (%append-transcript rt "assistant"
@@ -120,12 +126,28 @@
        (%publish rt :rate-limit payload)
        nil)
       (:terminal
-       (let ((cid (getf payload :session-id)))
+       (let* ((cid (getf payload :session-id))
+              (text (getf payload :text))
+              ;; The CLI's terminal result text commonly mirrors the last
+              ;; assistant message verbatim for an ordinary text-only turn.
+              ;; Render/persist that case exactly once, via the assistant
+              ;; stream; a genuinely distinct terminal outcome (error text,
+              ;; a tool-only turn with no assistant text, etc.) still gets
+              ;; its own entry.
+              (duplicate-p (and text (plusp (length text))
+                               (equal text (session-runtime-pending-assistant-text rt))))
+              (published-payload (if duplicate-p
+                                     (let ((copy (copy-list payload)))
+                                       (setf (getf copy :text) nil)
+                                       copy)
+                                     payload)))
          (when (and cid (stringp cid) (plusp (length cid)))
-           (setf (session-record-canonical-id rec) cid)))
-       (%append-transcript rt "system" (or (getf payload :text) "")
-                           :kind "result" :meta payload)
-       (%publish rt :terminal payload)
+           (setf (session-record-canonical-id rec) cid))
+         (unless duplicate-p
+           (%append-transcript rt "system" (or text "")
+                               :kind "result" :meta payload))
+         (%publish rt :terminal published-payload))
+       (setf (session-runtime-pending-assistant-text rt) nil)
        (%set-status rt :ready)
        :done)
       (t
@@ -175,7 +197,8 @@
     (handler-case
         (progn
           (setf (session-record-active-turn-id rec) turn-id
-                (session-runtime-cancellation-reason rt) nil)
+                (session-runtime-cancellation-reason rt) nil
+                (session-runtime-pending-assistant-text rt) nil)
           ;; A pre-connect failure has not accepted the prompt.  Do not create a
           ;; durable user record until the client connection is usable; the web
           ;; presentation retains its draft locally for retry.
