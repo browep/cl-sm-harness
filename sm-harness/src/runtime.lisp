@@ -17,7 +17,21 @@
   ;; text commonly mirrors the last assistant message verbatim; tracking
   ;; this lets the terminal handler skip re-showing/re-persisting it as a
   ;; second, duplicate response.
-  pending-assistant-text)
+  pending-assistant-text
+  ;; Tool-use-id -> tool name, populated on :tool-requested and consumed on
+  ;; :tool-completed/:tool-failed (see #76): those payloads don't carry the
+  ;; tool name themselves, only the id, so correlating a completed tool back
+  ;; to "was this reload_harness" needs this lookup.
+  (pending-tool-names (make-hash-table :test #'equal))
+  ;; Text queued by a successful reload_harness completion (#76), to be
+  ;; auto-submitted as a fresh turn once the CURRENT turn finishes -- never
+  ;; run immediately, since the harness allows only one active turn.
+  pending-synthetic-followup
+  ;; Consecutive count of harness-initiated (not human) follow-up turns.
+  ;; Resets to 0 whenever a turn completes without queueing another one;
+  ;; bounded by +MAX-CONSECUTIVE-SYNTHETIC-FOLLOWUPS+ so a model stuck in a
+  ;; reload/fail/retry loop cannot run unbounded, unnoticed.
+  (synthetic-followup-chain-length 0))
 
 (defstruct (harness (:constructor %make-harness))
   config
@@ -82,6 +96,46 @@ under \"Operator diagnostics\" for how to locate and read it."
   (setf (session-record-status (session-runtime-record rt)) status)
   (%publish rt :status (list :status status)))
 
+(defparameter +max-consecutive-synthetic-followups+ 3
+  "Safety cap on consecutive harness-initiated follow-up turns (#76).
+Without this, a model stuck in a reload_harness reload/fail/retry loop
+could keep triggering new follow-ups indefinitely, unnoticed, consuming
+the operator's provider budget. Resets to 0 whenever a turn completes
+without queueing another follow-up, so this bounds a single chain, not a
+session's lifetime total.")
+
+(defun %reload-followup-text ()
+  "User-turn text auto-submitted after a successful reload_harness (#76).
+Prefixed distinctly and explicit that no human sent it; also persisted
+with transcript kind \"synthetic\" (see %RUN-TURN) so it is never
+rendered indistinguishably from a real user message."
+  "[harness] reload_harness finished successfully. This is an automatic follow-up turn -- no human sent it. Tool schemas and handlers have been re-resolved for this session. If you added or changed a tool, call it now to verify it works, then give your final response.")
+
+(defun %followup-cap-message ()
+  (format nil "[harness] automatic reload_harness follow-up limit (~D consecutive) reached; no further automatic follow-up turns will run until this chain resets."
+          +max-consecutive-synthetic-followups+))
+
+(defun %maybe-run-synthetic-followup (harness rt)
+  "Consume RT's pending synthetic follow-up, if any, once the current turn
+has fully finished. Auto-submits a new turn via the same SUBMIT-TURN path
+a human message would use, up to +MAX-CONSECUTIVE-SYNTHETIC-FOLLOWUPS+;
+beyond that, records a safe notice instead of submitting and resets the
+chain so a later, genuine attempt gets a fresh allowance."
+  (let ((text (session-runtime-pending-synthetic-followup rt)))
+    (setf (session-runtime-pending-synthetic-followup rt) nil)
+    (cond
+      ((null text)
+       (setf (session-runtime-synthetic-followup-chain-length rt) 0))
+      ((< (session-runtime-synthetic-followup-chain-length rt)
+          +max-consecutive-synthetic-followups+)
+       (incf (session-runtime-synthetic-followup-chain-length rt))
+       (submit-turn harness (session-record-id (session-runtime-record rt)) text
+                    :kind "synthetic"))
+      (t
+       (setf (session-runtime-synthetic-followup-chain-length rt) 0)
+       (%append-transcript rt "system" (%followup-cap-message) :kind "synthetic")
+       (%publish rt :system (list :subtype "synthetic-followup-cap-reached"))))))
+
 (defun %append-transcript (rt role text &key (kind "message") meta)
   (let ((entry (make-transcript-entry :role role :text text :kind kind :meta meta)))
     (setf (session-record-transcript (session-runtime-record rt))
@@ -138,18 +192,28 @@ under \"Operator diagnostics\" for how to locate and read it."
          (setf (session-runtime-pending-assistant-text rt) text)
          nil))
       (:tool-requested
+       (setf (gethash (getf payload :id) (session-runtime-pending-tool-names rt))
+             (getf payload :name))
        (%append-transcript rt "assistant"
                            (format nil "Tool requested: ~A" (getf payload :name))
                            :kind "tool" :meta payload)
        (%publish rt :tool-requested payload)
        nil)
       (:tool-completed
+       (let ((name (gethash (getf payload :tool-use-id) (session-runtime-pending-tool-names rt))))
+         (remhash (getf payload :tool-use-id) (session-runtime-pending-tool-names rt))
+         ;; :tool-completed only ever fires for a non-error result (the
+         ;; mapping layer already splits success/failure into distinct event
+         ;; types -- see #58) -- so reaching here already means success.
+         (when (equal name "reload_harness")
+           (setf (session-runtime-pending-synthetic-followup rt) (%reload-followup-text))))
        (%append-transcript rt "assistant"
                            (format nil "Tool completed: ~A" (getf payload :content))
                            :kind "tool" :meta payload)
        (%publish rt :tool-completed payload)
        nil)
       (:tool-failed
+       (remhash (getf payload :tool-use-id) (session-runtime-pending-tool-names rt))
        (%append-transcript rt "assistant" "Tool failed"
                            :kind "tool" :meta payload)
        (%publish rt :tool-failed payload)
@@ -227,7 +291,7 @@ under \"Operator diagnostics\" for how to locate and read it."
      (%publish rt :error (list :message "turn deadline exceeded"))
      (%set-status rt :error))))
 
-(defun %run-turn (harness rt turn-id prompt)
+(defun %run-turn (harness rt turn-id prompt &optional (kind "message"))
   (let ((rec (session-runtime-record rt)))
     (handler-case
         (progn
@@ -240,8 +304,10 @@ under \"Operator diagnostics\" for how to locate and read it."
           (let* ((resume (session-record-canonical-id rec))
                  (client (%ensure-client harness rt :resume resume))
                  (done nil))
-            (%append-transcript rt "user" prompt)
-            (%publish rt :user-message (list :text prompt :turn-id turn-id))
+            (%append-transcript rt "user" prompt :kind kind)
+            (%publish rt :user-message
+                      (list :text prompt :turn-id turn-id
+                            :synthetic (and (equal kind "synthetic") t)))
             (repository-save-session (harness-repository harness) rec)
             (%set-status rt :responding)
             (send-prompt client prompt
@@ -267,7 +333,8 @@ under \"Operator diagnostics\" for how to locate and read it."
             (setf (session-runtime-cancellation-reason rt) nil)
             (setf (session-record-active-turn-id rec) nil)
             (repository-save-session (harness-repository harness) rec)
-            (%touch rt)))
+            (%touch rt)
+            (%maybe-run-synthetic-followup harness rt)))
       (error (c)
         ;; The in-memory record may contain a prompt or terminal event whose
         ;; save just failed.  Reload the last committed record before recording
@@ -302,8 +369,8 @@ under \"Operator diagnostics\" for how to locate and read it."
       (destructuring-bind (op . args) msg
         (ecase op
           (:turn
-           (destructuring-bind (turn-id prompt) args
-             (%run-turn harness rt turn-id prompt)))
+           (destructuring-bind (turn-id prompt kind) args
+             (%run-turn harness rt turn-id prompt kind)))
           (:interrupt
            (let ((client (session-runtime-client rt)))
              (when client

@@ -16,3 +16,19 @@
          (d (sm-harness-web-ui::event-display ev)))
     (is (string= "assistant" (car d)))
     (is (search "&lt;x&gt;" (cdr d)))))
+
+(test event-display-user-message-is-plain-user
+  (let* ((ev (sm-harness:make-event :type :user-message :sequence 1
+                                    :session-id "s"
+                                    :payload (list :text "hello")))
+         (d (sm-harness-web-ui::event-display ev)))
+    (is (string= "user" (car d)))))
+
+(test event-display-synthetic-user-message-is-harness-not-user
+  ;; A harness-initiated follow-up (#76) must never render indistinguishably
+  ;; from something the human actually typed.
+  (let* ((ev (sm-harness:make-event :type :user-message :sequence 1
+                                    :session-id "s"
+                                    :payload (list :text "[harness] ..." :synthetic t)))
+         (d (sm-harness-web-ui::event-display ev)))
+    (is (string= "harness" (car d)))))

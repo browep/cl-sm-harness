@@ -27,7 +27,10 @@
       (:assistant-text
        (cons "assistant" (escape-text (getf payload :text))))
       (:user-message
-       (cons "user" (escape-text (getf payload :text))))
+       ;; A harness-initiated synthetic follow-up (#76) must never render
+       ;; indistinguishably from something the human actually typed.
+       (cons (if (getf payload :synthetic) "harness" "user")
+             (escape-text (getf payload :text))))
       (:tool-requested
        (cons "tool" (escape-text (format nil "Tool requested: ~A" (getf payload :name)))))
       (:tool-completed

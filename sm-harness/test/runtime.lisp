@@ -729,3 +729,125 @@
              (is (search "reloaded" (echoed-mcp-result-text wire)))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test reload-harness-completion-schedules-and-runs-a-synthetic-followup
+  (let* ((root (temp-data-root))
+         (transport (make-repeated-tool-turn-transport
+                     (list (list :tool-name "reload_harness" :is-error nil))))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "reload followup"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "please reload")
+           (is (wait-until
+                (lambda ()
+                  (find "synthetic"
+                        (sm-harness:session-snapshot-transcript
+                         (sm-harness:open-session h session-id))
+                        :key #'sm-harness:transcript-entry-kind :test #'string=))
+                :timeout 5))
+           (let* ((transcript (sm-harness:session-snapshot-transcript
+                               (sm-harness:open-session h session-id)))
+                  (entry (find "synthetic" transcript
+                              :key #'sm-harness:transcript-entry-kind :test #'string=)))
+             (is (string= "user" (sm-harness:transcript-entry-role entry)))
+             (is (search "[harness] reload_harness finished successfully"
+                        (sm-harness:transcript-entry-text entry)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test reload-harness-failure-does-not-schedule-a-followup
+  (let* ((root (temp-data-root))
+         (transport (make-repeated-tool-turn-transport
+                     (list (list :tool-name "reload_harness" :is-error t))))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "reload failure"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "please reload")
+           (is (wait-until
+                (lambda ()
+                  (string= "canon-42"
+                           (or (sm-harness:session-snapshot-canonical-id
+                                (sm-harness:open-session h session-id))
+                               "")))))
+           ;; Give an (incorrect) auto-followup a moment to fire if it were
+           ;; going to, before asserting its absence.
+           (sleep 0.3)
+           (is (null (find "synthetic"
+                           (sm-harness:session-snapshot-transcript
+                            (sm-harness:open-session h session-id))
+                           :key #'sm-harness:transcript-entry-kind :test #'string=))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test different-tool-completion-does-not-schedule-a-followup
+  (let* ((root (temp-data-root))
+         (transport (make-repeated-tool-turn-transport
+                     (list (list :tool-name "bash" :is-error nil))))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "other tool"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "run bash")
+           (is (wait-until
+                (lambda ()
+                  (string= "canon-42"
+                           (or (sm-harness:session-snapshot-canonical-id
+                                (sm-harness:open-session h session-id))
+                               "")))))
+           (sleep 0.3)
+           (is (null (find "synthetic"
+                           (sm-harness:session-snapshot-transcript
+                            (sm-harness:open-session h session-id))
+                           :key #'sm-harness:transcript-entry-kind :test #'string=))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test reload-harness-followup-chain-stops-at-the-consecutive-cap
+  (let* ((root (temp-data-root))
+         (cycles (loop repeat (1+ sm-harness::+max-consecutive-synthetic-followups+)
+                       collect (list :tool-name "reload_harness" :is-error nil)))
+         (transport (make-repeated-tool-turn-transport cycles))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "reload chain cap"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "please reload")
+           (is (wait-until
+                (lambda ()
+                  (find-if (lambda (e)
+                             (search "follow-up limit" (sm-harness:transcript-entry-text e)))
+                           (sm-harness:session-snapshot-transcript
+                            (sm-harness:open-session h session-id))))
+                :timeout 5))
+           (let* ((transcript (sm-harness:session-snapshot-transcript
+                               (sm-harness:open-session h session-id)))
+                  (synthetic-count (count "synthetic" transcript
+                                         :key #'sm-harness:transcript-entry-kind
+                                         :test #'string=)))
+             ;; +MAX-CONSECUTIVE-SYNTHETIC-FOLLOWUPS+ real auto-submitted
+             ;; turns, plus one cap-notice entry (also kind "synthetic").
+             (is (= (1+ sm-harness::+max-consecutive-synthetic-followups+) synthetic-count))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

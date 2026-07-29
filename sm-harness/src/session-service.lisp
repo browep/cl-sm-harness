@@ -62,7 +62,11 @@
       (%open-runtime harness rec))
     (session-record->snapshot rec)))
 
-(defun submit-turn (harness session-id prompt)
+(defun submit-turn (harness session-id prompt &key (kind "message"))
+  "KIND tags the durable transcript entry and published :user-message event
+(default \"message\"). Internal harness-initiated follow-ups (#76) pass
+\"synthetic\" so they render distinctly and are never mistaken for a
+message the human actually typed."
   (unless (and (stringp prompt)
                (plusp (length (string-trim '(#\Space #\Tab #\Newline) prompt))))
     (error 'harness-input-error :message "prompt must be a non-empty string"))
@@ -72,7 +76,7 @@
         (error 'harness-state-error :message "session already has an active turn"))
       (let ((turn-id (%new-id "turn")))
         (setf (session-record-active-turn-id (session-runtime-record rt)) turn-id)
-        (%enqueue rt (list :turn turn-id prompt))
+        (%enqueue rt (list :turn turn-id prompt kind))
         turn-id))))
 
 (defun evict-idle-sessions (harness &key (now (get-universal-time)))

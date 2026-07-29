@@ -140,6 +140,38 @@ exists, making (FIRST (FAKE-WRITES TRANSPORT)) read the wrong message."
                                   (fake-writes transport))))
   (find-if (lambda (line) (search "mcp_response" line)) (fake-writes transport)))
 
+(defun %reload-cycle-messages (id &key (tool-name "reload_harness") (is-error nil))
+  "One conversational tool_use/tool_result round-trip cycle as a single
+combined chunk: an assistant tool_use block, the CLI's type=\"user\"
+tool_result message, a final assistant text, and the terminal result."
+  (concatenate
+   'string
+   (format nil "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":~S,\"name\":~S,\"input\":{}}],\"model\":\"fixture\"}}"
+           id tool-name)
+   +nl+
+   (format nil "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":~S,\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"is_error\":~A}]}}"
+           id (if is-error "true" "false"))
+   +nl+
+   "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}],\"model\":\"fixture\"}}"
+   +nl+
+   "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"canon-42\",\"result\":\"done\"}"
+   +nl+))
+
+(defun make-repeated-tool-turn-transport (specs)
+  "SPECS is a list of (:tool-name NAME :is-error BOOL) plists, one per turn
+cycle, all queued up front on one transport/client -- for testing a chain
+of turns each auto-submitted in response to the previous one, without a
+human message in between."
+  (make-instance 'harness-fake-transport
+                 :chunks
+                 (list* (concatenate 'string +init-ok+ +nl+)
+                        (loop for i from 1
+                              for spec in specs
+                              collect (%reload-cycle-messages
+                                       (format nil "toolu_~D" i)
+                                       :tool-name (getf spec :tool-name "reload_harness")
+                                       :is-error (getf spec :is-error))))))
+
 (defun echoed-mcp-result-text (wire)
   (let* ((outer (yason:parse wire))
          (response (gethash "response" outer))
