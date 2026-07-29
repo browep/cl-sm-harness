@@ -32,6 +32,7 @@
                  (:file "session-service")
                  (:file "sdk-adapter")
                  (:file "tool-catalog")
+                 (:file "reload-harness")
                  (:file "runtime"))))
   :perform (asdf:test-op (op c)
              (declare (ignore op c))

@@ -18,7 +18,7 @@
    #:session-summary-canonical-id
    #:transcript-entry #:transcript-entry-role #:transcript-entry-text
    #:transcript-entry-kind #:transcript-entry-meta #:transcript-entry-created-at
-   #:default-tool-catalog #:default-tool-policy
+   #:default-tool-catalog #:default-tool-policy #:*reload-harness-system*
    #:make-tool-policy #:tool-policy-builtin-tools #:tool-policy-strict-mcp-p
    #:tool-catalog #:tool-catalog-servers
    #:tool-server-definition #:tool-server-definition-name #:tool-server-definition-version
