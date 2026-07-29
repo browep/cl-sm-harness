@@ -96,6 +96,41 @@ control-plane call instead."
                                     +conversational-final-text+ +nl+
                                     +conversational-result+ +nl+))))
 
+(defun make-catalog-tool-call-json (&key (request-id "tool-call-1") name arguments)
+  "Build a control_request tools/call wire message invoking NAME with
+ARGUMENTS (a hash table), for testing any catalog tool by its real name --
+not just the fixed echo_text call scripted by +ECHO-TOOL-CALL+."
+  (with-output-to-string (s)
+    (yason:encode
+     (let ((outer (make-hash-table :test #'equal)))
+       (setf (gethash "type" outer) "control_request"
+             (gethash "request_id" outer) request-id
+             (gethash "request" outer)
+             (let ((req (make-hash-table :test #'equal)))
+               (setf (gethash "subtype" req) "mcp_message"
+                     (gethash "server_name" req) "sm_harness"
+                     (gethash "message" req)
+                     (let ((msg (make-hash-table :test #'equal)))
+                       (setf (gethash "jsonrpc" msg) "2.0"
+                             (gethash "id" msg) 7
+                             (gethash "method" msg) "tools/call"
+                             (gethash "params" msg)
+                             (let ((params (make-hash-table :test #'equal)))
+                               (setf (gethash "name" params) name
+                                     (gethash "arguments" params) arguments)
+                               params))
+                       msg))
+               req))
+       outer)
+     s)))
+
+(defun make-named-catalog-tool-turn-transport (tool-call-json)
+  (make-instance 'harness-fake-transport
+                 :chunks
+                 (list (concatenate 'string +init-ok+ +nl+)
+                       (concatenate 'string tool-call-json +nl+
+                                    +assistant+ +nl+ +result+ +nl+))))
+
 (defun echoed-mcp-result-text (wire)
   (let* ((outer (yason:parse wire))
          (response (gethash "response" outer))

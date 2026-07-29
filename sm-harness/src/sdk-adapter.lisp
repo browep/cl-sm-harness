@@ -8,10 +8,17 @@
    :description (tool-definition-description definition)
    :input-schema (tool-definition-input-schema definition)
    :handler (lambda (arguments context)
-              (let ((result (funcall (tool-definition-handler definition)
-                                     arguments context)))
+              ;; A handler returning a single value (the existing echo_text
+              ;; contract) gets IS-ERROR nil for free: an unrequested extra
+              ;; value from MULTIPLE-VALUE-BIND is nil. A handler that wants
+              ;; to report a domain-level failure (not a Lisp condition, so
+              ;; not the existing raise-to-JSON-RPC-error path) returns
+              ;; (VALUES text t).
+              (multiple-value-bind (result is-error)
+                  (funcall (tool-definition-handler definition) arguments context)
                 (claude-agent-sdk-cl:make-sdk-tool-result
-                 :text (princ-to-string result))))))
+                 :text (princ-to-string result)
+                 :is-error (and is-error t))))))
 
 (defun %sdk-server-from-definition (server)
   (claude-agent-sdk-cl:make-sdk-mcp-server

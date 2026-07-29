@@ -619,3 +619,31 @@
                           (echoed-mcp-result-text (first (fake-writes transport)))))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test read-file-tool-executes-through-the-real-catalog-and-returns-file-content
+  (let* ((root (temp-data-root))
+         (file-path (merge-pathnames "catalog-read.txt" root))
+         (catalog (sm-harness:default-tool-catalog))
+         (arguments (let ((h (make-hash-table :test #'equal)))
+                      (setf (gethash "path" h) (namestring file-path))
+                      h))
+         (tool-call-json (make-catalog-tool-call-json :name "read_file" :arguments arguments))
+         (transport (make-named-catalog-tool-turn-transport tool-call-json))
+         (h (sm-harness:make-harness
+             :catalog catalog
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "real read_file"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (%write-text-file file-path (format nil "alpha~%beta~%"))
+           (sm-harness:submit-turn h session-id "read the file")
+           (is (wait-until (lambda () (>= (length (fake-writes transport)) 1))))
+           (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
+           (is (string= (format nil "1~Calpha~%2~Cbeta~%" #\Tab #\Tab)
+                        (echoed-mcp-result-text (first (fake-writes transport))))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
