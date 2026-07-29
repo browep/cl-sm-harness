@@ -403,6 +403,58 @@
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
+(test conversational-tool-result-becomes-a-durable-tool-completed-entry
+  ;; A built-in-tool's result arrives as a type="user" message, not as part
+  ;; of the assistant message. It must map to :tool-completed and persist
+  ;; with kind "tool", not fall through to :unrecognized.
+  (let* ((root (temp-data-root))
+         (events '())
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-conversational-tool-round-trip-transport)))))
+         (snapshot (sm-harness:start-session h :title "conversational tool"))
+         (session-id (sm-harness:session-snapshot-id snapshot))
+         (listener-id nil))
+    (unwind-protect
+         (progn
+           (multiple-value-bind (snap lid cursor)
+               (sm-harness:attach-session-listener
+                h session-id
+                :callback (lambda (ev) (push ev events)))
+             (declare (ignore snap cursor))
+             (setf listener-id lid))
+           (sm-harness:submit-turn h session-id "run the command")
+           (is (wait-until
+                (lambda ()
+                  (string= "canon-42"
+                           (or (sm-harness:session-snapshot-canonical-id
+                                (sm-harness:open-session h session-id))
+                               "")))))
+           (sm-harness:detach-session-listener h session-id listener-id)
+           (setf events (nreverse events))
+           (is (null (find :unrecognized events :key #'sm-harness:event-type)))
+           (let ((completed (find :tool-completed events :key #'sm-harness:event-type)))
+             (is (not (null completed)))
+             (is (string= "toolu_99" (getf (sm-harness:event-payload completed) :tool-use-id)))
+             (is (string= "hi" (getf (sm-harness:event-payload completed) :content))))
+           (let* ((reopened (sm-harness:open-session h session-id))
+                  (transcript (sm-harness:session-snapshot-transcript reopened))
+                  (tool-entries (remove-if-not
+                                 (lambda (e) (string= "tool" (sm-harness:transcript-entry-kind e)))
+                                 transcript))
+                  (completed-entry (find-if
+                                     (lambda (e) (search "Tool completed"
+                                                        (sm-harness:transcript-entry-text e)))
+                                     tool-entries)))
+             (is (= 2 (length tool-entries)))
+             (is (not (null completed-entry)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
 (test malformed-sdk-event-is-safe-terminal-and-a-fresh-retry-can-complete
   (let* ((root (temp-data-root))
          (factory-count 0)
