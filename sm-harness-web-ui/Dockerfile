@@ -16,6 +16,7 @@ RUN apt-get update \
       git \
       build-essential \
       libsqlite3-dev \
+      procps \
  && npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
  && useradd --create-home --uid 10001 --shell /usr/sbin/nologin app \
  && mkdir -p /cache /data /opt/quicklisp /app \

@@ -231,27 +231,63 @@ STREAM; TRUNCATED-P is true only if strictly more data remained after that."
         (values (subseq buf 0 n)
                 (and (= n max-chars) (not (null (read-char stream nil nil))))))))
 
+(defun %kill-process-group (pgid signal)
+  "Signal every process in PGID's group via SB-POSIX:KILLPG, returning NIL
+on success -- including ESRCH, since a group that is already gone is what
+a kill is for -- or a short failure description string. This must never
+shell out to an external kill binary: the production web-ui image ships
+none, which made an earlier RUN-PROGRAM-based kill a silent no-op under
+IGNORE-ERRORS and wedged the session worker forever (#79)."
+  (handler-case
+      (progn (sb-posix:killpg pgid signal) nil)
+    (sb-posix:syscall-error (e)
+      (if (= (sb-posix:syscall-errno e) sb-posix:esrch)
+          nil
+          (format nil "killpg(~D, ~D) failed: ~A" pgid signal e)))))
+
+(defun %bash-timeout-result-text (timeout-seconds kill-failure)
+  "A timeout whose kill failed must say so, not claim the command was
+killed: the caller may need to know a runaway process is still alive."
+  (if kill-failure
+      (format nil "command timed out after ~D seconds but could not be killed (~A); it may still be running"
+              timeout-seconds kill-failure)
+      (format nil "command timed out after ~D seconds and was killed" timeout-seconds)))
+
+(defun %bounded-process-status-wait (process seconds)
+  "Poll PROCESS until it leaves :RUNNING or SECONDS elapse; true if it
+exited. Replaces SB-EXT:PROCESS-WAIT, which blocks unboundedly and would
+wedge the session worker if the child could not be killed (#79)."
+  (loop repeat (max 1 (ceiling (* seconds 10)))
+        do (unless (eq (sb-ext:process-status process) :running)
+             (return t))
+           (sleep 0.1)
+        finally (return (not (eq (sb-ext:process-status process) :running)))))
+
 (defun %run-bash-command (command cwd timeout-seconds)
-  "Return (values stdout stderr exit-code timed-out-p). Runs COMMAND via a
-shell. SB-EXT:RUN-PROGRAM already places its child in a new process group
-of its own (the shell's PID doubles as its PGID), so the whole group --
-not just the direct shell -- can be signaled on timeout by killing the
-negative PID. This mirrors, at the scale of a single tool call, this
-project's existing process-tree supervision precedent for the long-lived
-CLI subprocess (#17, sm-harness-web-ui/docker/claude-agent-sdk-cl-supervisor.c):
-SIGTERM the group, a short grace period, then SIGKILL the group.
-(An earlier version of this function wrapped the shell in `setsid`, but
-`setsid` forks a detached grandchild and exits immediately unless given
-`--wait`, which made SB-EXT:RUN-PROGRAM's own child -- and thus its exit
-code and process group -- the wrong process entirely.)"
+  "Return (values stdout stderr exit-code timed-out-p kill-failure). Runs
+COMMAND via a shell. SB-EXT:RUN-PROGRAM already places its child in a new
+process group of its own (the shell's PID doubles as its PGID), so the
+whole group -- not just the direct shell -- is signaled on timeout:
+SIGTERM, a short grace period, then SIGKILL, via %KILL-PROCESS-GROUP
+(sb-posix, deliberately no external kill binary -- see #79). This mirrors,
+at the scale of a single tool call, this project's existing process-tree
+supervision precedent for the long-lived CLI subprocess (#17,
+sm-harness-web-ui/docker/claude-agent-sdk-cl-supervisor.c).
+(An earlier version wrapped the shell in `setsid`, but `setsid` forks a
+detached grandchild and exits immediately unless given `--wait`, which
+made SB-EXT:RUN-PROGRAM's own child -- and thus its exit code and process
+group -- the wrong process entirely.)
+EXIT-CODE is NIL when the child outlived every bounded wait (a failed
+kill): the handler reports that distinctly rather than blocking forever."
   (let* ((process (apply #'sb-ext:run-program "/bin/sh"
                          (list "-c" command)
                          :output :stream :error :stream :wait nil :search t
                          (when (and cwd (plusp (length cwd)))
                            (list :directory cwd))))
          (pid (sb-ext:process-pid process))
-         (timed-out-lock (sb-thread:make-mutex :name "bash-tool-timeout"))
+         (state-lock (sb-thread:make-mutex :name "bash-tool-timeout"))
          (timed-out-p nil)
+         (kill-failure nil)
          ;; Captured as a lexical value, not read from inside the spawned
          ;; thread: a new SB-THREAD does not inherit the calling thread's
          ;; dynamic (LET-rebound) value of a special variable, only its
@@ -261,35 +297,63 @@ code and process group -- the wrong process entirely.)"
      (lambda ()
        (sleep timeout-seconds)
        (when (eq (sb-ext:process-status process) :running)
-         (sb-thread:with-mutex (timed-out-lock) (setf timed-out-p t))
-         (ignore-errors
-           (sb-ext:run-program "/usr/bin/kill" (list "-TERM" (format nil "-~D" pid))
-                              :search t))
+         (sb-thread:with-mutex (state-lock) (setf timed-out-p t))
+         (%kill-process-group pid sb-posix:sigterm)
          (sleep 0.2)
-         (ignore-errors
-           (sb-ext:run-program "/usr/bin/kill" (list "-KILL" (format nil "-~D" pid))
-                              :search t))))
+         ;; SIGKILL is the authoritative attempt: a failed SIGTERM followed
+         ;; by a SIGKILL that succeeded (or found the group already gone)
+         ;; is still a successful kill.
+         (let ((failure (%kill-process-group pid sb-posix:sigkill)))
+           (when failure
+             (sb-thread:with-mutex (state-lock) (setf kill-failure failure))))))
      :name "bash-tool-timeout-watchdog")
-    (let (stdout-text stdout-truncated)
-      (let ((stdout-thread
-              (sb-thread:make-thread
-               (lambda ()
-                 (multiple-value-setq (stdout-text stdout-truncated)
-                   (%read-stream-capped (sb-ext:process-output process)
-                                        max-output-chars)))
-               :name "bash-tool-stdout-reader")))
-        (multiple-value-bind (stderr-text stderr-truncated)
-            (%read-stream-capped (sb-ext:process-error process) max-output-chars)
-          (sb-thread:join-thread stdout-thread)
-          (sb-ext:process-wait process)
+    (let (stdout-text stdout-truncated stderr-text stderr-truncated)
+      (let* ((stdout-thread
+               (sb-thread:make-thread
+                (lambda ()
+                  (multiple-value-setq (stdout-text stdout-truncated)
+                    (%read-stream-capped (sb-ext:process-output process)
+                                         max-output-chars)))
+                :name "bash-tool-stdout-reader"))
+             (stderr-thread
+               (sb-thread:make-thread
+                (lambda ()
+                  (multiple-value-setq (stderr-text stderr-truncated)
+                    (%read-stream-capped (sb-ext:process-error process)
+                                         max-output-chars)))
+                :name "bash-tool-stderr-reader"))
+             ;; Reader threads end when the child's pipes hit EOF, normally
+             ;; within moments of exit or of the timeout kill. If the kill
+             ;; itself failed they may never end: bound every wait and
+             ;; abandon the readers rather than block the session worker
+             ;; forever -- the wedge, not the thread leak, is the
+             ;; catastrophic outcome (#79).
+             (grace (+ timeout-seconds 10))
+             (abandoned-p nil))
+        (when (eq :sm-reader-timeout
+                  (sb-thread:join-thread stdout-thread :timeout grace
+                                                      :default :sm-reader-timeout))
+          (setf abandoned-p t))
+        (when (eq :sm-reader-timeout
+                  (sb-thread:join-thread stderr-thread :timeout grace
+                                                      :default :sm-reader-timeout))
+          (setf abandoned-p t))
+        ;; EOF on both pipes does not imply exit (a child can close its own
+        ;; fds and keep running), so the status wait stays bounded too.
+        (unless (%bounded-process-status-wait process grace)
+          (setf abandoned-p t))
+        (multiple-value-bind (final-timed-out final-kill-failure)
+            (sb-thread:with-mutex (state-lock)
+              (values timed-out-p kill-failure))
           (values (if stdout-truncated
                       (concatenate 'string stdout-text (format nil "~%[stdout truncated]"))
-                      stdout-text)
+                      (or stdout-text ""))
                   (if stderr-truncated
                       (concatenate 'string stderr-text (format nil "~%[stderr truncated]"))
-                      stderr-text)
-                  (sb-ext:process-exit-code process)
-                  (sb-thread:with-mutex (timed-out-lock) timed-out-p)))))))
+                      (or stderr-text ""))
+                  (unless abandoned-p (sb-ext:process-exit-code process))
+                  final-timed-out
+                  final-kill-failure))))))
 
 (defun %bash-tool-handler (arguments context)
   (declare (ignore context))
@@ -307,13 +371,19 @@ code and process group -- the wrong process entirely.)"
                t))
       (t
        (handler-case
-           (multiple-value-bind (stdout stderr exit-code timed-out-p)
+           (multiple-value-bind (stdout stderr exit-code timed-out-p kill-failure)
                (%run-bash-command command cwd timeout)
-             (if timed-out-p
-                 (values (format nil "command timed out after ~D seconds and was killed" timeout) t)
-                 (values
-                  (format nil "exit code: ~D~%stdout:~%~A~%stderr:~%~A" exit-code stdout stderr)
-                  nil)))
+             (cond
+               (timed-out-p
+                (values (%bash-timeout-result-text timeout kill-failure) t))
+               ((null exit-code)
+                ;; The child outlived every bounded wait without a timeout
+                ;; being declared (e.g. it closed its own pipes and lingered).
+                (values "unable to determine command exit status; the command may still be running" t))
+               (t
+                (values
+                 (format nil "exit code: ~D~%stdout:~%~A~%stderr:~%~A" exit-code stdout stderr)
+                 nil))))
          (error ()
            (values "unable to run command" t)))))))
 

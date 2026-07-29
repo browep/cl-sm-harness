@@ -70,13 +70,24 @@ spawned, or it timed out), never the command's own exit status.
 
 `timeout_seconds` defaults to 120 and is capped at 600; a larger request is
 **rejected outright**, not silently clamped. On timeout, the whole process
-group is signaled (SIGTERM, then SIGKILL after a short grace period) —
-`SB-EXT:RUN-PROGRAM` already places its child shell in a new process group
-of its own (the shell's PID doubles as its PGID), so killing the negative
-PID reaches any children the command itself forked, not just the shell.
-This mirrors, at the scale of a single tool call, the process-tree
-supervision precedent this project already has for the long-lived Claude
-CLI subprocess (#17, `sm-harness-web-ui/docker/claude-agent-sdk-cl-supervisor.c`).
+group is signaled (SIGTERM, then SIGKILL after a short grace period) via
+`sb-posix:killpg` directly — **never an external `kill` binary**, because
+the production web-ui image shipped none and a `run-program`-based kill
+silently no-opped, leaving the child alive and the session worker wedged
+forever (#79). `SB-EXT:RUN-PROGRAM` already places its child shell in a
+new process group of its own (the shell's PID doubles as its PGID), so
+signaling the group reaches any children the command itself forked, not
+just the shell. This mirrors, at the scale of a single tool call, the
+process-tree supervision precedent this project already has for the
+long-lived Claude CLI subprocess (#17,
+`sm-harness-web-ui/docker/claude-agent-sdk-cl-supervisor.c`).
+
+If the kill itself fails, the tool result says so explicitly ("could not
+be killed ... may still be running") instead of claiming the command was
+killed, and every wait in the handler is bounded (reader-thread joins and
+the process-status wait both give up after `timeout_seconds` + 10s,
+abandoning the readers) so a kill failure degrades to a leaked thread and
+an honest error — never a permanently wedged session worker.
 
 Output is capped at roughly 200KB per stream (stdout and stderr are capped
 independently, read concurrently on separate threads to avoid the classic

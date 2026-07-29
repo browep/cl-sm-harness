@@ -192,15 +192,51 @@
              (is (eq t is-error))
              (is (search "timed out" text)))
            (is (probe-file marker))
-           (let* ((child-pid (string-trim '(#\Space #\Newline #\Return)
-                                          (%read-whole-file marker)))
-                  (check (sb-ext:run-program "/bin/kill" (list "-0" child-pid) :search t)))
-             (sb-ext:process-wait check)
-             ;; A nonzero exit from `kill -0` means the pid no longer exists:
-             ;; the background child was reaped along with the group, not
-             ;; left as an orphan.
-             (is (/= 0 (sb-ext:process-exit-code check)))))
+           (let ((child-pid (parse-integer
+                             (string-trim '(#\Space #\Newline #\Return)
+                                          (%read-whole-file marker)))))
+             ;; A group-killed background child reparents to PID 1 and can
+             ;; linger briefly as an unreaped zombie, which a signal-0
+             ;; probe still counts as alive -- the source of this test's
+             ;; historical flakiness. Read /proc state instead: gone or
+             ;; Z(ombie) both mean "killed, not an orphan", and poll with a
+             ;; deadline since reaping is asynchronous.
+             (flet ((dead-p ()
+                      (let ((stat (ignore-errors
+                                    (uiop:read-file-string
+                                     (format nil "/proc/~D/stat" child-pid)))))
+                        (or (null stat) (search ") Z " stat)))))
+               (loop repeat 50 until (dead-p) do (sleep 0.1))
+               (is (dead-p)))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test bash-tool-kill-helper-treats-an-already-dead-group-as-success
+  ;; ESRCH (no such process group) is what a successful kill leaves behind,
+  ;; so it must read as success, not as a failure to report.
+  (let ((process (sb-ext:run-program "/bin/sh" (list "-c" "true")
+                                     :wait t :search t)))
+    (is (null (sm-harness::%kill-process-group
+               (sb-ext:process-pid process) sb-posix:sigterm)))))
+
+(test bash-tool-kill-helper-reports-a-genuine-kill-failure
+  ;; An invalid signal number provokes EINVAL, standing in for any genuine
+  ;; killpg failure. (The production incident behind #79 -- a missing kill
+  ;; binary -- is a failure mode sb-posix removes entirely.)
+  (let ((process (sb-ext:run-program "/bin/sh" (list "-c" "sleep 5")
+                                     :wait nil :search t)))
+    (unwind-protect
+         (is (stringp (sm-harness::%kill-process-group
+                       (sb-ext:process-pid process) -1)))
+      (sm-harness::%kill-process-group (sb-ext:process-pid process)
+                                       sb-posix:sigkill))))
+
+(test bash-tool-timeout-result-reports-a-failed-kill-distinctly
+  (let ((killed (sm-harness::%bash-timeout-result-text 5 nil))
+        (unkilled (sm-harness::%bash-timeout-result-text 5 "killpg(123, 9) failed: EPERM")))
+    (is (search "was killed" killed))
+    (is (search "could not be killed" unkilled))
+    (is (search "EPERM" unkilled))
+    (is (search "may still be running" unkilled))))
 
 (test bash-tool-truncates-output-over-the-character-cap
   (let ((sm-harness::+bash-tool-max-output-chars+ 5))
