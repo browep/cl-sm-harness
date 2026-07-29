@@ -32,3 +32,22 @@
                                     :payload (list :text "[harness] ..." :synthetic t)))
          (d (sm-harness-web-ui::event-display ev)))
     (is (string= "harness" (car d)))))
+
+(test shutdown-signal-handler-survives-a-real-three-argument-signal-call
+  ;; #82: SB-SYS:ENABLE-INTERRUPT invokes handlers with 3 arguments; the
+  ;; previous 0-arg lambda died with "invalid number of arguments: 3" on
+  ;; every SIGTERM, so shutdown was always a crash, never graceful.
+  ;; Deliver a real SIGTERM to this very process and require the shutdown
+  ;; flag to flip with no unhandled condition.
+  (let ((requested nil))
+    (unwind-protect
+         (progn
+           (sm-harness-web-ui::%install-shutdown-signal-handlers
+            (lambda () (setf requested t)))
+           (sb-posix:kill (sb-posix:getpid) sb-unix:sigterm)
+           (loop repeat 100 until requested do (sleep 0.05))
+           (is (eq t requested)))
+      ;; Restore defaults so a later real TERM still terminates the
+      ;; test process normally.
+      (sb-sys:enable-interrupt sb-unix:sigterm :default)
+      (sb-sys:enable-interrupt sb-unix:sigint :default))))

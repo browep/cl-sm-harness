@@ -10,6 +10,7 @@
                 ((:file "packages")
                  (:file "config")
                  (:file "presenter")
+                 (:file "shutdown")
                  (:file "harness-adapter")
                  (:file "ui/home")
                  (:file "ui/chat")
@@ -50,6 +51,7 @@
   :serial t
   :components ((:file "src/packages")
                (:file "src/presenter")
+               (:file "src/shutdown")
                (:file "test/packages")
                (:file "test/ui-state"))
   :perform (asdf:test-op (op c)
