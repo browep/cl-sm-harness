@@ -82,6 +82,158 @@
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
+(test one-shot-precanonical-save-failure-never-commits-the-unpersisted-prompt
+  (let* ((root (temp-data-root))
+         (armed t)
+         (original (symbol-function 'sm-harness::repository-save-session))
+         (h nil))
+    (unwind-protect
+         (progn
+           ;; The first transcript-bearing save fails; the existing error path
+           ;; subsequently writes the mutated in-memory record, which this test
+           ;; must catch until the persistence boundary becomes transactional.
+           (setf (symbol-function 'sm-harness::repository-save-session)
+                 (lambda (repo rec)
+                   (if (and armed (sm-harness::session-record-transcript rec))
+                       (progn
+                         (setf armed nil)
+                         (error 'sm-harness:harness-state-error
+                                :message "fixture persistence secret"))
+                       (funcall original repo rec))))
+           (setf h (sm-harness:make-harness
+                    :config (sm-harness:make-harness-config
+                             :data-root root
+                             :transport-factory
+                             (lambda (options)
+                               (declare (ignore options))
+                               (make-simple-turn-transport)))))
+           (let* ((snapshot (sm-harness:start-session h :title "save failure"))
+                  (session-id (sm-harness:session-snapshot-id snapshot)))
+             (sm-harness:submit-turn h session-id "must not become durable")
+             (is (wait-until (lambda () (eq :error (sm-harness:session-status h session-id)))))
+             (let ((reopened (sm-harness:open-session h session-id)))
+               (is (null (sm-harness:session-snapshot-canonical-id reopened)))
+               (is (null (sm-harness:session-snapshot-transcript reopened))))))
+      (setf (symbol-function 'sm-harness::repository-save-session) original)
+      (when h (sm-harness:close-harness h))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test one-shot-postcanonical-save-failure-restores-the-last-committed-identity
+  (let* ((root (temp-data-root))
+         (armed t)
+         (original (symbol-function 'sm-harness::repository-save-session))
+         (h nil))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'sm-harness::repository-save-session)
+                 (lambda (repo rec)
+                   (if (and armed (sm-harness::session-record-canonical-id rec))
+                       (progn
+                         (setf armed nil)
+                         (error 'sm-harness:harness-state-error
+                                :message "fixture terminal persistence secret"))
+                       (funcall original repo rec))))
+           (setf h (sm-harness:make-harness
+                    :config (sm-harness:make-harness-config
+                             :data-root root
+                             :transport-factory
+                             (lambda (options)
+                               (declare (ignore options))
+                               (make-simple-turn-transport)))))
+           (let* ((snapshot (sm-harness:start-session h :title "terminal save failure"))
+                  (session-id (sm-harness:session-snapshot-id snapshot)))
+             (sm-harness:submit-turn h session-id "committed user only")
+             (is (wait-until (lambda () (eq :error (sm-harness:session-status h session-id)))))
+             (let ((reopened (sm-harness::repository-load-session
+                              (sm-harness::harness-repository h) session-id)))
+               (is (null (sm-harness::session-record-canonical-id reopened)))
+               (is (= 1 (length (sm-harness::session-record-transcript reopened))))
+               (is (string= "committed user only"
+                            (sm-harness::transcript-entry-text
+                             (first (sm-harness::session-record-transcript reopened))))))))
+      (setf (symbol-function 'sm-harness::repository-save-session) original)
+      (when h (sm-harness:close-harness h))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test one-shot-postcanonical-save-failure-then-retry-recovers-durable-state
+  (let* ((root (temp-data-root))
+         (armed t)
+         (original (symbol-function 'sm-harness::repository-save-session))
+         (h nil))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'sm-harness::repository-save-session)
+                 (lambda (repo rec)
+                   (if (and armed (sm-harness::session-record-canonical-id rec))
+                       (progn
+                         (setf armed nil)
+                         (error 'sm-harness:harness-state-error
+                                :message "fixture terminal persistence secret"))
+                       (funcall original repo rec))))
+           (setf h (sm-harness:make-harness
+                    :config (sm-harness:make-harness-config
+                             :data-root root
+                             :transport-factory
+                             (lambda (options)
+                               (declare (ignore options))
+                               (make-simple-turn-transport)))))
+           (let* ((snapshot (sm-harness:start-session h :title "terminal save failure"))
+                  (session-id (sm-harness:session-snapshot-id snapshot)))
+             (sm-harness:submit-turn h session-id "committed user only")
+             (is (wait-until (lambda () (eq :error (sm-harness:session-status h session-id)))))
+             ;; The fault was one-shot: a later retry must not be contaminated by
+             ;; it and must recover full durable state, including the canonical
+             ;; identity the first attempt could not commit.
+             (sm-harness:submit-turn h session-id "second turn after fault removed")
+             (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
+             (let ((reopened (sm-harness::repository-load-session
+                              (sm-harness::harness-repository h) session-id)))
+               (is (string= "canon-42" (sm-harness::session-record-canonical-id reopened)))
+               (is (= 4 (length (sm-harness::session-record-transcript reopened))))
+               (is (equal '("user" "user" "assistant" "system")
+                          (mapcar #'sm-harness::transcript-entry-role
+                                  (sm-harness::session-record-transcript reopened)))))))
+      (setf (symbol-function 'sm-harness::repository-save-session) original)
+      (when h (sm-harness:close-harness h))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test recovery-reload-load-failure-does-not-crash-the-worker
+  (let* ((root (temp-data-root))
+         (armed t)
+         (original (symbol-function 'sm-harness::repository-load-session))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-instance 'harness-fake-transport
+                                       :start-error "fixture connect secret")))))
+         (snapshot (sm-harness:start-session h :title "load fault during recovery"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           ;; The runtime error handler's own recovery reload is the target: it
+           ;; must tolerate a load-side fault rather than crash the worker
+           ;; thread and strand the session.
+           (setf (symbol-function 'sm-harness::repository-load-session)
+                 (lambda (repo id)
+                   (if armed
+                       (progn
+                         (setf armed nil)
+                         (error 'sm-harness:harness-state-error
+                                :message "fixture load secret"))
+                       (funcall original repo id))))
+           (sm-harness:submit-turn h session-id "must not crash the worker")
+           (is (wait-until (lambda () (eq :error (sm-harness:session-status h session-id)))))
+           (setf (symbol-function 'sm-harness::repository-load-session) original)
+           (let ((reopened (sm-harness:open-session h session-id)))
+             (is (null (sm-harness:session-snapshot-canonical-id reopened)))
+             (is (null (sm-harness:session-snapshot-transcript reopened)))))
+      (setf (symbol-function 'sm-harness::repository-load-session) original)
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
 (test text-only-turn-renders-and-persists-the-response-exactly-once
   (let* ((root (temp-data-root))
          (events '())
@@ -161,6 +313,7 @@
                         (mapcar #'sm-harness:transcript-entry-role transcript)))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
 
 (test malformed-sdk-event-is-safe-terminal-and-a-fresh-retry-can-complete
   (let* ((root (temp-data-root))

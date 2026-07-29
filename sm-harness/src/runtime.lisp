@@ -213,6 +213,9 @@
                          :session-id (or (session-record-canonical-id rec)
                                          (session-record-id rec)))
             (%start-deadline-watchdog harness rt turn-id)
+            ;; The loop's DO clause is exactly one form (the LET); its own
+            ;; closing paren is required here so the post-loop cleanup below
+            ;; runs once after DONE, not as extra DO forms re-run per message.
             (loop until done do
               (let ((msg (receive-one-message client)))
                 (cond
@@ -225,20 +228,35 @@
                   (t
                    (dolist (mapped (map-sdk-message msg))
                      (when (eq :done (%handle-mapped-event rt rec mapped))
-                       (setf done t))))))
+                       (setf done t)))))))
             (setf (session-runtime-cancellation-reason rt) nil)
             (setf (session-record-active-turn-id rec) nil)
             (repository-save-session (harness-repository harness) rec)
-            (%touch rt))))
+            (%touch rt)))
       (error (c)
-        (setf (session-record-active-turn-id rec) nil)
+        ;; The in-memory record may contain a prompt or terminal event whose
+        ;; save just failed.  Reload the last committed record before recording
+        ;; the recoverable runtime error, so cleanup cannot accidentally commit
+        ;; that failed mutation on its second save attempt.  A failing reload
+        ;; (a load-side fault) must not crash the worker thread: fall back to
+        ;; the in-memory record rather than lose the session entirely.
+        (handler-case
+            (setf (session-runtime-record rt)
+                  (repository-load-session (harness-repository harness)
+                                           (session-record-id rec)))
+          (error () nil))
+        (setf rec (session-runtime-record rt)
+              (session-record-active-turn-id rec) nil)
         (%publish rt :error (safe-error-payload c))
         (%set-status rt :error)
         (ignore-errors
           (when (session-runtime-client rt)
             (disconnect-client (session-runtime-client rt))
             (setf (session-runtime-client rt) nil)))
-        (repository-save-session (harness-repository harness) rec)))))
+        ;; Best-effort: a second persistence fault here must not crash the
+        ;; worker thread or leave the runtime unable to accept a later turn.
+        (ignore-errors
+          (repository-save-session (harness-repository harness) rec))))))
 
 (defun %worker-loop (harness rt)
   (loop
