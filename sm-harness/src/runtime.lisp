@@ -288,7 +288,7 @@ chain so a later, genuine attempt gets a fresh allowance."
   "Cancel TURN-ID after TURN-DEADLINE-SECONDS of model/CLI stall.  A wake
 that finds a conversational tool call still in flight re-arms instead of
 cancelling: the tool call owns its own timeout (the bash tool enforces one
-explicitly, up to 600s -- longer than the 120s default here), so expiring
+explicitly, up to 600s -- longer than the 240s default here), so expiring
 the whole turn mid-call guaranteed a doomed turn for every legitimately
 slow tool call (#80).  Stall is therefore measured at watchdog wakeups: a
 turn keeps running as long as tool calls are still in flight whenever the
