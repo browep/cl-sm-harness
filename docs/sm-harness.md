@@ -46,6 +46,19 @@ line-numbered (`"<n>\t<text>"`). Content beyond `+read-tool-max-chars+`
 explicit notice rather than silently dropped. A missing file or non-UTF-8
 binary content is reported as a safe result, not a crash.
 
+### `write_file`
+
+Writes (creating or overwriting) a file's contents. **No sandboxing** (see
+#61): `path` can be any path the harness process can reach. Overwrites an
+existing file **without confirmation** — every catalog tool executes with
+no approval gate, and this one is no exception. Writes atomically (temp
+file + rename in the same directory, so a failure partway through never
+leaves a partially-written file at `path`) and creates parent directories
+as needed. Content over `+write-tool-max-chars+` (5MB) is **rejected
+outright** — the write does not happen and the existing file, if any, is
+left untouched — rather than truncated: a truncated write would silently
+corrupt the caller's intended file content, which is worse than refusing.
+
 ## Operator diagnostics: per-session event logging
 
 Every normalized harness event that passes through `%publish` in
