@@ -74,7 +74,9 @@ Claude Code CLI turn commonly does."
 (defparameter +conversational-tool-use+
   "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_99\",\"name\":\"Bash\",\"input\":{\"command\":\"echo hi\"}}],\"model\":\"fixture\"}}")
 (defparameter +conversational-tool-result+
-  "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_99\",\"content\":\"hi\",\"is_error\":false}]}}")
+  ;; The realistic wire shape: "content" is an MCP content-block array (what
+  ;; MAKE-SDK-TOOL-RESULT's :TEXT produces), not a bare string.
+  "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_99\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}],\"is_error\":false}]}}")
 (defparameter +conversational-final-text+
   "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"the command printed hi\"}],\"model\":\"fixture\"}}")
 (defparameter +conversational-result+

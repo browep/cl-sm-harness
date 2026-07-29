@@ -451,7 +451,12 @@
                                                         (sm-harness:transcript-entry-text e)))
                                      tool-entries)))
              (is (= 2 (length tool-entries)))
-             (is (not (null completed-entry)))))
+             (is (not (null completed-entry)))
+             ;; Readable content ("hi"), never a raw Lisp object dump of the
+             ;; decoded MCP content-block array.
+             (is (string= "Tool completed: hi"
+                          (sm-harness:transcript-entry-text completed-entry)))
+             (is (not (search "HASH-TABLE" (sm-harness:transcript-entry-text completed-entry))))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
