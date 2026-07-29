@@ -304,19 +304,15 @@ apart to confirm. Spinning readers after a CLI death are #81.
 - A wedged worker cannot be recovered in place — even killing the orphaned
   tool process group only moves the worker into a spin (#81). **Restart
   the container.**
-- Graceful shutdown currently crashes on SIGTERM (#82), which leaves the
-  data-root lock behind; a same-boot restart then refuses to boot with
-  `"data root is locked by another sm-harness process"` (#83). Clear it
-  with:
-
-  ```bash
-  docker run --rm -v claude-agent-sdk-cl_sm-harness-data:/data \
-    busybox rm /data/.harness.lock
-  docker compose -f compose.sm-harness-web-ui.yaml up -d web-ui
-  ```
-
-- Kill any orphaned tool process group first (shell builtin, since the
-  image has no `kill` binary): `docker exec claude-agent-sdk-cl-web-ui-1
-  sh -c 'kill -KILL -<pgid>'`. Note the harness (PID 1) does not reap
-  reparented grandchildren, so expect a harmless zombie until restart
-  (#81).
+- The data-root lock is a kernel-held POSIX fcntl record lock (#83): it
+  is released automatically when the owning process dies, however it
+  died, so a restart after any crash needs **no lock cleanup**. A refusal
+  to start with `"data root is locked by another sm-harness process"` now
+  always means a genuinely live owner — the error message names the lock
+  file and the owner's recorded boot id/pid. (Deployments predating #83
+  used a lock file that could go stale after a crash and required
+  deleting `/data/.harness.lock` by hand.)
+- Kill any orphaned tool process group first: `docker exec
+  claude-agent-sdk-cl-web-ui-1 kill -KILL -- -<pgid>` (the image ships
+  procps since #79). Note the harness (PID 1) does not reap reparented
+  grandchildren, so expect a harmless zombie until restart (#81).
