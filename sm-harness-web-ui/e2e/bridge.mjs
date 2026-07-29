@@ -57,6 +57,7 @@ async function executeStep(page, base, step) {
       ({ selector, name, value }) => document.querySelector(selector)?.getAttribute(name) === value,
       { selector: step.selector, name: step.name, value: step.value }, { timeout });
     case 'assert_overflow_fits': return assert.equal(await target().evaluate((node) => node.scrollWidth <= node.clientWidth), true);
+    case 'assert_scrolled_to_bottom': return assert.equal(await target().evaluate((node) => Math.abs(node.scrollTop + node.clientHeight - node.scrollHeight) <= 2), true);
     default: throw new Error(`unsupported E2E contract op: ${step.op}`);
   }
 }

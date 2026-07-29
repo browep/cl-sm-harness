@@ -39,11 +39,17 @@
           (clog:attribute err "role") "alert"
           (clog:attribute err "aria-live") "assertive"
           (clog:attribute input "aria-label") "Message")
-    (labels ((add-line (role text)
-      (let ((line (clog:create-div transcript
-                                   :class (format nil "msg msg-~A" role))))
-        (setf (clog:text line) text)
-        line))
+    (labels ((scroll-transcript-to-bottom ()
+               ;; New messages (#74) should keep the transcript pinned to its
+               ;; latest content instead of leaving a reader scrolled up on a
+               ;; stale line once the box overflows (max-height, app.css).
+               (setf (clog:scroll-top transcript) (clog:scroll-height transcript)))
+             (add-line (role text)
+               (let ((line (clog:create-div transcript
+                                            :class (format nil "msg msg-~A" role))))
+                 (setf (clog:text line) text)
+                 (scroll-transcript-to-bottom)
+                 line))
              (set-busy (v)
                (setf busy v)
                (setf (clog:disabledp send-btn) v)

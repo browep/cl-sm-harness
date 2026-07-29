@@ -15,4 +15,8 @@
     (%e2e-step "wait_text" "selector" ".msg-assistant" "text" "unbroken-")
     (%e2e-step "assert_text_order" "selector" ".msg-assistant"
                "values" (list "e2e hello" (format nil "stream two: Unicode ✓~%second line") "unbroken-"))
-    (%e2e-step "assert_overflow_fits" "selector" "#transcript"))))
+    (%e2e-step "assert_overflow_fits" "selector" "#transcript")
+    ;; New messages keep the transcript pinned to its latest content (#74)
+    ;; once the fixture's several assistant chunks overflow the box's
+    ;; max-height (app.css).
+    (%e2e-step "assert_scrolled_to_bottom" "selector" "#transcript"))))
