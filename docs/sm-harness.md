@@ -170,6 +170,24 @@ resets to 0 whenever any turn completes without queueing a new follow-up
 (a normal reply, a failed reload, or a different tool call) — it bounds one
 chain, not a session's lifetime total.
 
+## Turn deadline
+
+`turn-deadline-seconds` (default 120, `make-harness-config`) bounds
+model/CLI *stall*, not total turn time. The watchdog wakes every
+`turn-deadline-seconds` and cancels the turn **only if no conversational
+tool call is in flight** (requested but not yet completed/failed) at that
+moment; otherwise it re-arms (#80). A tool call owns its own timeout (the
+`bash` tool enforces one explicitly, up to 600s), so a turn whose tool
+calls keep completing can legitimately run far longer than the deadline —
+previously any tool call slower than the remaining turn budget was doomed,
+every time. Because stall is sampled at wakeups, a stall that begins right
+after a re-arm can take up to two periods to be noticed.
+
+A deadline cancellation usually ends through the CLI's own terminal event
+(`error_during_execution`, empty text). The turn then also publishes an
+explicit `error` event — `"turn deadline exceeded"` — so the abort is never
+a silent stop.
+
 ## Operator diagnostics: per-session event logging
 
 Every normalized harness event that passes through `%publish` in

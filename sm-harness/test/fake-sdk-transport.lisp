@@ -21,7 +21,11 @@
     (when (and (fake-read-error-after transport)
                (> read-count (fake-read-error-after transport)))
       (error "fixture read secret: transport failed"))
-    (pop (fake-chunks transport))))
+    (let ((chunk (pop (fake-chunks transport))))
+      ;; A function chunk is evaluated at read time.  Fixtures use this to
+      ;; hold the wire open for wall-clock-dependent scenarios (the #80
+      ;; deadline tests) before yielding the next chunk -- or NIL for EOF.
+      (if (functionp chunk) (funcall chunk) chunk))))
 
 (defmethod claude-agent-sdk-cl:write-client-input
     ((transport harness-fake-transport) input)
