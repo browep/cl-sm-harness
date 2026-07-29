@@ -200,6 +200,142 @@ write does not happen) rather than truncated."
    :input-schema (%write-schema)
    :handler #'%write-file-tool-handler))
 
+(defparameter +bash-tool-default-timeout-seconds+ 120)
+(defparameter +bash-tool-max-timeout-seconds+ 600)
+(defparameter +bash-tool-max-output-chars+ (* 200 1024)
+  "Cap per stream (stdout, stderr independently), not one shared budget:
+stdout and stderr are drained concurrently on separate threads to avoid the
+classic pipe deadlock when a command fills both simultaneously, which makes
+a single shared byte budget impractical to enforce precisely.")
+
+(defun %bash-schema ()
+  (let ((schema (%json-object "type" "object"))
+        (props (%json-object))
+        (command-field (%json-object "type" "string"))
+        (timeout-field (%json-object "type" "integer"))
+        (cwd-field (%json-object "type" "string")))
+    (setf (gethash "command" props) command-field
+          (gethash "timeout_seconds" props) timeout-field
+          (gethash "cwd" props) cwd-field
+          (gethash "properties" schema) props
+          (gethash "required" schema) (list "command"))
+    schema))
+
+(defun %read-stream-capped (stream max-chars)
+  "Return (values text truncated-p). Reads up to MAX-CHARS characters from
+STREAM; TRUNCATED-P is true only if strictly more data remained after that."
+  (if (<= max-chars 0)
+      (values "" (not (null (read-char stream nil nil))))
+      (let* ((buf (make-string max-chars))
+             (n (read-sequence buf stream)))
+        (values (subseq buf 0 n)
+                (and (= n max-chars) (not (null (read-char stream nil nil))))))))
+
+(defun %run-bash-command (command cwd timeout-seconds)
+  "Return (values stdout stderr exit-code timed-out-p). Runs COMMAND via a
+shell. SB-EXT:RUN-PROGRAM already places its child in a new process group
+of its own (the shell's PID doubles as its PGID), so the whole group --
+not just the direct shell -- can be signaled on timeout by killing the
+negative PID. This mirrors, at the scale of a single tool call, this
+project's existing process-tree supervision precedent for the long-lived
+CLI subprocess (#17, sm-harness-web-ui/docker/claude-agent-sdk-cl-supervisor.c):
+SIGTERM the group, a short grace period, then SIGKILL the group.
+(An earlier version of this function wrapped the shell in `setsid`, but
+`setsid` forks a detached grandchild and exits immediately unless given
+`--wait`, which made SB-EXT:RUN-PROGRAM's own child -- and thus its exit
+code and process group -- the wrong process entirely.)"
+  (let* ((process (apply #'sb-ext:run-program "/bin/sh"
+                         (list "-c" command)
+                         :output :stream :error :stream :wait nil :search t
+                         (when (and cwd (plusp (length cwd)))
+                           (list :directory cwd))))
+         (pid (sb-ext:process-pid process))
+         (timed-out-lock (sb-thread:make-mutex :name "bash-tool-timeout"))
+         (timed-out-p nil)
+         ;; Captured as a lexical value, not read from inside the spawned
+         ;; thread: a new SB-THREAD does not inherit the calling thread's
+         ;; dynamic (LET-rebound) value of a special variable, only its
+         ;; global value, which would silently ignore a caller's override.
+         (max-output-chars +bash-tool-max-output-chars+))
+    (sb-thread:make-thread
+     (lambda ()
+       (sleep timeout-seconds)
+       (when (eq (sb-ext:process-status process) :running)
+         (sb-thread:with-mutex (timed-out-lock) (setf timed-out-p t))
+         (ignore-errors
+           (sb-ext:run-program "/usr/bin/kill" (list "-TERM" (format nil "-~D" pid))
+                              :search t))
+         (sleep 0.2)
+         (ignore-errors
+           (sb-ext:run-program "/usr/bin/kill" (list "-KILL" (format nil "-~D" pid))
+                              :search t))))
+     :name "bash-tool-timeout-watchdog")
+    (let (stdout-text stdout-truncated)
+      (let ((stdout-thread
+              (sb-thread:make-thread
+               (lambda ()
+                 (multiple-value-setq (stdout-text stdout-truncated)
+                   (%read-stream-capped (sb-ext:process-output process)
+                                        max-output-chars)))
+               :name "bash-tool-stdout-reader")))
+        (multiple-value-bind (stderr-text stderr-truncated)
+            (%read-stream-capped (sb-ext:process-error process) max-output-chars)
+          (sb-thread:join-thread stdout-thread)
+          (sb-ext:process-wait process)
+          (values (if stdout-truncated
+                      (concatenate 'string stdout-text (format nil "~%[stdout truncated]"))
+                      stdout-text)
+                  (if stderr-truncated
+                      (concatenate 'string stderr-text (format nil "~%[stderr truncated]"))
+                      stderr-text)
+                  (sb-ext:process-exit-code process)
+                  (sb-thread:with-mutex (timed-out-lock) timed-out-p)))))))
+
+(defun %bash-tool-handler (arguments context)
+  (declare (ignore context))
+  (let* ((command (gethash "command" arguments))
+         (cwd (gethash "cwd" arguments))
+         (timeout (or (gethash "timeout_seconds" arguments) +bash-tool-default-timeout-seconds+)))
+    (cond
+      ((not (and (stringp command) (plusp (length command))))
+       (values "bash requires a non-empty command" t))
+      ((not (and (integerp timeout) (plusp timeout)))
+       (values "bash requires a positive integer timeout_seconds" t))
+      ((> timeout +bash-tool-max-timeout-seconds+)
+       (values (format nil "timeout_seconds exceeds the ~D second limit; command rejected, not run"
+                       +bash-tool-max-timeout-seconds+)
+               t))
+      (t
+       (handler-case
+           (multiple-value-bind (stdout stderr exit-code timed-out-p)
+               (%run-bash-command command cwd timeout)
+             (if timed-out-p
+                 (values (format nil "command timed out after ~D seconds and was killed" timeout) t)
+                 (values
+                  (format nil "exit code: ~D~%stdout:~%~A~%stderr:~%~A" exit-code stdout stderr)
+                  nil)))
+         (error ()
+           (values "unable to run command" t)))))))
+
+(defun make-bash-tool-definition ()
+  "No sandboxing beyond the container's own non-root user and whatever its
+filesystem/network permit (see issue #61/#64): no bubblewrap/firejail/
+seccomp, no allow/denylist. The shell command runs in its own process
+group (SB-EXT:RUN-PROGRAM's default), so the whole group is what gets
+signaled on timeout, not just the direct shell."
+  (make-tool-definition
+   :name "bash"
+   :description "Run a shell command on the container's filesystem via
+/bin/sh -c. No sandboxing beyond the container's own non-root user and
+whatever filesystem/network access it has -- there is no additional
+process isolation. COMMAND is required. TIMEOUT_SECONDS defaults to 120,
+capped at 600 (a larger request is rejected outright, not clamped). CWD
+defaults to the harness process's own working directory. Output over
+roughly 200KB per stream is truncated. A non-zero exit code is a normal
+result, not a tool failure -- check the reported exit code."
+   :input-schema (%bash-schema)
+   :handler #'%bash-tool-handler))
+
 (defun default-tool-catalog ()
   "Return product-owned tool metadata, not SDK objects."
   (make-tool-catalog
@@ -209,4 +345,5 @@ write does not happen) rather than truncated."
           :version "0.1.0"
           :tools (list (make-echo-tool-definition)
                        (make-read-tool-definition)
-                       (make-write-tool-definition))))))
+                       (make-write-tool-definition)
+                       (make-bash-tool-definition))))))

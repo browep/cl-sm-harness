@@ -154,3 +154,63 @@
              (is (eq t is-error))
              (is (search "unable to write file" text))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(defun %call-bash-tool (&key command timeout-seconds cwd)
+  (let ((arguments (make-hash-table :test #'equal)))
+    (setf (gethash "command" arguments) command)
+    (when timeout-seconds (setf (gethash "timeout_seconds" arguments) timeout-seconds))
+    (when cwd (setf (gethash "cwd" arguments) cwd))
+    (multiple-value-bind (text is-error)
+        (sm-harness::%bash-tool-handler arguments nil)
+      (list text is-error))))
+
+(test bash-tool-runs-a-successful-command-and-reports-exit-code-and-stdout
+  (destructuring-bind (text is-error) (%call-bash-tool :command "echo hello")
+    (is (null is-error))
+    (is (search "exit code: 0" text))
+    (is (search "hello" text))))
+
+(test bash-tool-reports-a-nonzero-exit-code-as-a-normal-result-not-an-error
+  (destructuring-bind (text is-error) (%call-bash-tool :command "exit 7")
+    (is (null is-error))
+    (is (search "exit code: 7" text))))
+
+(test bash-tool-kills-a-command-that-exceeds-its-timeout
+  (destructuring-bind (text is-error)
+      (%call-bash-tool :command "sleep 5" :timeout-seconds 1)
+    (is (eq t is-error))
+    (is (search "timed out" text))))
+
+(test bash-tool-timeout-kills-the-whole-process-group-no-orphans
+  (let* ((root (temp-data-root))
+         (marker (merge-pathnames "child-pid.txt" root))
+         (command (format nil "sleep 10 & echo $! > ~A; sleep 10" (namestring marker))))
+    (unwind-protect
+         (progn
+           (destructuring-bind (text is-error)
+               (%call-bash-tool :command command :timeout-seconds 1)
+             (is (eq t is-error))
+             (is (search "timed out" text)))
+           (is (probe-file marker))
+           (let* ((child-pid (string-trim '(#\Space #\Newline #\Return)
+                                          (%read-whole-file marker)))
+                  (check (sb-ext:run-program "/bin/kill" (list "-0" child-pid) :search t)))
+             (sb-ext:process-wait check)
+             ;; A nonzero exit from `kill -0` means the pid no longer exists:
+             ;; the background child was reaped along with the group, not
+             ;; left as an orphan.
+             (is (/= 0 (sb-ext:process-exit-code check)))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test bash-tool-truncates-output-over-the-character-cap
+  (let ((sm-harness::+bash-tool-max-output-chars+ 5))
+    (destructuring-bind (text is-error)
+        (%call-bash-tool :command "printf '0123456789'")
+      (is (null is-error))
+      (is (search "[stdout truncated]" text)))))
+
+(test bash-tool-rejects-a-timeout-request-over-the-hard-cap
+  (destructuring-bind (text is-error)
+      (%call-bash-tool :command "echo hi" :timeout-seconds 99999)
+    (is (eq t is-error))
+    (is (search "exceeds" text))))

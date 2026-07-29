@@ -59,6 +59,31 @@ outright** — the write does not happen and the existing file, if any, is
 left untouched — rather than truncated: a truncated write would silently
 corrupt the caller's intended file content, which is worse than refusing.
 
+### `bash`
+
+Runs a shell command via `/bin/sh -c`. **No sandboxing beyond the
+container's own non-root user and whatever filesystem/network access it
+has** (see #61): no bubblewrap/firejail/seccomp, no allow/denylist. A
+non-zero exit code is a normal result, not a tool failure — `is-error`
+reflects only the tool's own inability to run the command (it couldn't be
+spawned, or it timed out), never the command's own exit status.
+
+`timeout_seconds` defaults to 120 and is capped at 600; a larger request is
+**rejected outright**, not silently clamped. On timeout, the whole process
+group is signaled (SIGTERM, then SIGKILL after a short grace period) —
+`SB-EXT:RUN-PROGRAM` already places its child shell in a new process group
+of its own (the shell's PID doubles as its PGID), so killing the negative
+PID reaches any children the command itself forked, not just the shell.
+This mirrors, at the scale of a single tool call, the process-tree
+supervision precedent this project already has for the long-lived Claude
+CLI subprocess (#17, `sm-harness-web-ui/docker/claude-agent-sdk-cl-supervisor.c`).
+
+Output is capped at roughly 200KB per stream (stdout and stderr are capped
+independently, read concurrently on separate threads to avoid the classic
+pipe deadlock when a command fills both simultaneously — so this is not a
+single precise combined budget). `cwd` defaults to the harness process's
+own working directory.
+
 ## Operator diagnostics: per-session event logging
 
 Every normalized harness event that passes through `%publish` in

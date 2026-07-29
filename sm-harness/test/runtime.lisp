@@ -641,10 +641,10 @@
          (progn
            (%write-text-file file-path (format nil "alpha~%beta~%"))
            (sm-harness:submit-turn h session-id "read the file")
-           (is (wait-until (lambda () (>= (length (fake-writes transport)) 1))))
-           (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
-           (is (string= (format nil "1~Calpha~%2~Cbeta~%" #\Tab #\Tab)
-                        (echoed-mcp-result-text (first (fake-writes transport))))))
+           (let ((wire (wait-for-mcp-response transport)))
+             (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
+             (is (string= (format nil "1~Calpha~%2~Cbeta~%" #\Tab #\Tab)
+                          (echoed-mcp-result-text wire)))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
@@ -669,9 +669,36 @@
     (unwind-protect
          (progn
            (sm-harness:submit-turn h session-id "write the file")
-           (is (wait-until (lambda () (>= (length (fake-writes transport)) 1))))
-           (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
-           (is (search "wrote" (echoed-mcp-result-text (first (fake-writes transport)))))
-           (is (string= "written through the catalog" (%read-whole-file file-path))))
+           (let ((wire (wait-for-mcp-response transport)))
+             (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
+             (is (search "wrote" (echoed-mcp-result-text wire)))
+             (is (string= "written through the catalog" (%read-whole-file file-path)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test bash-tool-executes-through-the-real-catalog-and-runs-a-command
+  (let* ((root (temp-data-root))
+         (catalog (sm-harness:default-tool-catalog))
+         (arguments (let ((h (make-hash-table :test #'equal)))
+                      (setf (gethash "command" h) "echo through the catalog")
+                      h))
+         (tool-call-json (make-catalog-tool-call-json :name "bash" :arguments arguments))
+         (transport (make-named-catalog-tool-turn-transport tool-call-json))
+         (h (sm-harness:make-harness
+             :catalog catalog
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "real bash"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "run the command")
+           (let ((wire (wait-for-mcp-response transport)))
+             (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
+             (let ((result (echoed-mcp-result-text wire)))
+               (is (search "exit code: 0" result))
+               (is (search "through the catalog" result)))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
