@@ -271,6 +271,38 @@ binding specifically so it stays swappable by tests despite each session
 running on its own worker thread, which does not inherit another thread's
 `LET` bindings.
 
+### `SM-HARNESS-DIAGNOSTIC`: the raw condition behind a redacted error
+
+When a turn fails, the browser-facing `:error` event deliberately says
+nothing but `"internal error"` (`safe-error-payload`). The condition it
+withheld goes to the same operator-only channel as one JSON line:
+
+```text
+SM-HARNESS-DIAGNOSTIC {"ts":"2026-07-30T03:36:38Z","session_id":"sess-...","turn_id":"turn-...","condition_type":"CLI-CONNECTION-ERROR","condition":"CLI stream ended waiting for ..."}
+```
+
+Grep for `SM-HARNESS-DIAGNOSTIC` the same way as for `SM-HARNESS-EVENT`
+above. Before this line existed, a redacted turn failure was undiagnosable
+after the fact: the 2026-07-30 incident (a half-dead browser tab starving a
+CLI MCP control request until the CLI died) had to be reconstructed from the
+CLI's own transcript file because the harness dropped the real condition.
+
+## Listener callbacks are asynchronous
+
+`attach-session-listener`'s `:callback` runs on a dedicated per-listener
+dispatcher thread, never on the session worker. `%publish` only enqueues
+into each listener's bounded mailbox (overflow drops oldest and sets the gap
+flag), so a callback that blocks — canonically, a CLOG browser round-trip
+against a connection whose peer silently died — cannot stall the worker,
+which also answers the CLI's MCP control requests (the 2026-07-30 wedge).
+Ordering is preserved per listener. `detach-session-listener` flushes
+already-published events through the callback and joins the dispatcher
+before returning, so a caller that waited for a turn to finish has observed
+every event of that turn once detach returns; idle eviction and
+`close-harness` instead discard undelivered events (their browsers are
+gone, and flushing through a dead connection would serialize per-query
+timeouts).
+
 ## Debugging a stuck session
 
 The procedure below reconstructed a real wedge end-to-end (session

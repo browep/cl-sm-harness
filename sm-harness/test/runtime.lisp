@@ -1042,3 +1042,101 @@ an agent told to debug \"this session\" needs no discovery step."
            (is (null (claude-agent-sdk-cl:agent-options-system-prompt captured))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test redacted-turn-error-still-logs-the-raw-condition-for-operators
+  ;; The browser-facing :error event stays "internal error"
+  ;; (SAFE-ERROR-PAYLOAD), but the operator log must carry the raw
+  ;; condition on an SM-HARNESS-DIAGNOSTIC line -- without it a failed
+  ;; turn is undiagnosable after the fact (2026-07-30 incident).
+  (let* ((root (temp-data-root))
+         (original-stream sm-harness::*session-event-log-stream*)
+         (captured (make-string-output-stream))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-instance 'harness-fake-transport
+                                       :start-error "fixture connect secret: credential")))))
+         (snapshot (sm-harness:start-session h :title "diagnostic"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (setf sm-harness::*session-event-log-stream* captured)
+           (sm-harness:submit-turn h session-id "boom")
+           (is (wait-until (lambda () (eq :error (sm-harness:session-status h session-id)))))
+           (let* ((log (get-output-stream-string captured))
+                  (lines (remove "" (uiop:split-string log :separator '(#\Newline))
+                                 :test #'string=))
+                  (diagnostic (find-if (lambda (l) (search "SM-HARNESS-DIAGNOSTIC" l)) lines))
+                  (error-event (find-if (lambda (l)
+                                          (and (search "SM-HARNESS-EVENT" l)
+                                               (search "\"type\":\"error\"" l)))
+                                        lines)))
+             ;; Operator line: raw condition text, tied to the session.
+             (is (not (null diagnostic)))
+             (is (search "fixture connect secret: credential" diagnostic))
+             (is (search session-id diagnostic))
+             (is (search "condition_type" diagnostic))
+             ;; Published event: still redacted.
+             (is (not (null error-event)))
+             (is (search "internal error" error-event))
+             (is (not (search "secret" error-event)))))
+      (setf sm-harness::*session-event-log-stream* original-stream)
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test blocked-listener-callback-does-not-stall-the-turn
+  ;; A listener whose callback never returns (canonically: a CLOG browser
+  ;; round-trip against a half-dead connection) must not delay the session
+  ;; worker, which also answers the CLI's MCP control requests -- the
+  ;; 2026-07-30 wedge. Callbacks run on the listener's own dispatcher
+  ;; thread, so the turn below completes while the callback is still
+  ;; blocked on its very first event.
+  (let* ((root (temp-data-root))
+         (gate (sb-thread:make-semaphore :name "blocked-listener-gate"))
+         (events '())
+         (lock (sb-thread:make-mutex))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-simple-turn-transport)))))
+         (snapshot (sm-harness:start-session h :title "blocked listener"))
+         (session-id (sm-harness:session-snapshot-id snapshot))
+         (listener-id nil))
+    (unwind-protect
+         (progn
+           (multiple-value-bind (snap lid cursor)
+               (sm-harness:attach-session-listener
+                h session-id
+                :callback (lambda (ev)
+                            (sb-thread:wait-on-semaphore gate)
+                            (sb-thread:with-mutex (lock) (push ev events))))
+             (declare (ignore snap cursor))
+             (setf listener-id lid))
+           (sm-harness:submit-turn h session-id "say hi")
+           ;; Completes within WAIT-UNTIL's window even though the callback
+           ;; has not processed a single event yet.
+           (is (wait-until
+                (lambda ()
+                  (string= "canon-42"
+                           (or (sm-harness:session-snapshot-canonical-id
+                                (sm-harness:open-session h session-id))
+                               "")))))
+           (is (null (sb-thread:with-mutex (lock) events)))
+           ;; Once unblocked, the queued events all flush through in order;
+           ;; DETACH-SESSION-LISTENER joins that flush before returning.
+           (sb-thread:signal-semaphore gate 64)
+           (sm-harness:detach-session-listener h session-id listener-id)
+           (let ((seen (sb-thread:with-mutex (lock) (nreverse events))))
+             (is (find :user-message seen :key #'sm-harness:event-type))
+             (is (find :terminal seen :key #'sm-harness:event-type))
+             (is (equal (mapcar #'sm-harness:event-sequence seen)
+                        (sort (mapcar #'sm-harness:event-sequence seen) #'<)))))
+      (sb-thread:signal-semaphore gate 64)
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

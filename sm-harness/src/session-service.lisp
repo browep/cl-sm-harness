@@ -21,6 +21,14 @@
        (declare (ignore id))
        (setf (session-runtime-closed-p rt) t)
        (%enqueue rt (cons :stop nil))
+       ;; Terminal teardown: dispatcher threads must not outlive the
+       ;; harness (tests leak threads otherwise), and nothing is listening
+       ;; for the remaining events, so discard rather than flush.
+       (maphash (lambda (lid lst)
+                  (declare (ignore lid))
+                  (listener-close lst :discard t :join-timeout 1))
+                (session-runtime-listeners rt))
+       (clrhash (session-runtime-listeners rt))
        (let ((client (session-runtime-client rt)))
          (when client
            (ignore-errors (interrupt-client client))
@@ -97,9 +105,22 @@ A later OPEN-SESSION constructs a replacement client from the canonical ID."
         (remhash (car victim) (harness-sessions harness))))
     (dolist (victim victims)
       (let* ((rt (cdr victim))
-             (client (session-runtime-client rt)))
+             (client (session-runtime-client rt))
+             (listeners (sb-thread:with-mutex ((session-runtime-lock rt))
+                          (let (ls)
+                            (maphash (lambda (id lst)
+                                       (declare (ignore id))
+                                       (push lst ls))
+                                     (session-runtime-listeners rt))
+                            (clrhash (session-runtime-listeners rt))
+                            ls))))
         (setf (session-runtime-closed-p rt) t)
         (%enqueue rt (cons :stop nil))
+        ;; :DISCARD -- an evicted runtime's listeners belong to browsers
+        ;; that are idle at best and gone at worst; flushing through a dead
+        ;; CLOG connection would serialize its per-query timeouts here.
+        (dolist (lst listeners)
+          (listener-close lst :discard t :join-timeout 1))
         (when client
           (ignore-errors (disconnect-client client))
           (setf (session-runtime-client rt) nil))))
@@ -129,13 +150,19 @@ A later OPEN-SESSION constructs a replacement client from the canonical ID."
               (session-record-sequence (session-runtime-record rt))))))
 
 (defun detach-session-listener (harness session-id listener-id)
-  (let ((rt (%get-runtime harness session-id :errorp nil)))
+  (let ((rt (%get-runtime harness session-id :errorp nil))
+        (lst nil))
     (when rt
       (sb-thread:with-mutex ((session-runtime-lock rt))
-        (let ((lst (gethash listener-id (session-runtime-listeners rt))))
-          (when lst
-            (setf (listener-closed-p lst) t)
-            (remhash listener-id (session-runtime-listeners rt))))))
+        (setf lst (gethash listener-id (session-runtime-listeners rt)))
+        (when lst
+          (remhash listener-id (session-runtime-listeners rt))))
+      ;; Graceful detach: already-published events still flush through the
+      ;; callback before the dispatcher exits, so a detacher that waited for
+      ;; a turn to finish has observed every event of that turn on return.
+      ;; Closed outside the runtime lock -- LISTENER-CLOSE joins the
+      ;; dispatcher, which may be mid-callback for several seconds.
+      (when lst (listener-close lst)))
     t))
 
 (defun session-status (harness session-id)

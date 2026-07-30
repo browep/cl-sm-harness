@@ -85,16 +85,45 @@ under \"Operator diagnostics\" for how to locate and read it."
       (format *session-event-log-stream* "~&SM-HARNESS-EVENT ~A~%" line)
       (force-output *session-event-log-stream*))))
 
+(defun %log-operator-diagnostic (session-id turn-id condition)
+  "SM-HARNESS-DIAGNOSTIC line: the raw condition behind a redacted
+browser-facing :error event. SAFE-ERROR-PAYLOAD deliberately tells the
+browser nothing but \"internal error\"; this operator-only line (container
+stdout, same channel as %LOG-SESSION-EVENT) is where the withheld detail
+actually goes -- without it a failed turn is undiagnosable after the fact
+(2026-07-30: a starved MCP control request took filesystem forensics to
+explain because the condition was redacted and then dropped)."
+  (let ((line (with-output-to-string (s)
+                (yason:encode
+                 (let ((o (make-hash-table :test #'equal)))
+                   (setf (gethash "ts" o) (%now-iso)
+                         (gethash "session_id" o) session-id
+                         (gethash "turn_id" o) turn-id
+                         (gethash "condition_type" o)
+                         (princ-to-string (type-of condition))
+                         (gethash "condition" o)
+                         (handler-case (princ-to-string condition)
+                           (error () "condition unprintable")))
+                   o)
+                 s))))
+    (sb-thread:with-mutex (*session-event-log-lock*)
+      (format *session-event-log-stream* "~&SM-HARNESS-DIAGNOSTIC ~A~%" line)
+      (force-output *session-event-log-stream*))))
+
 (defun %publish (rt type payload)
   (let* ((rec (session-runtime-record rt))
          (seq (incf (session-record-sequence rec)))
          (ev (%event type (session-record-id rec) seq payload)))
     (%log-session-event (session-record-id rec) seq type payload)
+    ;; Enqueue only -- callbacks run on each listener's own dispatcher
+    ;; thread (%LISTENER-DISPATCH-LOOP). Publishing happens on the session
+    ;; worker, the same thread that answers the CLI's MCP control requests,
+    ;; so one browser connection whose peer silently died must not be able
+    ;; to stall it (2026-07-30: exactly that starved a tools/call answer
+    ;; until the CLI gave up and the turn died as \"internal error\").
     (maphash (lambda (id lst)
                (declare (ignore id))
-               (listener-push lst ev)
-               (when (functionp (listener-callback lst))
-                 (ignore-errors (funcall (listener-callback lst) ev))))
+               (listener-push lst ev))
              (session-runtime-listeners rt))
     ev))
 
@@ -397,6 +426,9 @@ watchdog looks."
             (%touch rt)
             (%maybe-run-synthetic-followup harness rt)))
       (error (c)
+        ;; Operator-only raw condition first, before anything else here can
+        ;; fail: the event published below is deliberately redacted.
+        (%log-operator-diagnostic (session-record-id rec) turn-id c)
         ;; The in-memory record may contain a prompt or terminal event whose
         ;; save just failed.  Reload the last committed record before recording
         ;; the recoverable runtime error, so cleanup cannot accidentally commit

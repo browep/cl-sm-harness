@@ -57,6 +57,29 @@ currently exist there first, then that session's transcript under
 transcript path (see [Agent system prompt in
 docs/sm-harness.md](sm-harness.md#agent-system-prompt)).
 
+## Dead browser tabs and listener delivery
+
+A tab whose websocket silently died (laptop sleep, network drop) leaves a
+harness listener whose CLOG operations time out instead of returning. Two
+layers keep that harmless (2026-07-30 incident: exactly such a tab stalled
+a session's event pipeline mid-turn until the CLI process gave up and the
+turn died as `"internal error"`):
+
+- The harness delivers listener callbacks on a per-listener dispatcher
+  thread ([Listener callbacks are
+  asynchronous](sm-harness.md#listener-callbacks-are-asynchronous)), so a
+  blocked callback can no longer stall the session worker or starve the
+  CLI's MCP control requests.
+- The chat page's callback (`render-chat`, `src/ui/chat.lisp`) self-prunes:
+  on each event it checks `clog:validp` for its own connection and detaches
+  its listener the moment the connection is gone, instead of burning
+  dead-connection timeouts for the life of the runtime.
+
+The frozen tab itself cannot be revived — CLOG refuses to resume a
+connection id it no longer knows ("Reconnection id … not found" in the
+log). Reload the page; the session reopens from its durable record and the
+next prompt resumes the same provider conversation.
+
 ## Fixture E2E
 
 ```bash

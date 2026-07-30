@@ -188,7 +188,18 @@
                         (markdown-to-html raw)
                         (escape-text raw)))))
       (multiple-value-bind (snapshot lid cursor)
-          (ui-attach session-id (lambda (ev) (ignore-errors (on-event ev))))
+          (ui-attach session-id
+                     (lambda (ev)
+                       ;; Self-pruning: once this page's CLOG connection is
+                       ;; gone (tab closed, laptop slept), every further
+                       ;; delivery would only burn dead-connection timeouts
+                       ;; on the listener's dispatcher thread, so detach on
+                       ;; first sight. Deliveries run on that dispatcher, not
+                       ;; the session worker, so a slow check costs no turn.
+                       (if (clog:validp body)
+                           (ignore-errors (on-event ev))
+                           (when listener-id
+                             (ignore-errors (ui-detach session-id listener-id))))))
         (declare (ignore snapshot cursor))
         (setf listener-id lid))
       (clog:js-execute body
