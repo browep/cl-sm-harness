@@ -155,6 +155,11 @@
           (declare (ignore obj))
           (unless busy
             (let ((prompt (clog:text-value input)))
+              ;; #97: the generic click capture in log-capture.js only ever
+              ;; sees a bare "click: #send" -- log the prompt text itself,
+              ;; before submission, so the exported log shows what was
+              ;; actually sent, even if UI-SUBMIT itself then errors.
+              (%log-send body prompt)
               (handler-case
                   (progn
                     (setf pending-prompt prompt)
@@ -176,6 +181,10 @@
                      (not (getf data :shift-key))
                      (not busy))
             (let ((prompt (clog:text-value input)))
+              ;; #97: same reasoning as the Send button above -- Enter-to-send
+              ;; is a second path to the same submission with no click event
+              ;; of its own at all, so it needs this explicitly too.
+              (%log-send body prompt)
               (handler-case
                   (progn
                     (setf pending-prompt prompt)

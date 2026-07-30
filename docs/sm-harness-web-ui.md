@@ -106,6 +106,14 @@ No redaction is applied — it exports exactly what the tab logged.
   gap is still open (a fix would mean this project owning its own
   `boot.html` ahead of CLOG's stock one, deliberately deferred as more
   surface than this pass wanted).
+- **Submitted prompt text (#97)**, from `src/browser-logs.lisp`'s
+  `%log-send` and `src/ui/chat.lisp`'s Send-button and Enter-to-send
+  handlers: a `send: <prompt text>` entry is recorded with the exact text
+  just handed to `ui-submit`, before submission -- the generic click
+  capture above only ever sees a bare `click: #send`, with no way to reach
+  into the composer's value, which is exactly the content most useful for
+  diagnosing "did the turn that looked stuck even send what the user
+  thinks it sent". No redaction: same as everything else this exports.
 - **Navigation and session tagging** (`src/browser-logs.lisp`,
   `%log-nav`/`%log-set-session`, called from `render-home`/`render-chat`)
   record a `nav: home` / `nav: chat <session-id>` entry on every
