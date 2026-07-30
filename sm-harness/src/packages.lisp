@@ -14,10 +14,13 @@
    #:session-snapshot-status #:session-snapshot-canonical-id
    #:session-snapshot-transcript #:session-snapshot-cursor
    #:session-snapshot-backend #:session-snapshot-model
-   #:session-summary #:session-summary-id #:session-summary-title
+   #:session-summary #:make-session-summary #:session-summary-id #:session-summary-title
    #:session-summary-updated-at #:session-summary-status
    #:session-summary-canonical-id
    #:session-summary-backend #:session-summary-model
+   ;; #111: home-screen chip metadata -- when the session started and how
+   ;; many user-initiated turns it has had.
+   #:session-summary-created-at #:session-summary-turn-count
    #:transcript-entry #:transcript-entry-role #:transcript-entry-text
    #:transcript-entry-kind #:transcript-entry-meta #:transcript-entry-created-at
    #:default-tool-catalog #:default-tool-policy #:*reload-harness-system*

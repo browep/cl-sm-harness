@@ -63,6 +63,29 @@ populated directly from `backend-catalog`, and its chat-header Info panel
 reads a session's stored choice back via `%backend-label`/`%model-label`
 (`sm-harness-web-ui/src/presenter.lisp`).
 
+## Session summary chip metadata: turn count and start time (#111)
+
+`session-summary` also carries `created-at` and `turn-count`
+(`session-summary-created-at`/`session-summary-turn-count`), added for the
+web UI's home-screen session chips (`docs/sm-harness-web-ui.md`) but kept
+here since both derive from durable session state, not anything UI-specific:
+
+- `created-at` is just `session-record-created-at`, copied straight through
+  by `session-record->summary` -- it never changes after a session is
+  created, unlike `updated-at`, which bumps on every save.
+- `turn-count` is `%session-turn-count`: the number of `role "user"`
+  transcript entries, counting both a real human prompt (`kind "message"`)
+  and a harness-initiated synthetic follow-up (#76, `kind "synthetic"`) --
+  both still round-trip the provider once, so both count as a turn.
+
+Both are also written into the lightweight index (`repository-save-session`)
+so `list-sessions` never has to reload every session's full transcript from
+disk just to answer "how many turns has this session had" for a list view.
+An index entry written before this feature has neither field on disk:
+`repository-list-sessions` defaults `created-at` to `""` and `turn-count` to
+`0` rather than erroring, matching how the pre-#111 backend/model fields
+(#106) already degrade for records that predate them.
+
 ## Product tool catalog
 
 `sm-harness/src/tool-catalog.lisp`'s `default-tool-catalog` defines the tools

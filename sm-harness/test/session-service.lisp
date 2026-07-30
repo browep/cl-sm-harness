@@ -185,3 +185,58 @@ independent of any session."
                                      sm-harness:*default-model-id*))
     (is (null (sm-harness:find-backend "vertex")))
     (is (null (sm-harness:find-model "claude" "gpt-5")))))
+
+(test list-sessions-reports-turn-count-and-created-at
+  "#111: LIST-SESSIONS' summary carries both a stable session start time and
+a turn count that increments once per completed SUBMIT-TURN, end to end
+through the real session-service path (not just the repository layer)."
+  (let* ((root (temp-data-root))
+         (events '())
+         (lock (sb-thread:make-mutex))
+         (cfg (sm-harness:make-harness-config
+               :data-root root
+               :project-key "e2e"
+               :turn-deadline-seconds 10
+               :transport-factory
+               (lambda (options)
+                 (declare (ignore options))
+                 (make-n-simple-turns-transport 2))))
+         (h (sm-harness:make-harness :config cfg)))
+    (unwind-protect
+         (progn
+           (let* ((snap (sm-harness:start-session h :title "T1"))
+                  (sid (sm-harness:session-snapshot-id snap)))
+             (multiple-value-bind (snapshot listener-id cursor)
+                 (sm-harness:attach-session-listener
+                  h sid
+                  :callback (lambda (ev)
+                              (sb-thread:with-mutex (lock)
+                                (push ev events))))
+               (declare (ignore snapshot cursor))
+               (flet ((await-terminal (n)
+                        (is (wait-until
+                             (lambda ()
+                               (sb-thread:with-mutex (lock)
+                                 (>= (count :terminal events :key #'sm-harness:event-type) n)))
+                             :timeout 5.0))))
+                 (sm-harness:submit-turn h sid "turn one")
+                 (await-terminal 1)
+                 (let* ((listed (sm-harness:list-sessions h))
+                        (summary (find sid listed :key #'sm-harness:session-summary-id
+                                                  :test #'string=))
+                        (created-at (sm-harness:session-summary-created-at summary)))
+                   (is (= 1 (sm-harness:session-summary-turn-count summary)))
+                   (is (stringp created-at))
+                   (is (plusp (length created-at)))
+                   (sm-harness:submit-turn h sid "turn two")
+                   (await-terminal 2)
+                   (let* ((listed (sm-harness:list-sessions h))
+                          (summary (find sid listed :key #'sm-harness:session-summary-id
+                                                    :test #'string=)))
+                     (is (= 2 (sm-harness:session-summary-turn-count summary)))
+                     ;; CREATED-AT never moves once a session exists, unlike
+                     ;; UPDATED-AT which bumps on every save.
+                     (is (string= created-at (sm-harness:session-summary-created-at summary))))))
+               (sm-harness:detach-session-listener h sid listener-id))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

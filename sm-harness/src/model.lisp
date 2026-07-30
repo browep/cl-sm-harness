@@ -107,8 +107,17 @@ reviewed edit, not runtime discovery -- each model id is passed verbatim as
    :backend (or backend *default-backend-id*)
    :model model))
 
+(defun %session-turn-count (transcript)
+  "Number of user-initiated turns recorded in TRANSCRIPT (#111): one entry
+per SUBMIT-TURN call, whether a real human prompt (kind \"message\") or a
+harness-initiated synthetic follow-up (#76, kind \"synthetic\") -- both
+still round-trip the provider once, so both count as a turn for this
+metric. Assistant text, tool activity, and system/rate-limit entries never
+carry role \"user\", so they never inflate this count."
+  (count "user" transcript :key #'transcript-entry-role :test #'string=))
+
 (defstruct (session-summary (:constructor make-session-summary))
-  id title updated-at status canonical-id backend model)
+  id title updated-at status canonical-id backend model created-at turn-count)
 
 (defstruct (session-snapshot (:constructor make-session-snapshot))
   id title status canonical-id transcript cursor backend model)
@@ -121,7 +130,9 @@ reviewed edit, not runtime discovery -- each model id is passed verbatim as
    :status (session-record-status rec)
    :canonical-id (session-record-canonical-id rec)
    :backend (session-record-backend rec)
-   :model (session-record-model rec)))
+   :model (session-record-model rec)
+   :created-at (session-record-created-at rec)
+   :turn-count (%session-turn-count (session-record-transcript rec))))
 
 (defun session-record->snapshot (rec)
   (make-session-snapshot

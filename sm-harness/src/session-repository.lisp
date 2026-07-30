@@ -248,7 +248,13 @@ would sidestep a live owner's record lock entirely."
             (gethash "updated_at" summary) (session-record-updated-at rec)
             (gethash "status" summary)
             (string-downcase (symbol-name (session-record-status rec)))
-            (gethash "backend" summary) (session-record-backend rec))
+            (gethash "backend" summary) (session-record-backend rec)
+            ;; #111: home-screen chip metadata, kept in the lightweight
+            ;; index (not just the full per-session file) so listing
+            ;; sessions never has to re-read every transcript from disk.
+            (gethash "created_at" summary) (session-record-created-at rec)
+            (gethash "turn_count" summary)
+            (%session-turn-count (session-record-transcript rec)))
       (when (session-record-canonical-id rec)
         (setf (gethash "canonical_id" summary) (session-record-canonical-id rec)))
       (when (session-record-model rec)
@@ -286,5 +292,12 @@ would sidestep a live owner's record lock entirely."
                  :status (%json->status (gethash "status" s))
                  :canonical-id (gethash "canonical_id" s)
                  :backend (or (gethash "backend" s) *default-backend-id*)
-                 :model (gethash "model" s)))
+                 :model (gethash "model" s)
+                 ;; #111: absent on an index entry written before this
+                 ;; feature -- CREATED-AT falls back to blank (chip
+                 ;; rendering treats that as unknown, not an error) and
+                 ;; TURN-COUNT to 0, matching the pre-#111 world where no
+                 ;; turn had ever been counted at all.
+                 :created-at (or (gethash "created_at" s) "")
+                 :turn-count (or (gethash "turn_count" s) 0)))
               sessions))))

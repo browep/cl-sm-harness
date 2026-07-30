@@ -16,7 +16,12 @@
     (%e2e-step "wait_text" "selector" "#status-chip" "text" "Ready")
     (%e2e-step "click" "selector" "#back-home")
     (%e2e-step "wait" "selector" "#home-root" "state" "visible")
-    (%e2e-step "wait_text" "selector" ".session-row" "text" "New session — Ready — e2e-canon")
+    ;; #111: the home-screen chip's title/status/canonical-id now each live
+    ;; in their own element rather than one dash-joined text blob.
+    (%e2e-step "wait_text" "selector" ".session-row .chip-title" "text" "New session")
+    (%e2e-step "wait_text" "selector" ".session-row .chip-status" "text" "Ready")
+    (%e2e-step "wait_text" "selector" ".session-row .chip-canonical" "text" "e2e-canon")
+    (%e2e-step "wait_text" "selector" ".session-row .chip-turns" "text" "1 turn")
     (%e2e-step "assert_count" "selector" ".session-row" "count" 1)
     (%e2e-step "click" "selector" ".session-row")
     (%e2e-step "wait" "selector" "#chat-root" "state" "visible")

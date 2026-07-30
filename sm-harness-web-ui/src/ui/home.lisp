@@ -110,12 +110,13 @@ generically correct rather than assuming that never changes."
                        (row (clog:create-button list-region
                               :class "session-row"
                               :html-id (format nil "session-~A" sid)
-                              :content
-                              (format nil "~A — ~A — ~A"
-                                      (sm-harness:session-summary-title s)
-                                      (status-label (sm-harness:session-summary-status s))
-                                      (or (sm-harness:session-summary-canonical-id s)
-                                          "Pending…")))))
+                              ;; #111: title/status plus a row of
+                              ;; session-id/backend/model/turn-count/
+                              ;; elapsed-time/canonical-id chips -- built in
+                              ;; presenter.lisp (%SESSION-CHIP-HTML) so it
+                              ;; is covered by PRESENTER-TESTS without a
+                              ;; live CLOG server.
+                              :content (%session-chip-html s))))
                   (clog:set-on-click row
                     (lambda (obj)
                       (declare (ignore obj))

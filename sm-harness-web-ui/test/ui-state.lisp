@@ -211,3 +211,77 @@
       "NIL model (no session-level override) must read as Default, not blank")
   (is (string= "gpt-5" (sm-harness-web-ui::%model-label "claude" "gpt-5"))
       "an unrecognized model id still degrades to the raw id"))
+
+(test format-elapsed-buckets-111
+  ;; #111: home-screen chip's "time since started" label. NOW is pinned so
+  ;; this never flakes on real wall-clock timing.
+  (let ((now (encode-universal-time 30 0 12 15 6 2026 0)))
+    (is (string= "just now"
+                 (sm-harness-web-ui::%format-elapsed
+                  "2026-06-15T12:00:01Z" :now now)))
+    (is (string= "5m ago"
+                 (sm-harness-web-ui::%format-elapsed
+                  "2026-06-15T11:55:30Z" :now now)))
+    (is (string= "2h ago"
+                 (sm-harness-web-ui::%format-elapsed
+                  "2026-06-15T10:00:30Z" :now now)))
+    (is (string= "3d ago"
+                 (sm-harness-web-ui::%format-elapsed
+                  "2026-06-12T12:00:30Z" :now now)))))
+
+(test format-elapsed-clamps-future-skew-and-degrades-missing-input-111
+  (let ((now (encode-universal-time 0 0 12 15 6 2026 0)))
+    (is (string= "just now"
+                 (sm-harness-web-ui::%format-elapsed
+                  "2026-06-15T12:00:05Z" :now now))
+        "a small clock skew putting ISO slightly in the future must clamp,
+never print a negative duration")
+    (is (string= "unknown" (sm-harness-web-ui::%format-elapsed nil)))
+    (is (string= "unknown" (sm-harness-web-ui::%format-elapsed "")))
+    (is (string= "unknown" (sm-harness-web-ui::%format-elapsed "garbage")))))
+
+(test turn-count-label-pluralizes-111
+  (is (string= "0 turns" (sm-harness-web-ui::%turn-count-label 0)))
+  (is (string= "1 turn" (sm-harness-web-ui::%turn-count-label 1)))
+  (is (string= "3 turns" (sm-harness-web-ui::%turn-count-label 3)))
+  (is (string= "0 turns" (sm-harness-web-ui::%turn-count-label nil))))
+
+(test session-chip-html-shows-every-required-field-111
+  ;; Issue #111's own ask: each home-screen chip must show session id,
+  ;; backend, model, turn count, time since started, and canonical id.
+  (let* ((summary (sm-harness:make-session-summary
+                   :id "sess-123-456" :title "New session"
+                   :status :ready :canonical-id "canon-9"
+                   :backend "claude" :model "opus"
+                   :created-at "2020-01-01T00:00:00Z"
+                   :turn-count 3))
+         (html (sm-harness-web-ui::%session-chip-html summary)))
+    (is (search "sess-123-456" html))
+    (is (search "Claude" html))
+    (is (search "Claude Opus" html))
+    (is (search "3 turns" html))
+    (is (search "canon-9" html))
+    (is (search "Ready" html))
+    (is (search "ago" html))))
+
+(test session-chip-html-pending-canonical-and-default-model-111
+  (let* ((summary (sm-harness:make-session-summary
+                   :id "sess-1" :title "New session"
+                   :status :connecting :canonical-id nil
+                   :backend "claude" :model nil
+                   :created-at nil :turn-count 0))
+         (html (sm-harness-web-ui::%session-chip-html summary)))
+    (is (search "Pending" html))
+    (is (search "Default" html))
+    (is (search "0 turns" html))
+    (is (search "unknown" html))))
+
+(test session-chip-html-escapes-untrusted-title-111
+  (let* ((summary (sm-harness:make-session-summary
+                   :id "sess-1" :title "<script>alert(1)</script>"
+                   :status :ready :canonical-id nil
+                   :backend "claude" :model nil
+                   :created-at nil :turn-count 0))
+         (html (sm-harness-web-ui::%session-chip-html summary)))
+    (is (not (search "<script>" html)))
+    (is (search "&lt;script&gt;" html))))

@@ -108,6 +108,56 @@ needed a new generic Playwright op, `select_option`
 (`e2e/bridge.mjs`/`+e2e-supported-ops+` in `contract.lisp`) -- `fill` does
 not work on `<select>` elements.
 
+## Richer home-screen session chips (#111)
+
+Each row in the home screen's session list (`render-home`, `src/ui/home.lisp`)
+used to be one plain dash-joined line: `"<title> — <status> — <canonical id
+or Pending…>"`. That left out most of what an operator actually wants to see
+at a glance when several sessions are open -- which backend/model a session
+uses, how many turns it has had, and how long ago it started -- so the issue
+asked for a chip that shows all of: session id, backend, model, turn count,
+time since start, and canonical id (title/status are kept too, for
+continuity with the pre-#111 chip).
+
+**Data.** `sm-harness:session-summary` gained `created-at`/`turn-count`
+fields (`docs/sm-harness.md#session-summary-chip-metadata-turn-count-and-start-time-111`)
+so the home screen never needs anything beyond what `list-sessions` already
+returns -- no per-row round trip to load a full transcript just to render a
+chip.
+
+**Rendering.** The chip's inner HTML is built by
+`%session-chip-html` (`sm-harness-web-ui/src/presenter.lisp`), not inline in
+`render-home`, for the same reason `event-display`/`%backend-label`/
+`%model-label` already live there: it gets `presenter-tests` coverage
+without needing a live CLOG server. Every field is `escape-text`'d before
+insertion, including title and canonical id -- both ultimately come from
+outside this process (a future editable title; the CLI's own session id),
+so they don't get a free pass just because nothing edits titles yet.
+Backend/model reuse `%backend-label`/`%model-label` from #106 (so "Default"
+still means "no explicit per-session model override", not blank); turn count
+goes through `%turn-count-label` (pluralizes: "1 turn" vs "3 turns"); elapsed
+time goes through `%format-elapsed`, which parses the fixed
+`sm-harness::%now-iso` timestamp shape and buckets into `"just now"`/`"Nm
+ago"`/`"Nh ago"`/`"Nd ago"`, clamping a small clock-skew-induced negative
+delta to `"just now"` rather than ever printing something like `"-3s ago"`,
+and degrading to `"unknown"` for a summary from before this feature (blank
+`created-at`) instead of erroring.
+
+**Markup/styling.** The row is still one clickable `<button class="session-
+row">` (unchanged: the whole chip opens that session), now containing a
+`chip-top` line (title + a status pill reusing `.status-chip`, with a
+per-status color modifier class like `.status-ready`/`.status-error`) and a
+`chip-meta` line of individual pill-style `chip-item` spans for session id,
+backend, model, turn count, elapsed time, and canonical id (`static/app.css`).
+Only `<span>`s nest inside the button (phrasing content, valid HTML) --
+no `<div>`s -- so the row stays a single valid interactive element.
+
+**Compatibility.** The `turn-identity` browser E2E scenario
+(`e2e/scenarios/turn-identity.lisp`) previously asserted on the old
+dash-joined text as one blob; it now asserts against the specific
+`.chip-title`/`.chip-status`/`.chip-canonical`/`.chip-turns` elements
+instead, which is more precise, not just adjusted to keep passing.
+
 ## Export browser logs (#92, made more robust in #97)
 
 Both the home and chat headers have an "Export logs" button

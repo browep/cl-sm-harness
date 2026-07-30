@@ -111,3 +111,54 @@ body {
 }
 .info-panel-body div { margin: 0.25rem 0; }
 .info-panel-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+
+/* #111: home-screen session chips -- title/status on one line, then a row
+   of meta chips (session id, backend, model, turn count, time since
+   started, canonical id). Content is built by
+   sm-harness-web-ui/src/presenter.lisp's %SESSION-CHIP-HTML. */
+.session-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid #2a3441;
+  background: #171f2a;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.session-row:hover, .session-row:focus-visible {
+  border-color: #3a4656;
+  background: #1c2430;
+}
+.chip-top {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.chip-title { font-weight: 600; }
+.chip-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.chip-item {
+  font-size: 0.78rem;
+  color: #9aa7b8;
+  background: #202a37;
+  border: 1px solid #2a3441;
+  border-radius: 999px;
+  padding: 0.1rem 0.55rem;
+}
+.chip-id, .chip-canonical {
+  font-family: ui-monospace, monospace;
+}
+/* Status-specific tints on the existing .status-chip pill, reusing its
+   base look (see the shared rule above) rather than introducing a second
+   badge style. */
+.status-chip.status-ready { background: #1a2e1f; color: #8fd6a0; }
+.status-chip.status-responding { background: #24314a; color: #9bb8ff; }
+.status-chip.status-connecting { background: #2a2942; color: #c1b3f7; }
+.status-chip.status-stopping { background: #3a3320; color: #e3c98b; }
+.status-chip.status-error { background: #3a1d1d; color: #ffb4b4; }
+.status-chip.status-disconnected { background: #2a3441; color: #9aa7b8; }

@@ -151,3 +151,41 @@ already-persisted session had before this feature existed."
              (is (null (sm-harness::session-record-model loaded)))))
       (sm-harness::close-session-repository repo)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test repository-roundtrip-persists-turn-count-and-created-at
+  "#111: the home-screen chip needs a turn count and a session start time
+without re-reading every session's full transcript from disk, so both are
+carried in the lightweight index summary, not just the per-session file."
+  (let* ((root (temp-data-root))
+         (repo (sm-harness::open-session-repository :root root :project-key "p1"))
+         (a (sm-harness::make-session-record :title "A")))
+    (unwind-protect
+         (progn
+           (setf (sm-harness::session-record-transcript a)
+                 (list (sm-harness::make-transcript-entry :role "user" :text "hi")
+                       (sm-harness::make-transcript-entry :role "assistant" :text "hello")
+                       (sm-harness::make-transcript-entry :role "user" :text "again"
+                                                          :kind "synthetic")))
+           (sm-harness::repository-save-session repo a)
+           (let ((summary (find (sm-harness::session-record-id a)
+                                (sm-harness::repository-list-sessions repo)
+                                :key #'sm-harness:session-summary-id :test #'string=)))
+             (is (= 2 (sm-harness:session-summary-turn-count summary)))
+             (is (string= (sm-harness::session-record-created-at a)
+                         (sm-harness:session-summary-created-at summary))))
+           ;; Simulate a pre-#111 index entry: neither field on disk.
+           (let ((path (sm-harness::%repo-session-path repo "legacy-2")))
+             (ensure-directories-exist path)
+             (with-open-file (out path :direction :output :if-does-not-exist :create
+                                  :if-exists :supersede)
+               (write-string "{\"id\":\"legacy-2\",\"title\":\"Legacy\"}" out)))
+           (with-open-file (out (sm-harness::%repo-index-path repo)
+                                :direction :output :if-does-not-exist :create
+                                :if-exists :supersede)
+             (write-string "{\"sessions\":[{\"id\":\"legacy-2\",\"title\":\"Legacy\"}]}" out))
+           (let ((summary (find "legacy-2" (sm-harness::repository-list-sessions repo)
+                                :key #'sm-harness:session-summary-id :test #'string=)))
+             (is (= 0 (sm-harness:session-summary-turn-count summary)))
+             (is (string= "" (sm-harness:session-summary-created-at summary)))))
+      (sm-harness::close-session-repository repo)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

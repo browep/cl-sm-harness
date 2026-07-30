@@ -351,3 +351,80 @@ instead of any value this panel could show."
     ((null model-id) "Default")
     (t (let ((m (sm-harness:find-model backend-id model-id)))
          (if m (sm-harness:model-descriptor-label m) model-id)))))
+
+;;; ---------------------------------------------------------------------
+;;; Home-screen chip metadata (#111)
+
+(defun %parse-iso8601z (s)
+  "Parse the fixed \"YYYY-MM-DDTHH:MM:SSZ\" shape SM-HARNESS::%NOW-ISO
+always produces (the only timestamp format this codebase ever writes to
+CREATED-AT/UPDATED-AT) into a universal time. NIL on anything that isn't
+that exact shape -- a summary predating this field, or any future format
+change -- rather than signaling, since a chip missing its elapsed time is
+far preferable to one that crashes the whole home screen."
+  (and (stringp s) (>= (length s) 20)
+       (ignore-errors
+        (encode-universal-time
+         (parse-integer s :start 17 :end 19)
+         (parse-integer s :start 14 :end 16)
+         (parse-integer s :start 11 :end 13)
+         (parse-integer s :start 8 :end 10)
+         (parse-integer s :start 5 :end 7)
+         (parse-integer s :start 0 :end 4)
+         0))))
+
+(defun %format-elapsed (iso &key (now (get-universal-time)))
+  "Human \"time since\" label for ISO (an SM-HARNESS::%NOW-ISO-shaped
+timestamp) relative to NOW (a universal time, overridable for tests).
+Renders \"unknown\" for NIL/unparseable input -- a session summary from
+before #111 added CREATED-AT -- and never a negative duration: a small
+clock skew that makes ISO look slightly in the future clamps to \"just
+now\" instead of printing something like \"-3s ago\"."
+  (let ((then (%parse-iso8601z iso)))
+    (if (null then)
+        "unknown"
+        (let ((delta (max 0 (- now then))))
+          (cond
+            ((< delta 60) "just now")
+            ((< delta 3600) (format nil "~Dm ago" (floor delta 60)))
+            ((< delta 86400) (format nil "~Dh ago" (floor delta 3600)))
+            (t (format nil "~Dd ago" (floor delta 86400))))))))
+
+(defun %turn-count-label (n)
+  "Pluralizes the home-screen chip's turn count (#111): N is always a
+non-negative integer (SM-HARNESS::%SESSION-TURN-COUNT/repository default
+of 0), never NIL, so this never needs its own missing-value case."
+  (format nil "~D turn~:P" (or n 0)))
+
+(defun %status-slug (status)
+  "CSS-safe modifier class fragment for STATUS (a SESSION-SUMMARY-STATUS
+keyword such as :READY/:RESPONDING/:ERROR): lowercase, no colon."
+  (string-downcase (symbol-name status)))
+
+(defun %session-chip-html (summary)
+  "Inner HTML for a home-screen session chip (#111) built from SUMMARY (a
+SM-HARNESS:SESSION-SUMMARY): title/status on their own line, then a row of
+meta chips -- session id, backend, model, turn count, time since the
+session started, and canonical provider id (or \"Pending…\" before the CLI
+has assigned one, same fallback the pre-#111 chip already used). Kept
+here, not in ui/home.lisp, for the same reason as EVENT-DISPLAY/
+%BACKEND-LABEL/%MODEL-LABEL above: so it gets PRESENTER-TESTS coverage
+without needing a live CLOG server. Every field is ESCAPE-TEXT'd before
+insertion -- title and canonical id ultimately come from outside this
+process (a future editable title, the CLI's own session id), so neither
+gets a free pass just because nothing edits titles yet."
+  (let* ((status (sm-harness:session-summary-status summary))
+         (backend (sm-harness:session-summary-backend summary))
+         (model (sm-harness:session-summary-model summary)))
+    (format nil
+            "<span class=\"chip-top\"><span class=\"chip-title\">~A</span><span class=\"chip-status status-chip status-~A\">~A</span></span><span class=\"chip-meta\"><span class=\"chip-item chip-id\">~A</span><span class=\"chip-item chip-backend\">~A</span><span class=\"chip-item chip-model\">~A</span><span class=\"chip-item chip-turns\">~A</span><span class=\"chip-item chip-elapsed\">~A</span><span class=\"chip-item chip-canonical\">~A</span></span>"
+            (escape-text (sm-harness:session-summary-title summary))
+            (%status-slug status)
+            (escape-text (status-label status))
+            (escape-text (sm-harness:session-summary-id summary))
+            (escape-text (%backend-label backend))
+            (escape-text (%model-label backend model))
+            (escape-text (%turn-count-label (sm-harness:session-summary-turn-count summary)))
+            (escape-text (%format-elapsed (sm-harness:session-summary-created-at summary)))
+            (escape-text (or (sm-harness:session-summary-canonical-id summary)
+                             "Pending…")))))
