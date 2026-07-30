@@ -69,17 +69,30 @@
                ;; latest content instead of leaving a reader scrolled up on a
                ;; stale line once the box overflows (max-height, app.css).
                (setf (clog:scroll-top transcript) (clog:scroll-height transcript)))
-             (add-line (role text)
+             (add-line (role text &key (scroll t))
                ;; TEXT always arrives pre-rendered, safe HTML: assistant
                ;; lines via MARKDOWN-TO-HTML (#71, a restricted Markdown
                ;; subset over already-escaped input), every other role via
                ;; plain ESCAPE-TEXT. Both share this one inner-html path,
                ;; so no live tag can come from anywhere but those two
                ;; functions.
+               ;;
+               ;; SCROLL defaults to true for the live/streaming path, where
+               ;; pinning the view to each new line as it lands is exactly
+               ;; the point (#74). The historical-replay loop below passes
+               ;; :SCROLL NIL and re-pins once after the whole backlog is in
+               ;; (#103): CLOG's CREATE-DIV/INNER-HTML calls are fire-and-forget
+               ;; sends over the websocket, but SCROLL-TRANSCRIPT-TO-BOTTOM
+               ;; reads back SCROLL-HEIGHT, which blocks this thread on a
+               ;; real round trip to the browser (CLOG QUERY, not EXECUTE).
+               ;; Calling that once per replayed entry meant one blocking
+               ;; round trip per historical message -- hundreds of them on a
+               ;; long-running real session -- before the composer was even
+               ;; usable.
                (let ((line (clog:create-div transcript
                                             :class (format nil "msg msg-~A" role))))
                  (setf (clog:inner-html line) text)
-                 (scroll-transcript-to-bottom)
+                 (when scroll (scroll-transcript-to-bottom))
                  line))
              (set-busy (v)
                (setf busy v)
@@ -231,19 +244,33 @@
                      (not (getf data :shift-key))
                      (not busy))
             (submit-prompt (clog:text-value input)))))
-      (dolist (entry (sm-harness:session-snapshot-transcript snap))
-        (let* ((kind (sm-harness:transcript-entry-kind entry))
-               (role (cond
-                       ((string= "tool" kind) "tool")
-                       ;; A harness-initiated synthetic follow-up (#76) renders
-                       ;; distinctly on reload/reopen too, matching the live path.
-                       ((string= "synthetic" kind) "harness")
-                       (t (sm-harness:transcript-entry-role entry))))
-               (raw (sm-harness:transcript-entry-text entry)))
-          (add-line role
-                    (if (string= role "assistant")
-                        (markdown-to-html raw)
-                        (escape-text raw)))))
+      ;; #103: historical replay used to call ADD-LINE's default
+      ;; scroll-to-bottom for every single transcript entry, and that scroll
+      ;; blocks on a real browser round trip (see ADD-LINE above) -- on a
+      ;; long-running real session (several hundred transcript entries are
+      ;; already common) that serialized into many seconds of blocking round
+      ;; trips before the page was usable. Replaying with :SCROLL NIL and
+      ;; re-pinning exactly once afterward keeps the same per-entry markup
+      ;; and ordering (this walks SNAP's transcript list in the same
+      ;; already-durable append order it always has) while cutting that
+      ;; backlog-sized cost down to a single round trip regardless of how
+      ;; long the conversation has gotten.
+      (let ((entries (sm-harness:session-snapshot-transcript snap)))
+        (dolist (entry entries)
+          (let* ((kind (sm-harness:transcript-entry-kind entry))
+                 (role (cond
+                         ((string= "tool" kind) "tool")
+                         ;; A harness-initiated synthetic follow-up (#76) renders
+                         ;; distinctly on reload/reopen too, matching the live path.
+                         ((string= "synthetic" kind) "harness")
+                         (t (sm-harness:transcript-entry-role entry))))
+                 (raw (sm-harness:transcript-entry-text entry)))
+            (add-line role
+                      (if (string= role "assistant")
+                          (markdown-to-html raw)
+                          (escape-text raw))
+                      :scroll nil)))
+        (when entries (scroll-transcript-to-bottom)))
       (multiple-value-bind (snapshot lid cursor)
           (ui-attach session-id
                      (lambda (ev)
