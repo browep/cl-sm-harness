@@ -218,9 +218,13 @@ Its transcript is persisted at ~A."
   (let* ((cfg (harness-config harness))
          (catalog (harness-catalog harness))
          (policy (harness-policy harness))
+         ;; #106: a session created with an explicit :MODEL overrides the
+         ;; harness-wide default; a legacy or default-backend session (NIL
+         ;; model) falls back to HARNESS-CONFIG-MODEL exactly as before.
          (options (build-agent-options catalog policy
                                        :resume resume
-                                       :model (harness-config-model cfg)
+                                       :model (or (session-record-model (session-runtime-record rt))
+                                                  (harness-config-model cfg))
                                        :system-prompt (%session-system-prompt cfg rt)))
          (factory (harness-config-transport-factory cfg))
          (transport (when factory (funcall factory options)))

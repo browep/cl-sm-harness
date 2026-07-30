@@ -133,3 +133,15 @@
     (is (not (search "<a " html)))
     (is (search "e2e-xss" html))
     (is (search "<strong>not bold</strong>" html))))
+
+(test backend-label-and-model-label-106
+  (is (string= "Claude" (sm-harness-web-ui::%backend-label "claude")))
+  ;; An unrecognized backend id (shouldn't happen given START-SESSION's own
+  ;; validation, but a display helper must still degrade gracefully) falls
+  ;; back to the raw id rather than erroring.
+  (is (string= "vertex" (sm-harness-web-ui::%backend-label "vertex")))
+  (is (string= "Claude Opus" (sm-harness-web-ui::%model-label "claude" "opus")))
+  (is (string= "Default" (sm-harness-web-ui::%model-label "claude" nil))
+      "NIL model (no session-level override) must read as Default, not blank")
+  (is (string= "gpt-5" (sm-harness-web-ui::%model-label "claude" "gpt-5"))
+      "an unrecognized model id still degrades to the raw id"))

@@ -33,6 +33,9 @@
          ;; instead of appearing after everything at the bottom of the
          ;; page.
          (log-panel (install-log-export-panel body header root))
+         ;; #106: session backend/model + ids, shown on demand rather than
+         ;; cluttering the header permanently.
+         (info-panel (install-session-info-panel header root snap session-id canon-el))
          (transcript (clog:create-div root :class "transcript" :html-id "transcript"))
          (composer-wrap (clog:create-div root :class "composer"))
          (input (clog:create-text-area composer-wrap :class "prompt" :html-id "prompt"))
@@ -51,7 +54,7 @@
          ;; outstanding so the *real* event, once it does arrive, updates
          ;; state without rendering that same line a second time.
          (awaiting-user-echo nil))
-    (declare (ignore title-el log-panel))
+    (declare (ignore title-el log-panel info-panel))
     (setf (clog:attribute id-el "title") "Copy session id"
           (clog:attribute id-el "aria-label")
           (format nil "Copy session id ~A to clipboard" session-id))

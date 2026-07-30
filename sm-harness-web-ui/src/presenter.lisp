@@ -264,3 +264,25 @@
        (cons "status" (status-label (getf payload :status))))
       (t
        (cons "system" (escape-text (princ-to-string type)))))))
+
+;;; ---------------------------------------------------------------------
+;;; Session backend/model display (#106)
+
+(defun %backend-label (backend-id)
+  "Display label for a stored backend id: the catalog's own label when the
+id is still recognized, else the raw id (a value predating a later catalog
+change, however unlikely with today's single-backend catalog, should still
+render something rather than blow up)."
+  (let ((b (sm-harness:find-backend backend-id)))
+    (if b (sm-harness:backend-descriptor-label b) backend-id)))
+
+(defun %model-label (backend-id model-id)
+  "Display label for a stored model id, or \"Default\" when the session
+carries no explicit override (#106): MODEL-ID is NIL exactly when the
+session was created before this feature, or created without picking a
+model, and in both cases HARNESS-CONFIG-MODEL/the CLI's own default governs
+instead of any value this panel could show."
+  (cond
+    ((null model-id) "Default")
+    (t (let ((m (sm-harness:find-model backend-id model-id)))
+         (if m (sm-harness:model-descriptor-label m) model-id)))))

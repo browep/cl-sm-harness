@@ -14,6 +14,7 @@
                  (:file "harness-adapter")
                  (:file "browser-logs")
                  (:file "ui/log-export")
+                 (:file "ui/session-info")
                  (:file "ui/home")
                  (:file "ui/chat")
                  (:file "live-reload")
@@ -43,7 +44,8 @@
                              (:file "custom-tool-lifecycle")
                              (:file "connection-lost-recovery")
                              (:file "connection-lost-fallback")
-                             (:file "export-logs")))))
+                             (:file "export-logs")
+                             (:file "session-info")))))
 
 (asdf:defsystem #:sm-harness-web-ui/e2e
   :description "Test-only deterministic SDK transport for browser E2E"

@@ -13,9 +13,11 @@
    #:session-snapshot #:session-snapshot-id #:session-snapshot-title
    #:session-snapshot-status #:session-snapshot-canonical-id
    #:session-snapshot-transcript #:session-snapshot-cursor
+   #:session-snapshot-backend #:session-snapshot-model
    #:session-summary #:session-summary-id #:session-summary-title
    #:session-summary-updated-at #:session-summary-status
    #:session-summary-canonical-id
+   #:session-summary-backend #:session-summary-model
    #:transcript-entry #:transcript-entry-role #:transcript-entry-text
    #:transcript-entry-kind #:transcript-entry-meta #:transcript-entry-created-at
    #:default-tool-catalog #:default-tool-policy #:*reload-harness-system*
@@ -27,4 +29,10 @@
    #:tool-definition #:tool-definition-name #:tool-definition-description
    #:tool-definition-input-schema #:tool-definition-handler
    #:harness-error #:harness-error-message
-   #:harness-input-error #:harness-state-error #:harness-not-found-error))
+   #:harness-input-error #:harness-state-error #:harness-not-found-error
+   ;; #106: static backend/model catalog for session creation + viewing.
+   #:backend-catalog #:backend-descriptor #:backend-descriptor-id
+   #:backend-descriptor-label #:backend-descriptor-models
+   #:model-descriptor #:model-descriptor-id #:model-descriptor-label
+   #:find-backend #:find-model #:valid-backend-id-p #:valid-model-id-p
+   #:*default-backend-id* #:*default-model-id*))

@@ -120,3 +120,34 @@
       (when (eq (sb-ext:process-status process) :running)
         (ignore-errors (sb-ext:process-kill process sb-posix:sigkill)))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test repository-roundtrip-persists-backend-and-model
+  "#106: an explicit backend/model choice survives a save/load cycle, and a
+record with neither field (pre-#106 data on disk) still decodes to the
+sole default backend with no model override, matching the behavior any
+already-persisted session had before this feature existed."
+  (let* ((root (temp-data-root))
+         (repo (sm-harness::open-session-repository :root root :project-key "p1"))
+         (a (sm-harness::make-session-record :title "A" :backend "claude" :model "opus")))
+    (unwind-protect
+         (progn
+           (sm-harness::repository-save-session repo a)
+           (let ((loaded (sm-harness::repository-load-session
+                          repo (sm-harness::session-record-id a))))
+             (is (string= "claude" (sm-harness::session-record-backend loaded)))
+             (is (string= "opus" (sm-harness::session-record-model loaded))))
+           (let ((summary (find (sm-harness::session-record-id a)
+                                (sm-harness::repository-list-sessions repo)
+                                :key #'sm-harness:session-summary-id :test #'string=)))
+             (is (string= "opus" (sm-harness:session-summary-model summary))))
+           ;; Simulate a pre-#106 record: write raw JSON with neither field.
+           (let ((path (sm-harness::%repo-session-path repo "legacy-1")))
+             (ensure-directories-exist path)
+             (with-open-file (out path :direction :output :if-does-not-exist :create
+                                  :if-exists :supersede)
+               (write-string "{\"id\":\"legacy-1\",\"title\":\"Legacy\"}" out)))
+           (let ((loaded (sm-harness::repository-load-session repo "legacy-1")))
+             (is (string= "claude" (sm-harness::session-record-backend loaded)))
+             (is (null (sm-harness::session-record-model loaded)))))
+      (sm-harness::close-session-repository repo)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

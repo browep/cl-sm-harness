@@ -27,6 +27,10 @@ async function executeStep(page, base, step) {
     case 'focus': return target().focus();
     case 'press': return step.selector ? target().press(step.key) : page.keyboard.press(step.key);
     case 'fill': return target().fill(step.value);
+    // Generic Playwright operation: choose an <option> by its value
+    // attribute on a <select> -- 'fill' does not work on <select>
+    // elements, Playwright requires selectOption instead.
+    case 'select_option': return target().selectOption(step.value);
     case 'click': return target().click();
     case 'goto': return page.goto(new URL(step.path, base).toString(), { waitUntil: 'domcontentloaded', timeout });
     case 'reload': return page.reload({ waitUntil: 'domcontentloaded', timeout });

@@ -195,12 +195,15 @@ would sidestep a live owner's record lock entirely."
           (gethash "created_at" o) (session-record-created-at rec)
           (gethash "updated_at" o) (session-record-updated-at rec)
           (gethash "sequence" o) (session-record-sequence rec)
+          (gethash "backend" o) (session-record-backend rec)
           (gethash "transcript" o)
           (mapcar #'%entry->json (session-record-transcript rec)))
     (when (session-record-canonical-id rec)
       (setf (gethash "canonical_id" o) (session-record-canonical-id rec)))
     (when (session-record-draft rec)
       (setf (gethash "draft" o) (session-record-draft rec)))
+    (when (session-record-model rec)
+      (setf (gethash "model" o) (session-record-model rec)))
     o))
 
 (defun %json->status (s)
@@ -224,7 +227,12 @@ would sidestep a live owner's record lock entirely."
    :updated-at (or (gethash "updated_at" obj) (%now-iso))
    :transcript (mapcar #'%json->entry (or (gethash "transcript" obj) '()))
    :draft (gethash "draft" obj)
-   :sequence (or (gethash "sequence" obj) 0)))
+   :sequence (or (gethash "sequence" obj) 0)
+   ;; A record persisted before #106 has neither field: BACKEND falls back
+   ;; to the sole pre-existing backend, MODEL stays NIL exactly as it always
+   ;; implicitly was (HARNESS-CONFIG-MODEL/CLI default still applies).
+   :backend (or (gethash "backend" obj) *default-backend-id*)
+   :model (gethash "model" obj)))
 
 (defun repository-save-session (repo rec)
   (sb-thread:with-mutex ((session-repository-lock repo))
@@ -239,9 +247,12 @@ would sidestep a live owner's record lock entirely."
             (gethash "title" summary) (session-record-title rec)
             (gethash "updated_at" summary) (session-record-updated-at rec)
             (gethash "status" summary)
-            (string-downcase (symbol-name (session-record-status rec))))
+            (string-downcase (symbol-name (session-record-status rec)))
+            (gethash "backend" summary) (session-record-backend rec))
       (when (session-record-canonical-id rec)
         (setf (gethash "canonical_id" summary) (session-record-canonical-id rec)))
+      (when (session-record-model rec)
+        (setf (gethash "model" summary) (session-record-model rec)))
       (setf sessions
             (cons summary
                   (remove (session-record-id rec) sessions
@@ -273,5 +284,7 @@ would sidestep a live owner's record lock entirely."
                  :title (or (gethash "title" s) "New session")
                  :updated-at (or (gethash "updated_at" s) "")
                  :status (%json->status (gethash "status" s))
-                 :canonical-id (gethash "canonical_id" s)))
+                 :canonical-id (gethash "canonical_id" s)
+                 :backend (or (gethash "backend" s) *default-backend-id*)
+                 :model (gethash "model" s)))
               sessions))))

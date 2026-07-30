@@ -18,6 +18,21 @@
         (clear-body body)
         (render-home body)))))
 
+(defun %populate-model-select (select-el backend-id)
+  "Refill SELECT-EL (#106) with the models the static catalog offers for
+BACKEND-ID, selecting SM-HARNESS:*DEFAULT-MODEL-ID* when it is one of
+them. Called both at initial render and whenever the backend select
+changes -- today's catalog has exactly one backend, but this stays
+generically correct rather than assuming that never changes."
+  (setf (clog:inner-html select-el) "")
+  (let ((backend (sm-harness:find-backend backend-id)))
+    (dolist (m (and backend (sm-harness:backend-descriptor-models backend)))
+      (clog:add-select-option select-el
+                              (sm-harness:model-descriptor-id m)
+                              (sm-harness:model-descriptor-label m)
+                              :selected (string= (sm-harness:model-descriptor-id m)
+                                                 sm-harness:*default-model-id*)))))
+
 (defun render-home (body)
   (setf (clog:title (clog:html-document body)) "sm-harness")
   ;; Browser log capture (#92): no session is active on this screen, and
@@ -34,6 +49,19 @@
          ;; of the page.
          (log-panel (install-log-export-panel body header root))
          (actions (clog:create-div root :class "actions"))
+         ;; #106: an explicit, static backend/model choice at session
+         ;; creation. Both selects are populated from
+         ;; SM-HARNESS:BACKEND-CATALOG -- the single source of truth this
+         ;; harness itself validates START-SESSION's :BACKEND/:MODEL
+         ;; against, so a choice this dropdown can produce is always legal.
+         (backend-label (clog:create-label actions :content "Backend"
+                                           :html-id "backend-label"))
+         (backend-select (clog:create-select actions :class "backend-select"
+                                             :html-id "backend-select"))
+         (model-label (clog:create-label actions :content "Model"
+                                         :html-id "model-label"))
+         (model-select (clog:create-select actions :class "model-select"
+                                           :html-id "model-select"))
          (new-btn (clog:create-button actions :content "New session"
                                       :class "btn primary"
                                       :html-id "new-session"))
@@ -44,12 +72,28 @@
     (declare (ignore _title log-panel))
     (setf (clog:attribute root "role") "main"
           (clog:attribute list-region "role") "region"
-          (clog:attribute list-region "aria-label") "Sessions")
+          (clog:attribute list-region "aria-label") "Sessions"
+          (clog:attribute backend-select "aria-label") "Backend"
+          (clog:attribute model-select "aria-label") "Model"
+          (clog:attribute backend-label "for") "backend-select"
+          (clog:attribute model-label "for") "model-select")
+    (dolist (b (sm-harness:backend-catalog))
+      (clog:add-select-option backend-select
+                              (sm-harness:backend-descriptor-id b)
+                              (sm-harness:backend-descriptor-label b)
+                              :selected (string= (sm-harness:backend-descriptor-id b)
+                                                 sm-harness:*default-backend-id*)))
+    (%populate-model-select model-select sm-harness:*default-backend-id*)
+    (clog:set-on-change backend-select
+      (lambda (obj)
+        (declare (ignore obj))
+        (%populate-model-select model-select (clog:value backend-select))))
     (clog:set-on-click new-btn
       (lambda (obj)
         (declare (ignore obj))
         (handler-case
-            (let ((snap (ui-start-session)))
+            (let ((snap (ui-start-session :backend (clog:value backend-select)
+                                          :model (clog:value model-select))))
               (render-chat body (sm-harness:session-snapshot-id snap))
               (set-session-route body (sm-harness:session-snapshot-id snap)))
           (error (c)

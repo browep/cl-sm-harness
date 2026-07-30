@@ -103,3 +103,85 @@
            (is (null (sm-harness:interrupt-turn h (sm-harness:session-snapshot-id snap)))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test start-session-rejects-unknown-backend-or-model
+  "#106: the static catalog is the single source of truth for valid
+backend/model choices; an unknown value is a caller mistake (bad UI state,
+stale client), not a silently-accepted no-op."
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config :data-root root))))
+    (unwind-protect
+         (progn
+           (signals sm-harness:harness-input-error
+             (sm-harness:start-session h :backend "vertex"))
+           (signals sm-harness:harness-input-error
+             (sm-harness:start-session h :model "gpt-5")))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test start-session-defaults-backend-and-persists-explicit-model
+  "A session created with no :BACKEND/:MODEL still gets the sole default
+backend (#106 keeps the field always populated for display), but MODEL
+stays NIL -- HARNESS-CONFIG-MODEL (or ultimately the CLI's own default)
+still governs exactly as it did before #106. A session created with an
+explicit model carries it through SESSION-SNAPSHOT/SESSION-SUMMARY and
+survives a reopen from durable storage."
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config :data-root root))))
+    (unwind-protect
+         (progn
+           (let ((snap (sm-harness:start-session h)))
+             (is (string= "claude" (sm-harness:session-snapshot-backend snap)))
+             (is (null (sm-harness:session-snapshot-model snap))))
+           (let* ((snap (sm-harness:start-session h :backend "claude" :model "opus"))
+                  (sid (sm-harness:session-snapshot-id snap)))
+             (is (string= "claude" (sm-harness:session-snapshot-backend snap)))
+             (is (string= "opus" (sm-harness:session-snapshot-model snap)))
+             (let ((summary (find sid (sm-harness:list-sessions h)
+                                  :key #'sm-harness:session-summary-id :test #'string=)))
+               (is (string= "opus" (sm-harness:session-summary-model summary))))
+             (let ((reopened (sm-harness:open-session h sid)))
+               (is (string= "opus" (sm-harness:session-snapshot-model reopened))))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test session-model-override-reaches-agent-options
+  "The per-session MODEL, when set, must actually reach the CLI-facing
+AGENT-OPTIONS (src/transport/subprocess-query.lisp turns it into
+--model), overriding HARNESS-CONFIG-MODEL rather than being silently
+dropped by the runtime layer."
+  (let* ((root (temp-data-root))
+         (options-seen '())
+         (cfg (sm-harness:make-harness-config
+               :data-root root
+               :transport-factory
+               (lambda (options)
+                 (push options options-seen)
+                 (make-simple-turn-transport))))
+         (h (sm-harness:make-harness :config cfg)))
+    (unwind-protect
+         (let* ((snap (sm-harness:start-session h :model "haiku"))
+                (sid (sm-harness:session-snapshot-id snap)))
+           (sm-harness:submit-turn h sid "hello")
+           (is (wait-until (lambda () options-seen)))
+           (is (string= "haiku" (claude-agent-sdk-cl:agent-options-model (first options-seen)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test static-backend-model-catalog-shape
+  "#106: the catalog itself is the contract the web UI's dropdowns and
+info panel are built from -- assert its shape and the defaults directly,
+independent of any session."
+  (let ((claude (sm-harness:find-backend "claude")))
+    (is (not (null claude)))
+    (is (string= "Claude" (sm-harness:backend-descriptor-label claude)))
+    (is (member "sonnet" (sm-harness:backend-descriptor-models claude)
+               :key #'sm-harness:model-descriptor-id :test #'string=)
+        "sonnet must be in the catalog")
+    (is (sm-harness:valid-backend-id-p sm-harness:*default-backend-id*))
+    (is (sm-harness:valid-model-id-p sm-harness:*default-backend-id*
+                                     sm-harness:*default-model-id*))
+    (is (null (sm-harness:find-backend "vertex")))
+    (is (null (sm-harness:find-model "claude" "gpt-5")))))

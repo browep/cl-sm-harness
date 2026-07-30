@@ -6,8 +6,12 @@
   (or *app-harness*
       (error "sm-harness-web-ui: harness not started")))
 
-(defun ui-start-session ()
-  (sm-harness:start-session (ensure-harness)))
+(defun ui-start-session (&key backend model)
+  "BACKEND/MODEL (#106) are an explicit choice from the new-session dropdowns,
+validated against SM-HARNESS:BACKEND-CATALOG by SM-HARNESS:START-SESSION
+itself -- this layer passes them through verbatim rather than re-validating,
+since sm-harness is the single source of truth for what is a legal choice."
+  (sm-harness:start-session (ensure-harness) :backend backend :model model))
 
 (defun ui-list-sessions ()
   (sm-harness:list-sessions (ensure-harness)))

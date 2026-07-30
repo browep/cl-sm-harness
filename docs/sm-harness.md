@@ -18,6 +18,51 @@ docker compose run --rm sm-harness-test
 
 Uses merged session-start SDK MCP catalogs (`make-sdk-tool`, `:builtin-tools`, `:strict-mcp-config`) only inside `sdk-adapter.lisp`.
 
+## Backend/model selection and viewing (#106)
+
+`start-session` takes optional `:backend`/`:model` keywords, validated against
+a small static catalog (`model.lisp`) that is the single source of truth for
+what a caller may legally choose -- an unrecognized value is
+`harness-input-error`, not a silently-ignored no-op:
+
+```lisp
+(backend-catalog)              ; => list of BACKEND-DESCRIPTORs
+(find-backend "claude")        ; => the BACKEND-DESCRIPTOR, or NIL
+(backend-descriptor-models b)  ; => list of MODEL-DESCRIPTORs for that backend
+(find-model "claude" "opus")   ; => the MODEL-DESCRIPTOR, or NIL
+(valid-backend-id-p id) / (valid-model-id-p backend-id model-id)
+*default-backend-id* / *default-model-id*
+```
+
+Today's catalog has exactly one backend, `"claude"` (this harness only ever
+drives the `claude` CLI, see `docs/api-parity.md`), with four models --
+`sonnet`, `opus`, `haiku`, `fable` -- each a `claude` CLI `--model` alias.
+Every entry was verified against a live `claude -p "..." --model <alias>`
+invocation before being added here, per the issue's own ask that the catalog
+never list a model that doesn't actually work; extending the list later is a
+deliberate, reviewed edit to `*backend-catalog*`, not runtime discovery.
+
+`session-record`/`session-summary`/`session-snapshot` all carry `backend`
+and `model` fields (`session-snapshot-backend`, `session-snapshot-model`,
+etc.), persisted by `session-repository.lisp`. `backend` defaults to
+`*default-backend-id*` when a caller omits it, so it is always populated for
+display; `model` stays `NIL` unless a caller passes one explicitly -- exactly
+the pre-#106 behavior, where `harness-config-model` (or ultimately the CLI's
+own default) governs when nothing more specific is set. A record already on
+disk from before this feature existed decodes the same way: `backend` reads
+back as the sole default, `model` as `NIL`.
+
+At runtime, `%ensure-client` (`runtime.lisp`) prefers a session's own `model`
+over `harness-config-model` when building `AGENT-OPTIONS`, so a per-session
+choice actually reaches `claude --model`; a session with no override falls
+back to the harness-wide config exactly as before this feature.
+
+The web UI (`docs/sm-harness-web-ui.md`) is the only caller today that ever
+passes an explicit `:backend`/`:model` -- its new-session dropdowns are
+populated directly from `backend-catalog`, and its chat-header Info panel
+reads a session's stored choice back via `%backend-label`/`%model-label`
+(`sm-harness-web-ui/src/presenter.lisp`).
+
 ## Product tool catalog
 
 `sm-harness/src/tool-catalog.lisp`'s `default-tool-catalog` defines the tools

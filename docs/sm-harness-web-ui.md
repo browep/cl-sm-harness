@@ -68,6 +68,46 @@ currently exist there first, then that session's transcript under
 transcript path (see [Agent system prompt in
 docs/sm-harness.md](sm-harness.md#agent-system-prompt)).
 
+## Backend/model selection and the session info panel (#106)
+
+The new-session flow (`render-home`, `src/ui/home.lisp`) has two `<select>`
+dropdowns, `#backend-select` and `#model-select`, populated directly from
+`sm-harness:backend-catalog` (`docs/sm-harness.md`) -- the same static list
+`sm-harness:start-session` validates its own `:backend`/`:model` keywords
+against, so no choice this UI can produce is ever rejected as unknown.
+`#model-select` is repopulated (`%populate-model-select`) whenever
+`#backend-select` changes, defaulting to `sm-harness:*default-model-id*`
+when it is offered by the newly selected backend; today's catalog has
+exactly one backend, so that repopulation is a no-op in practice, but it
+stays generically correct rather than assuming that never changes. Clicking
+"New session" reads both selects' current `clog:value` and passes them to
+`ui-start-session`, which forwards them verbatim to
+`sm-harness:start-session` -- this layer does no re-validation of its own,
+since sm-harness is the single source of truth for what is legal.
+
+The chat header (`render-chat`, `src/ui/chat.lisp`) gets an "Info" button
+(`install-session-info-panel`, `src/ui/session-info.lisp`) that opens a panel
+showing the session id, canonical provider id, title, and the backend/model
+choice made when the session was created. Backend/model are read straight
+from the `SESSION-SNAPSHOT` taken when the chat screen rendered (they never
+change over a session's life), formatted back to a human label via
+`%backend-label`/`%model-label` (`src/presenter.lisp` -- kept there,
+alongside `event-display`/`markdown-to-html`, specifically so they get
+`presenter-tests` coverage without needing a live CLOG server); a session
+with no explicit model override (created before this feature, or without
+picking one) shows "Default" rather than blank, matching that
+`harness-config-model`/the CLI's own default is what actually governs. The
+canonical id is read fresh from `#canonical-id`'s live DOM text on every
+click rather than captured once, so the panel never shows a stale
+"Pending…" after the provider assigns a real one mid-session.
+
+Covered end to end by the `session-info` browser E2E scenario
+(`e2e/scenarios/session-info.lisp`): selects a non-default model, creates a
+session, and asserts the info panel reflects it. Exercising a `<select>`
+needed a new generic Playwright op, `select_option`
+(`e2e/bridge.mjs`/`+e2e-supported-ops+` in `contract.lisp`) -- `fill` does
+not work on `<select>` elements.
+
 ## Export browser logs (#92, made more robust in #97)
 
 Both the home and chat headers have an "Export logs" button

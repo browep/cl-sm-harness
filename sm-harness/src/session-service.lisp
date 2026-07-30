@@ -39,14 +39,21 @@
     (close-session-repository (harness-repository harness))
     harness))
 
-(defun start-session (harness &key title)
+(defun start-session (harness &key title backend model)
   (when (harness-closed-p harness)
     (error 'harness-state-error :message "harness is closed"))
-  (let ((rec (make-session-record :title title)))
-    (repository-save-session (harness-repository harness) rec)
-    (sb-thread:with-mutex ((harness-lock harness))
-      (%open-runtime harness rec))
-    (session-record->snapshot rec)))
+  (let ((backend (or backend *default-backend-id*)))
+    (unless (valid-backend-id-p backend)
+      (error 'harness-input-error
+             :message (format nil "unknown backend: ~A" backend)))
+    (when (and model (not (valid-model-id-p backend model)))
+      (error 'harness-input-error
+             :message (format nil "unknown model ~A for backend ~A" model backend)))
+    (let ((rec (make-session-record :title title :backend backend :model model)))
+      (repository-save-session (harness-repository harness) rec)
+      (sb-thread:with-mutex ((harness-lock harness))
+        (%open-runtime harness rec))
+      (session-record->snapshot rec))))
 
 (defun list-sessions (harness)
   (repository-list-sessions (harness-repository harness)))
