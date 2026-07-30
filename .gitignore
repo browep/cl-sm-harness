@@ -7,3 +7,8 @@
 
 # Generated browser E2E artifacts
 /evidence/
+
+# E2E contract written by a container missing SM_HARNESS_STATIC_ROOT:
+# the code default is /app/static/, and /app is the bind-mounted repo.
+# Anchored so sm-harness-web-ui/static/ (real, tracked assets) stays visible.
+/static/
