@@ -59,6 +59,7 @@
   :depends-on (#:sm-harness #:fiveam)
   :serial t
   :components ((:file "src/packages")
+               (:file "src/config")
                (:file "src/presenter")
                (:file "src/shutdown")
                (:file "test/packages")

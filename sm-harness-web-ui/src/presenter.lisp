@@ -428,3 +428,29 @@ gets a free pass just because nothing edits titles yet."
             (escape-text (%format-elapsed (sm-harness:session-summary-created-at summary)))
             (escape-text (or (sm-harness:session-summary-canonical-id summary)
                              "Pending…")))))
+
+;;; ---------------------------------------------------------------------
+;;; Cache-busting the stylesheet URL
+
+(defun %app-css-href ()
+  "URL ON-NEW-WINDOW (application.lisp) hands to CLOG:LOAD-CSS. Found
+necessary chasing a real incident: a plain, unversioned \"/app.css\" never
+changes across a static-asset edit, and the response carries no
+Cache-Control/Expires header (only Last-Modified) -- see
+docs/sm-harness-web-ui.md's static-asset-staleness note -- so a browser's
+own HTTP cache can go on serving a stale copy indefinitely, even across a
+hard-looking page reload, once it has fetched it once. Appending the
+actually-served app.css file's own write-date as a query string changes
+the URL the instant that file's content changes on disk, independent of
+whether the Lisp process was ever restarted (the exact case that bit us:
+/opt/app-static was re-copied without a restart). *WEB-UI-CONFIG* unset
+(headless/test contexts) or the file being unreadable both degrade to the
+plain, unversioned URL rather than erroring -- a same-content re-fetch is
+harmless, just not maximally cache-friendly."
+  (let* ((root (and *web-ui-config* (web-ui-config-static-root *web-ui-config*)))
+         (write-date (and root
+                          (ignore-errors
+                           (file-write-date (merge-pathnames "app.css" root))))))
+    (if write-date
+        (format nil "/app.css?v=~A" write-date)
+        "/app.css")))

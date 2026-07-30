@@ -55,6 +55,22 @@ exact gap made a freshly added script 404 and its hooks evaluate to
 styling and no error anywhere (nothing 404s — the old file is still there
 and still valid CSS, just outdated).
 
+**Browser-side caching compounds this.** Even after `/opt/app-static` is
+correctly refreshed server-side, an already-open tab (or a fresh page load
+in the same browser profile) can still show the old styling: `app.css` is
+served with no `Cache-Control`/`Expires` header (only `Last-Modified`), so
+a browser is free to keep serving a previously-fetched copy from its own
+HTTP cache without ever revalidating, even across an ordinary reload.
+`on-new-window` (`application.lisp`) therefore loads `%app-css-href`'s
+value (`presenter.lisp`) instead of a bare `"/app.css"`: that function
+appends the actually-served file's own `file-write-date` as a `?v=`
+query string, so the URL itself changes the instant the file's content
+changes on disk -- independent of whether the Lisp process was ever
+restarted, which is exactly the scenario that bit us (`/opt/app-static`
+re-copied with no restart in between). A missing/unreadable file or unset
+`*web-ui-config*` (headless/test contexts) degrades to the plain
+unversioned URL rather than erroring.
+
 ## Session-id chip and the chat agent's system prompt
 
 The chat header shows the harness session id as a click-to-copy chip

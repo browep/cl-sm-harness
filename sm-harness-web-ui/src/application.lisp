@@ -8,7 +8,11 @@
         (and (null (position #\/ id)) id)))))
 
 (defun on-new-window (body)
-  (clog:load-css (clog:html-document body) "/app.css")
+  ;; Cache-busted (found chasing #111's follow-up incident, see
+  ;; %APP-CSS-HREF in presenter.lisp/docs/sm-harness-web-ui.md): a plain
+  ;; unversioned "/app.css" lets a browser keep serving a stale copy from
+  ;; its own HTTP cache indefinitely once fetched once.
+  (clog:load-css (clog:html-document body) (%app-css-href))
   ;; Browser log capture (#92): loaded once per tab. Home<->chat
   ;; transitions below are in-place DOM rebuilds in this same JS realm
   ;; (CLOG swaps innerHTML rather than navigating), so this single load

@@ -285,3 +285,44 @@ never print a negative duration")
          (html (sm-harness-web-ui::%session-chip-html summary)))
     (is (not (search "<script>" html)))
     (is (search "&lt;script&gt;" html))))
+
+(test app-css-href-cache-busts-on-the-served-files-own-write-date
+  ;; A real incident (chasing #111): a browser can keep serving a stale
+  ;; "/app.css" from its own HTTP cache indefinitely, since that response
+  ;; carries no Cache-Control/Expires header. %APP-CSS-HREF must change
+  ;; whenever the actually-served file's content changes on disk, whether
+  ;; or not the Lisp process itself was ever restarted (the exact case
+  ;; that bit us: /opt/app-static re-copied with no restart).
+  (let* ((dir (uiop:ensure-directory-pathname
+               (merge-pathnames (format nil "sm-harness-web-ui-css-test-~A/"
+                                        (random 1000000 (make-random-state t)))
+                                (uiop:temporary-directory))))
+         (css-path (merge-pathnames "app.css" dir))
+         (sm-harness-web-ui::*web-ui-config* nil))
+    (unwind-protect
+         (progn
+           (ensure-directories-exist dir)
+           (with-open-file (out css-path :direction :output :if-does-not-exist :create)
+             (write-string "body{color:red}" out))
+           (setf sm-harness-web-ui::*web-ui-config*
+                 (sm-harness-web-ui::make-web-ui-config :static-root dir))
+           (let ((href1 (sm-harness-web-ui::%app-css-href)))
+             (is (search "/app.css?v=" href1))
+             ;; A file-write-date bump (real edit, or a re-copy with no
+             ;; process restart) changes the URL.
+             (sleep 1.1)
+             (with-open-file (out css-path :direction :output :if-exists :supersede)
+               (write-string "body{color:blue}" out))
+             (let ((href2 (sm-harness-web-ui::%app-css-href)))
+               (is (not (string= href1 href2))))))
+      (ignore-errors (uiop:delete-directory-tree dir :validate t :if-does-not-exist :ignore)))))
+
+(test app-css-href-degrades-to-the-plain-url-without-config-or-file
+  (let ((sm-harness-web-ui::*web-ui-config* nil))
+    (is (string= "/app.css" (sm-harness-web-ui::%app-css-href))))
+  (let ((sm-harness-web-ui::*web-ui-config*
+          (sm-harness-web-ui::make-web-ui-config
+           :static-root (uiop:ensure-directory-pathname
+                         (merge-pathnames "sm-harness-web-ui-css-test-missing/"
+                                          (uiop:temporary-directory))))))
+    (is (string= "/app.css" (sm-harness-web-ui::%app-css-href)))))
