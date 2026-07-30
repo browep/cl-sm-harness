@@ -68,7 +68,7 @@ currently exist there first, then that session's transcript under
 transcript path (see [Agent system prompt in
 docs/sm-harness.md](sm-harness.md#agent-system-prompt)).
 
-## Export browser logs (#92)
+## Export browser logs (#92, made more robust in #97)
 
 Both the home and chat headers have an "Export logs" button
 (`#export-logs`) that opens a panel (`#logs-panel`) right below the header —
@@ -87,6 +87,25 @@ No redaction is applied — it exports exactly what the tab logged.
   navigating), so one load covers the whole tab lifetime, including later
   session switches. Each line is
   `ISO8601Z [LEVEL] [session:<id-or-none>] message`.
+- **Page load, clicks, and focus (#97)**, also in `log-capture.js`: a
+  `page load: <path><search>` entry is recorded before anything else
+  installs, so an exported log always shows when this tab's JS realm
+  started and on what screen; a capturing-phase `document` click listener
+  logs `click: <#id-or-description>` for every `button`/`a`/`role=button`
+  click, generically rather than requiring each Lisp `set-on-click` call
+  site to remember to annotate itself, so newly added controls are covered
+  automatically; and `window` `focus`/`blur` plus `document`
+  `visibilitychange` are logged too, for diagnosing turns that stalled
+  because a tab lost focus, went to sleep, or was backgrounded. Because
+  console wrapping is only installed once this script has loaded, CLOG's
+  own `/js/boot.js` reconnect/error status (it logs purely via
+  `console.log`/`console.error`) is captured for any reconnect that
+  happens afterward, but *not* the very first "connecting"/"connection
+  successful" pair, which happens slightly earlier, before
+  `on-new-window` gets a chance to load this script — that earliest-connect
+  gap is still open (a fix would mean this project owning its own
+  `boot.html` ahead of CLOG's stock one, deliberately deferred as more
+  surface than this pass wanted).
 - **Navigation and session tagging** (`src/browser-logs.lisp`,
   `%log-nav`/`%log-set-session`, called from `render-home`/`render-chat`)
   record a `nav: home` / `nav: chat <session-id>` entry on every

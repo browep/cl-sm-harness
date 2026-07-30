@@ -11,6 +11,12 @@
     (%e2e-step "click" "selector" "#export-logs")
     (%e2e-step "wait" "selector" "#logs-panel" "state" "visible")
     (%e2e-step "assert_input_pattern" "selector" "#logs-textarea" "pattern" "nav: home")
+    ;; #97: capture is robust beyond navigation entries -- a "page load"
+    ;; marker recorded before anything else, and every click on an
+    ;; interactive control, not just ones a Lisp handler happens to
+    ;; annotate.
+    (%e2e-step "assert_input_pattern" "selector" "#logs-textarea" "pattern" "page load: /")
+    (%e2e-step "assert_input_pattern" "selector" "#logs-textarea" "pattern" "click: #export-logs")
     (%e2e-step "click" "selector" "#logs-close")
     (%e2e-step "wait" "selector" "#logs-panel" "state" "hidden")
     (%e2e-step "focus" "selector" "#new-session")
@@ -23,6 +29,9 @@
     (%e2e-step "wait" "selector" "#logs-panel" "state" "visible")
     (%e2e-step "assert_input_pattern" "selector" "#logs-textarea" "pattern" "nav: chat sess-")
     (%e2e-step "assert_input_pattern" "selector" "#logs-textarea" "pattern" "\\[session:sess-")
+    ;; The "#logs-close" click on the home screen, above, is still in this
+    ;; same tab's buffer (#92: one capture install per tab, not per screen).
+    (%e2e-step "assert_input_pattern" "selector" "#logs-textarea" "pattern" "click: #logs-close")
     (%e2e-step "click" "selector" "#logs-copy")
     (%e2e-step "click" "selector" "#logs-close")
     (%e2e-step "wait" "selector" "#logs-panel" "state" "hidden"))))
