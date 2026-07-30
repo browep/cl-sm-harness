@@ -37,6 +37,17 @@ inside it is:
 The `web-ui-e2e-app` service keeps its narrower read-only source mounts and
 the baked-in source copy; only `web-ui` gets the writable repo mount.
 
+**`reload_harness` only reloads Lisp.** Because `/opt/app-static` is a
+one-time copy taken at image build (see above), editing anything under
+`sm-harness-web-ui/static/` and calling `reload_harness` changes the *source*
+but not what a running `web-ui` container actually serves — `reload_harness`
+recompiles/reloads ASDF-tracked Lisp systems only. A live container needs
+those files re-copied into `/opt/app-static` (`cp -a sm-harness-web-ui/static/.
+/opt/app-static/`) or a fresh image build/restart to pick up static asset
+changes. Symptom if missed: browser-side JS that depends on a new static
+file silently no-ops (see "Export browser logs" below, where this exact gap
+made a freshly added script 404 and its hooks evaluate to `undefined`).
+
 ## Session-id chip and the chat agent's system prompt
 
 The chat header shows the harness session id as a click-to-copy chip
@@ -60,11 +71,12 @@ docs/sm-harness.md](sm-harness.md#agent-system-prompt)).
 ## Export browser logs (#92)
 
 Both the home and chat headers have an "Export logs" button
-(`#export-logs`) that opens a panel (`#logs-panel`) with a read-only
-textarea (`#logs-textarea`) holding this browser tab's captured log, plus
-"Copy" (`#logs-copy`, same secure-context/`execCommand`-fallback clipboard
-idiom as the session-id chip) and "Close" (`#logs-close`) buttons. No
-redaction is applied — it exports exactly what the tab logged.
+(`#export-logs`) that opens a panel (`#logs-panel`) right below the header —
+above the transcript/session list, not appended after everything — with a
+read-only textarea (`#logs-textarea`) holding this browser tab's captured
+log, plus "Copy" (`#logs-copy`, same secure-context/`execCommand`-fallback
+clipboard idiom as the session-id chip) and "Close" (`#logs-close`) buttons.
+No redaction is applied — it exports exactly what the tab logged.
 
 - **Capture** (`static/log-capture.js`) wraps `console.log/info/warn/debug/error`
   (still forwarding to the original methods), and also listens for
@@ -87,6 +99,9 @@ redaction is applied — it exports exactly what the tab logged.
   too, not just in-session ones.
 - No file-download option and no cap configurability for now — copy to
   clipboard only, fixed 2000-entry cap.
+- If a freshly deployed/reloaded container's exported panel just says
+  `undefined`, see "`reload_harness` only reloads Lisp" above — the static
+  script most likely never made it to `/opt/app-static`.
 
 ## Dead browser tabs and listener delivery
 
@@ -131,6 +146,39 @@ $HOME/evidence/sm-harness-web-ui-e2e/latest/
 Override it per run with `E2E_ARTIFACTS_DIR=/absolute/path`. On this host, the
 default is browsable through the Tailnet at
 `https://frosty-hermes.tail6638cf.ts.net/e2e-evidence/latest/`.
+
+## Running browser E2E without Docker
+
+An agent working inside the `web-ui` container itself has no Docker socket
+(#61), so `scripts/run-web-ui-e2e.sh` isn't an option there. The Dockerfile
+bakes Chromium and its OS deps to `/opt/ms-playwright`
+(`PLAYWRIGHT_BROWSERS_PATH`, outside `/app` for the same bind-mount-shadow
+reason as `/opt/app-static`) and runs `npm ci` for `sm-harness-web-ui/e2e`'s
+driver package, specifically so this works without any extra setup. To run
+a scenario directly against a locally started fixture app instead of the
+isolated `web-ui-e2e`/`web-ui-e2e-app` compose pair:
+
+```bash
+env WEB_UI_E2E=1 E2E_SCENARIO=<name> \
+    SM_HARNESS_DATA=/tmp/e2e-data SM_HARNESS_HOST=127.0.0.1 SM_HARNESS_PORT=18080 \
+    SM_HARNESS_STATIC_ROOT=/app/sm-harness-web-ui/static/ \
+    sbcl --non-interactive --eval '(asdf:load-system :sm-harness-web-ui/e2e)' \
+         --eval '(sm-harness-web-ui:main)' &
+
+cd sm-harness-web-ui/e2e
+BASE_URL=http://127.0.0.1:18080 ARTIFACTS=/tmp/e2e-artifacts E2E_SCENARIO=<name> \
+  node run-e2e.mjs
+```
+
+Use a fresh `SM_HARNESS_DATA` per scenario (mirrors what the host script does
+via disposable volumes) so one scenario's sessions/fixture state can't change
+another's selectors. `SM_HARNESS_STATIC_ROOT` must point at the repo's real
+`sm-harness-web-ui/static/` here, not the default `/opt/app-static` — this
+container's ambient environment already sets `SM_HARNESS_STATIC_ROOT` for the
+*production* chat-agent process, and inheriting that would serve stale
+baked-in assets instead of the source tree being tested (see the "`reload_harness`
+only reloads Lisp" note above; the same staleness applies here for the same
+reason, just one directory over).
 
 ## Lisp-owned browser E2E contract
 

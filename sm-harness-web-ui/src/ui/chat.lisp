@@ -28,6 +28,11 @@
          (canon-el (clog:create-div header :class "canonical-id" :html-id "canonical-id"
                                     :content (or (sm-harness:session-snapshot-canonical-id snap)
                                                  "Pending…")))
+         ;; Positioned here (#92) so the panel opens directly under the
+         ;; header row that holds the button, above the transcript,
+         ;; instead of appearing after everything at the bottom of the
+         ;; page.
+         (log-panel (install-log-export-panel body header root))
          (transcript (clog:create-div root :class "transcript" :html-id "transcript"))
          (composer-wrap (clog:create-div root :class "composer"))
          (input (clog:create-text-area composer-wrap :class "prompt" :html-id "prompt"))
@@ -39,8 +44,7 @@
          (listener-id nil)
          (busy nil)
          (pending-prompt nil))
-    (declare (ignore title-el))
-    (install-log-export-panel body header root)
+    (declare (ignore title-el log-panel))
     (setf (clog:attribute id-el "title") "Copy session id"
           (clog:attribute id-el "aria-label")
           (format nil "Copy session id ~A to clipboard" session-id))

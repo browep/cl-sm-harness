@@ -7,6 +7,11 @@ ARG CLAUDE_CODE_VERSION=2.1.219
 # Pinned GitHub CLI release (installed from the upstream .deb below rather
 # than adding cli.github.com's apt repo, keeping this to one apt source).
 ARG GH_CLI_VERSION=2.96.0
+# Matches sm-harness-web-ui/e2e/package.json and the Playwright base image
+# pinned in sm-harness-web-ui/e2e/Dockerfile (mcr.microsoft.com/playwright:
+# v1.49.1-jammy), so a browser launched from this image speaks the same
+# protocol version as the one baked into the isolated E2E runner image.
+ARG PLAYWRIGHT_VERSION=1.49.1
 # Matches the host repo owner so the /app bind mount (#90) is writable by
 # the container user and edits land on the host with the right ownership.
 ARG APP_UID=1000
@@ -42,6 +47,22 @@ RUN apt-get update \
  && chown -R app:app /cache /data /opt/quicklisp /app \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
+
+# Chromium + its OS-level dependencies (fonts, X libs, etc.), and the
+# `playwright` npm package's own CLI, so an agent working inside this
+# container (no Docker access -- see docs/sm-harness-web-ui.md) can drive
+# Playwright directly instead of installing it by hand every session.
+# `--with-deps` runs the exact `apt-get install` list this pinned
+# Playwright version needs, rather than a hand-maintained guess. Baked to
+# /opt/ms-playwright -- OUTSIDE /app on purpose, same reasoning as
+# /opt/app-static below: the compose web-ui service bind-mounts the host
+# repo over /app (#90), which would shadow anything baked there.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+RUN mkdir -p "$PLAYWRIGHT_BROWSERS_PATH" \
+ && npx --yes "playwright@${PLAYWRIGHT_VERSION}" install --with-deps chromium \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/* \
+ && chown -R app:app "$PLAYWRIGHT_BROWSERS_PATH"
 
 USER app
 WORKDIR /home/app
@@ -79,6 +100,15 @@ RUN mkdir -p /usr/local/libexec \
  && mkdir -p /opt/app-static \
  && cp -a /opt/quicklisp/dists/quicklisp/software/clog-*/static-files/. /opt/app-static/ \
  && cp -a /app/sm-harness-web-ui/static/. /opt/app-static/ \
+ # The Playwright *browser* (above) lives outside /app and survives the
+ # bind mount; its npm driver package does not, since node_modules must
+ # sit alongside e2e/package.json to resolve (i.e. inside /app). Baking it
+ # here still helps any use of this image that does not bind-mount over
+ # /app (a plain `docker run`, or a future compose service). Under the
+ # live-mounted web-ui/web-ui-e2e-app services (#90), this reflects host
+ # state instead, same as every other file under /app -- run `npm ci`
+ # there once if the host checkout lacks it.
+ && (cd /app/sm-harness-web-ui/e2e && npm ci --no-audit --no-fund) \
  && chown -R app:app /app /home/app /opt/app-static
 
 USER app
