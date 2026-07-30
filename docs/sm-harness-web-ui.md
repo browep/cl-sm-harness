@@ -57,6 +57,37 @@ currently exist there first, then that session's transcript under
 transcript path (see [Agent system prompt in
 docs/sm-harness.md](sm-harness.md#agent-system-prompt)).
 
+## Export browser logs (#92)
+
+Both the home and chat headers have an "Export logs" button
+(`#export-logs`) that opens a panel (`#logs-panel`) with a read-only
+textarea (`#logs-textarea`) holding this browser tab's captured log, plus
+"Copy" (`#logs-copy`, same secure-context/`execCommand`-fallback clipboard
+idiom as the session-id chip) and "Close" (`#logs-close`) buttons. No
+redaction is applied — it exports exactly what the tab logged.
+
+- **Capture** (`static/log-capture.js`) wraps `console.log/info/warn/debug/error`
+  (still forwarding to the original methods), and also listens for
+  `window.onerror` and `unhandledrejection`, into a ring buffer capped at
+  2000 entries. It is loaded once per tab from `on-new-window`
+  (`src/application.lisp`); home↔chat transitions are in-place DOM
+  rebuilds within that same JS realm (CLOG swaps `innerHTML` rather than
+  navigating), so one load covers the whole tab lifetime, including later
+  session switches. Each line is
+  `ISO8601Z [LEVEL] [session:<id-or-none>] message`.
+- **Navigation and session tagging** (`src/browser-logs.lisp`,
+  `%log-nav`/`%log-set-session`, called from `render-home`/`render-chat`)
+  record a `nav: home` / `nav: chat <session-id>` entry on every
+  transition and tag subsequent entries with the active session id, so an
+  exported log can be matched against the per-session server-side event
+  log documented above, the same way the session-id chip is meant to be
+  used.
+- **UI** (`install-log-export-panel`, `src/ui/log-export.lisp`) is shared
+  by `render-home` and `render-chat` so pre-session errors are exportable
+  too, not just in-session ones.
+- No file-download option and no cap configurability for now — copy to
+  clipboard only, fixed 2000-entry cap.
+
 ## Dead browser tabs and listener delivery
 
 A tab whose websocket silently died (laptop sleep, network drop) leaves a
@@ -117,7 +148,8 @@ sm-harness-web-ui/e2e/
 │   ├── new-chat-composer.lisp
 │   ├── turn-identity.lisp
 │   ├── streaming-layout.lisp
-│   └── errors-recovery.lisp
+│   ├── errors-recovery.lisp
+│   └── export-logs.lisp
 ├── fixture-transport.lisp     test-only deterministic SDK transport
 ├── bridge.mjs                 generic Playwright contract interpreter
 ├── run-e2e.mjs                discovers requested scenario entry points

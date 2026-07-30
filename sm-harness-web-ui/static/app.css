@@ -58,3 +58,29 @@ body {
 .session-id:hover, .session-id:focus-visible { color: #e7ecf3; border-color: #9aa7b8; }
 .canonical-id { font-family: ui-monospace, monospace; font-size: 0.8rem; color: #9aa7b8; }
 .error { color: #ffb4b4; margin-top: 0.5rem; }
+/* Export-logs panel (#92): a copyable view of this tab's captured browser
+   log (console output, uncaught errors, navigation), opened from the
+   header on both the home and chat screens. */
+.logs-panel {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #2a3441;
+  border-radius: 10px;
+  background: #121821;
+}
+.logs-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 240px;
+  max-height: 55vh;
+  border-radius: 8px;
+  border: 1px solid #3a4656;
+  background: #0f1419;
+  color: #e7ecf3;
+  padding: 0.5rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  white-space: pre;
+  overflow: auto;
+}
+.logs-panel-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }

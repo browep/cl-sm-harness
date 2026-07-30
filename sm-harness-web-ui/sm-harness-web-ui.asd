@@ -12,6 +12,8 @@
                  (:file "presenter")
                  (:file "shutdown")
                  (:file "harness-adapter")
+                 (:file "browser-logs")
+                 (:file "ui/log-export")
                  (:file "ui/home")
                  (:file "ui/chat")
                  (:file "live-reload")
@@ -38,7 +40,8 @@
                              (:file "safe-rendering")
                              (:file "accessibility")
                              (:file "stop-deadline")
-                             (:file "custom-tool-lifecycle")))))
+                             (:file "custom-tool-lifecycle")
+                             (:file "export-logs")))))
 
 (asdf:defsystem #:sm-harness-web-ui/e2e
   :description "Test-only deterministic SDK transport for browser E2E"

@@ -20,6 +20,11 @@
 
 (defun render-home (body)
   (setf (clog:title (clog:html-document body)) "sm-harness")
+  ;; Browser log capture (#92): no session is active on this screen, and
+  ;; recording the navigation itself lets exported logs be matched against
+  ;; when the tab left a session for home.
+  (%log-set-session body nil)
+  (%log-nav body "home")
   (let* ((root (clog:create-div body :class "page" :html-id "home-root"))
          (header (clog:create-div root :class "header"))
          (_title (clog:create-section header :h1 :content "sm-harness"))
@@ -32,6 +37,7 @@
          (status (clog:create-div root :class "status" :html-id "home-status"
                                   :content "Loading…")))
     (declare (ignore _title))
+    (install-log-export-panel body header root)
     (setf (clog:attribute root "role") "main"
           (clog:attribute list-region "role") "region"
           (clog:attribute list-region "aria-label") "Sessions")

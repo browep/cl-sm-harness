@@ -6,6 +6,11 @@
 (defun render-chat (body session-id)
   (clear-body body)
   (setf (clog:title (clog:html-document body)) "Chat — sm-harness")
+  ;; Browser log capture (#92): tag this tab's captured entries with the
+  ;; session id being opened, and record the navigation itself so exported
+  ;; logs can be matched against which session was active when.
+  (%log-set-session body session-id)
+  (%log-nav body (format nil "chat ~A" session-id))
   (let* ((snap (ui-open-session session-id))
          (root (clog:create-div body :class "page chat" :html-id "chat-root"))
          (header (clog:create-div root :class "header"))
@@ -35,6 +40,7 @@
          (busy nil)
          (pending-prompt nil))
     (declare (ignore title-el))
+    (install-log-export-panel body header root)
     (setf (clog:attribute id-el "title") "Copy session id"
           (clog:attribute id-el "aria-label")
           (format nil "Copy session id ~A to clipboard" session-id))

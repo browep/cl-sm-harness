@@ -9,6 +9,11 @@
 
 (defun on-new-window (body)
   (clog:load-css (clog:html-document body) "/app.css")
+  ;; Browser log capture (#92): loaded once per tab. Home<->chat
+  ;; transitions below are in-place DOM rebuilds in this same JS realm
+  ;; (CLOG swaps innerHTML rather than navigating), so this single load
+  ;; covers the whole tab lifetime, including later session switches.
+  (clog:load-script (clog:html-document body) "/log-capture.js")
   ;; Tracked so a later successful reload_harness can refresh this tab
   ;; (#78).
   (%track-live-browser-window body)
