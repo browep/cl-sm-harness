@@ -181,6 +181,21 @@ dash-joined text as one blob; it now asserts against the specific
 `.chip-title`/`.chip-status`/`.chip-canonical`/`.chip-turns` elements
 instead, which is more precise, not just adjusted to keep passing.
 
+**Dark-on-dark title, and a click affordance (both reported right after
+shipping).** `.session-row` is a `<button>`; buttons don't inherit
+`color`/`font` from the page by default in the UA stylesheet (every other
+button-styled control here, `.btn`, already set both explicitly -- this
+one just hadn't), so `.chip-title` rendered in the browser's default dark
+button text color against the new dark `.session-row` background: dark on
+dark. Fixed by setting `color`/`font: inherit` explicitly on `.session-row`
+itself. Separately, a plain pill with no visual affordance didn't read as
+obviously clickable, so `.session-row` also gained an explicit
+`cursor: pointer`, a `:active` press state (darker background, blue
+border, a slight `scale(0.995)`) distinct from the steady-state `:hover`
+look, and a right-aligned `›` chevron (a `::after` pseudo-element, dimmed
+by default, brightening and nudging right on hover/focus) marking the
+whole row as "opens this session" before the first click.
+
 ## Export browser logs (#92, made more robust in #97)
 
 Both the home and chat headers have an "Export logs" button

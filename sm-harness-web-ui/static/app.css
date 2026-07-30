@@ -120,15 +120,52 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  padding: 0.7rem 0.85rem;
+  padding: 0.7rem 2.1rem 0.7rem 0.85rem;
   border-radius: 10px;
   border: 1px solid #2a3441;
   background: #171f2a;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  /* Buttons don't inherit COLOR/FONT from the page by default in the UA
+     stylesheet (found as a real bug report: chip-title rendered as the
+     browser's default dark button text on this dark background --
+     "dark on dark"); every other control here that's a <button> (.btn)
+     already sets these explicitly, .session-row just hadn't. */
+  color: #e7ecf3;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  position: relative;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.05s ease;
 }
 .session-row:hover, .session-row:focus-visible {
   border-color: #3a4656;
   background: #1c2430;
+}
+/* Pressed/click feedback: a brief, visible confirmation that the click
+   actually registered, distinct from the steady-state :hover look. */
+.session-row:active {
+  background: #10151d;
+  border-color: #2f6fed;
+  transform: scale(0.995);
+}
+/* A right-aligned chevron affordance marking the whole row as clickable
+   (opens this session) -- nudges further right and brightens on
+   hover/focus so the "this opens something" signal is obvious even
+   before the first click. */
+.session-row::after {
+  content: "›";
+  position: absolute;
+  right: 0.85rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1.3rem;
+  line-height: 1;
+  color: #5a6b80;
+  transition: color 0.15s ease, transform 0.15s ease;
+}
+.session-row:hover::after, .session-row:focus-visible::after {
+  color: #9aa7b8;
+  transform: translateY(-50%) translateX(2px);
 }
 .chip-top {
   display: flex;
@@ -136,7 +173,7 @@ body {
   gap: 0.6rem;
   flex-wrap: wrap;
 }
-.chip-title { font-weight: 600; }
+.chip-title { font-weight: 600; color: #e7ecf3; }
 .chip-meta {
   display: flex;
   flex-wrap: wrap;
