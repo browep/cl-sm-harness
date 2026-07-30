@@ -479,9 +479,13 @@ reverting the source, until the container is restarted."
         (error (c)
           (push (format nil "post-reload hook failed: ~A" c) warnings))))
     (let ((collected (nreverse warnings)))
+      ;; ~@[str~] consumes COLLECTED only if it is NIL (the no-warnings
+      ;; case); when non-NIL it is left in the argument list for the ~{~} that
+      ;; follows inside str, so COLLECTED is passed exactly once here -- a
+      ;; second copy would overrun this format string's directive count.
       (values
        (format nil "reloaded ~(~A~)~:[~; (forced)~]~@[~%warnings:~%~{  ~A~%~}~]"
-               *reload-harness-system* force collected collected)
+               *reload-harness-system* force collected)
        nil))))
 
 (defun make-reload-tool-definition ()
