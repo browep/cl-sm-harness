@@ -27,6 +27,14 @@
     (%e2e-step "assert_count" "selector" ".msg-user" "count" 0)
     (%e2e-step "fill" "selector" "#prompt" "value" "hello e2e")
     (%e2e-step "press" "selector" "#prompt" "key" "Enter")
+    ;; #69: the prompt must appear the moment submission is accepted, not
+    ;; once the harness round-trips its own :USER-MESSAGE event back. The
+    ;; fixture transport (delay-before-second-read-seconds) deliberately
+    ;; holds the assistant reply back for a beat, so an immediate,
+    ;; non-waiting count check here only ever passes when the echo was
+    ;; rendered synchronously with submission.
+    (%e2e-step "assert_count" "selector" ".msg-user" "count" 1)
+    (%e2e-step "assert_text" "selector" ".msg-user" "value" "hello e2e")
     (%e2e-step "wait_disabled" "selector" "#send" "value" t)
     (%e2e-step "wait_disabled" "selector" "#stop" "value" nil)
     (%e2e-step "wait_text" "selector" "#status-chip" "text" "Responding")
@@ -34,6 +42,9 @@
     (%e2e-step "wait_text" "selector" ".msg-assistant" "text" "e2e hello")
     (%e2e-step "wait_text" "selector" "#status-chip" "text" "Ready")
     (%e2e-step "wait_text" "selector" "#canonical-id" "text" "e2e-canon")
+    ;; Exactly one .msg-user survives the full round trip: the optimistic
+    ;; echo above must not be duplicated once the harness's own
+    ;; :USER-MESSAGE event for this turn arrives over the listener.
     (%e2e-step "assert_count" "selector" ".msg-user" "count" 1)
     (%e2e-step "assert_value" "selector" "#prompt" "value" "")
     (%e2e-step "assert_active_id" "value" "prompt"))))

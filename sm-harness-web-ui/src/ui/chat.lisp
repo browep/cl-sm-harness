@@ -43,7 +43,14 @@
          (err (clog:create-div root :class "error" :html-id "chat-error"))
          (listener-id nil)
          (busy nil)
-         (pending-prompt nil))
+         (pending-prompt nil)
+         ;; #69: the composer echoes a submitted prompt into the transcript
+         ;; immediately (see SUBMIT-PROMPT below) rather than waiting on the
+         ;; harness's own :USER-MESSAGE event to round-trip back over the
+         ;; listener. This flag remembers that an optimistic echo is
+         ;; outstanding so the *real* event, once it does arrive, updates
+         ;; state without rendering that same line a second time.
+         (awaiting-user-echo nil))
     (declare (ignore title-el log-panel))
     (setf (clog:attribute id-el "title") "Copy session id"
           (clog:attribute id-el "aria-label")
@@ -78,6 +85,24 @@
                (setf busy v)
                (setf (clog:disabledp send-btn) v)
                (setf (clog:disabledp stop-btn) (not v)))
+             (submit-prompt (prompt)
+               ;; Shared by the Send button and Enter-to-send (#97 logs both
+               ;; the same way; #69 renders both the same way too): echo the
+               ;; prompt into the transcript the moment submission succeeds,
+               ;; instead of leaving the composer looking unresponsive until
+               ;; the harness's own event round-trips back.
+               (%log-send body prompt)
+               (handler-case
+                   (progn
+                     (setf pending-prompt prompt)
+                     (ui-submit session-id prompt)
+                     (add-line "user" (escape-text prompt))
+                     (setf awaiting-user-echo t)
+                     (setf (clog:text-value input) "")
+                     (setf (clog:text err) "")
+                     (set-busy t))
+                 (error (c)
+                   (setf (clog:text err) (format nil "~A" c)))))
              (on-event (ev)
                (let* ((d (event-display ev))
                       (role (car d))
@@ -85,6 +110,16 @@
                  (cond
                    ((eq (sm-harness:event-type ev) :status)
                     (setf (clog:text status-el) text))
+                   ((and (eq (sm-harness:event-type ev) :user-message)
+                         (string= role "user")
+                         awaiting-user-echo)
+                    ;; #69: this is the harness's own confirmation of the
+                    ;; prompt already echoed optimistically on submit; drop
+                    ;; it rather than rendering the same text twice. A
+                    ;; harness-initiated synthetic follow-up (#76) has role
+                    ;; "harness" instead, so it never matches here and still
+                    ;; renders normally.
+                    (setf awaiting-user-echo nil))
                    ((eq (sm-harness:event-type ev) :terminal)
                     ;; A blank terminal text means the harness already showed
                     ;; this exact response via the assistant stream; only a
@@ -102,6 +137,10 @@
                     (when pending-prompt
                       (setf (clog:text-value input) pending-prompt))
                     (setf pending-prompt nil)
+                    ;; A turn that errors before its :user-message event
+                    ;; round-trips must not leave this flag set, or the next
+                    ;; turn's genuine event would be wrongly swallowed.
+                    (setf awaiting-user-echo nil)
                     (set-busy nil))
                    (t (add-line role text))))))
       ;; Composer handlers are bound BEFORE the transcript replay below.
@@ -154,21 +193,7 @@
         (lambda (obj)
           (declare (ignore obj))
           (unless busy
-            (let ((prompt (clog:text-value input)))
-              ;; #97: the generic click capture in log-capture.js only ever
-              ;; sees a bare "click: #send" -- log the prompt text itself,
-              ;; before submission, so the exported log shows what was
-              ;; actually sent, even if UI-SUBMIT itself then errors.
-              (%log-send body prompt)
-              (handler-case
-                  (progn
-                    (setf pending-prompt prompt)
-                    (ui-submit session-id prompt)
-                    (setf (clog:text-value input) "")
-                    (setf (clog:text err) "")
-                    (set-busy t))
-                (error (c)
-                  (setf (clog:text err) (format nil "~A" c))))))))
+            (submit-prompt (clog:text-value input)))))
       (clog:set-on-click stop-btn
         (lambda (obj)
           (declare (ignore obj))
@@ -180,19 +205,7 @@
           (when (and (equal (getf data :key) "Enter")
                      (not (getf data :shift-key))
                      (not busy))
-            (let ((prompt (clog:text-value input)))
-              ;; #97: same reasoning as the Send button above -- Enter-to-send
-              ;; is a second path to the same submission with no click event
-              ;; of its own at all, so it needs this explicitly too.
-              (%log-send body prompt)
-              (handler-case
-                  (progn
-                    (setf pending-prompt prompt)
-                    (ui-submit session-id prompt)
-                    (setf (clog:text-value input) "")
-                    (set-busy t))
-                (error (c)
-                  (setf (clog:text err) (format nil "~A" c))))))))
+            (submit-prompt (clog:text-value input)))))
       (dolist (entry (sm-harness:session-snapshot-transcript snap))
         (let* ((kind (sm-harness:transcript-entry-kind entry))
                (role (cond
