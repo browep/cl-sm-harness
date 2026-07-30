@@ -43,10 +43,17 @@ one-time copy taken at image build (see above), editing anything under
 but not what a running `web-ui` container actually serves — `reload_harness`
 recompiles/reloads ASDF-tracked Lisp systems only. A live container needs
 those files re-copied into `/opt/app-static` (`cp -a sm-harness-web-ui/static/.
-/opt/app-static/`) or a fresh image build/restart to pick up static asset
-changes. Symptom if missed: browser-side JS that depends on a new static
-file silently no-ops (see "Export browser logs" below, where this exact gap
-made a freshly added script 404 and its hooks evaluate to `undefined`).
+/opt/app-static/`) or a rebuilt image to pick up static asset changes —
+**a bare container restart on the *same* image does not help**: confirmed
+2026-07-30 when a restart meant to pick up #111's new chip CSS left the
+homepage rendering with none of it, because `docker/entrypoint.sh` never
+re-copies `/opt/app-static` on boot, only the Dockerfile's build-time `COPY`
+ever populates it. Symptom if missed: browser-side JS that depends on a new
+static file silently no-ops (see "Export browser logs" below, where this
+exact gap made a freshly added script 404 and its hooks evaluate to
+`undefined`), or, for CSS specifically, the page renders with stale/missing
+styling and no error anywhere (nothing 404s — the old file is still there
+and still valid CSS, just outdated).
 
 ## Session-id chip and the chat agent's system prompt
 
