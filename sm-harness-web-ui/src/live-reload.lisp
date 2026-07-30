@@ -43,7 +43,32 @@ current code, not the stale closure CLOG:INITIALIZE originally captured."
   (clog:set-on-new-window #'on-new-window :path "/" :boot-file "/boot.html")
   (clog:set-on-new-window #'on-new-window :path "/sessions" :boot-file "/boot.html"))
 
+(defun %reassert-static-root ()
+  "Re-point CLOG-CONNECTION:*STATIC-ROOT* at the configured static root
+(#105). CLOG keeps that path in a bare DEFPARAMETER
+(clog-connection.lisp), not anything START-WEB-UI-owned, so any
+RELOAD_HARNESS that happens to re-evaluate CLOG itself -- e.g. the
+whole-dependency-tree reload a stale fasl can trigger, distinguishable
+after the fact only by its warning output naming packages outside this
+repo -- silently resets it to NIL. Nothing else ever assigns it again
+(CLOG:INITIALIZE is a once-at-boot call), so from that moment every static
+asset request 500s until a container restart, even though the harness,
+sessions, and health check all keep looking fine. Re-asserting the
+already-configured value here is a harmless no-op on an ordinary reload
+that never touched CLOG; a log line only fires when this call actually
+had to repair something, so it doubles as a diagnostic for the scenario
+above."
+  (when *web-ui-config*
+    (let ((expected (namestring (web-ui-config-static-root *web-ui-config*))))
+      (unless (equal clog-connection:*static-root* expected)
+        (format t "~&sm-harness-web-ui: CLOG-CONNECTION:*STATIC-ROOT* was ~S ~
+after reload, re-asserting ~S -- see #105 (this reload likely re-evaluated ~
+CLOG itself; check its warning output for packages outside this repo)~%"
+                clog-connection:*static-root* expected))
+      (setf clog-connection:*static-root* expected))))
+
 (defun %refresh-after-reload ()
   "Installed as SM-HARNESS:*POST-RELOAD-HOOK* by START-WEB-UI (#78)."
+  (%reassert-static-root)
   (%reinstall-clog-routes)
   (%refresh-live-browser-windows))

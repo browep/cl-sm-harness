@@ -245,6 +245,37 @@ off *after* `load`, and closing too early can abort the connection
 server-side before `on-new-window` ever runs. `open_tab` waits for `load`
 plus a short settle window (`settle_ms`, default 500ms) before closing.
 
+## Self-healing CLOG's static-root after a whole-tree reload (#105)
+
+A `reload_harness` call is meant to touch only this project's own Lisp
+files, but ASDF occasionally decides the *entire* dependency tree is
+stale (seen once with stale fasls after same-day `.asd` edits) and
+reloads everything, CLOG included -- visible after the fact only as
+thousands of `CLOG` redefinition warnings in that call's output rather
+than the usual handful of lines naming files under this repo. CLOG keeps
+its static-asset directory in a plain `defparameter`
+(`clog-connection:*static-root*`, `clog-connection.lisp`), assigned only
+once, by `clog:initialize` at boot -- nothing else in CLOG ever sets it
+again. Re-evaluating that `defparameter` during a whole-tree reload resets
+it to `NIL`, and from that moment every static asset request (`/app.css`,
+`/js/jquery.min.js`, `/log-capture.js`, ...) 500s from
+`lack/middleware/static::call-app-file` -- while the harness, sessions, and
+health check all keep looking fine, since none of them touch static
+files. The 2026-07-30 incident stayed broken until a container restart,
+because nothing revalidated CLOG's own internal state after a reload,
+only this app's routing table (#78, previous section).
+
+**Fix:** `%refresh-after-reload` (`src/live-reload.lisp`) now calls
+`%reassert-static-root` first, which re-derives the expected path from
+`*web-ui-config*` (already stored by `start-web-ui`) and writes it back to
+`clog-connection:*static-root*` whenever it doesn't match -- a harmless
+no-op on the vast majority of reloads that never touch CLOG, since the
+comparison then simply confirms nothing was clobbered. When it does have
+to repair the value, it also logs a line to stdout naming the value it
+found and pointing at this issue, so a whole-tree reload leaves an
+explicit trace instead of a silent, deferred 500 the next time a browser
+tab loads.
+
 ## Fixture E2E
 
 ```bash
