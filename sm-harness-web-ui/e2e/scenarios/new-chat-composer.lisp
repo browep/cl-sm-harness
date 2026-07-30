@@ -8,6 +8,9 @@
     (%e2e-step "focus" "selector" "#new-session")
     (%e2e-step "press" "key" "Enter")
     (%e2e-step "wait" "selector" "#chat-root" "state" "visible")
+    ;; The copyable session-id chip shows the harness id, which is also the
+    ;; transcript file name under <data>/web/sessions/.
+    (%e2e-step "wait_pattern" "selector" "#session-id" "pattern" "^sess-")
     (%e2e-step "wait_text" "selector" "#canonical-id" "text" "Pending…")
     (%e2e-step "wait" "selector" "#prompt" "state" "visible")
     (%e2e-step "assert_active_id" "value" "prompt")

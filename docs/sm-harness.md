@@ -217,6 +217,16 @@ A deadline cancellation usually ends through the CLI's own terminal event
 explicit `error` event — `"turn deadline exceeded"` — so the abort is never
 a silent stop.
 
+## Agent system prompt
+
+`system-prompt` (`make-harness-config`, default `nil`) becomes the CLI
+session's system prompt (`--system-prompt`; when `nil` the flag still goes
+out with the upstream-default empty string). When set, the harness appends
+one per-session identity line naming the harness session id and the
+transcript file it maps onto
+(`<data-root><project-key>/sessions/<id>.json`), so an agent asked to debug
+"this session" can locate its own transcript without a discovery step.
+
 ## Operator diagnostics: per-session event logging
 
 Every normalized harness event that passes through `%publish` in

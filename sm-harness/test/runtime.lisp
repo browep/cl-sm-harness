@@ -990,3 +990,55 @@
            (is (find :terminal events :key #'sm-harness:event-type)))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test configured-system-prompt-reaches-session-options-with-identity-line
+  "A configured system prompt reaches the client options verbatim, plus a
+per-session line naming the session id and its transcript file on disk, so
+an agent told to debug \"this session\" needs no discovery step."
+  (let* ((root (temp-data-root))
+         (captured nil)
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :system-prompt "Read /app/docs first."
+                      :transport-factory
+                      (lambda (options)
+                        (setf captured options)
+                        (make-duplicate-response-turn-transport)))))
+         (snapshot (sm-harness:start-session h :title "system prompt"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "say hi")
+           (is (wait-until (lambda () captured)))
+           (let ((prompt (claude-agent-sdk-cl:agent-options-system-prompt captured)))
+             (is (stringp prompt))
+             (is (search "Read /app/docs first." prompt))
+             (is (search session-id prompt))
+             ;; Default project key, so the identity line must point at
+             ;; <root>default/sessions/<id>.json.
+             (is (search (format nil "default/sessions/~A.json" session-id)
+                         prompt))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test absent-system-prompt-leaves-agent-options-prompt-nil
+  "No configured system prompt means the CLI keeps its own default behavior."
+  (let* ((root (temp-data-root))
+         (captured nil)
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (setf captured options)
+                        (make-duplicate-response-turn-transport)))))
+         (snapshot (sm-harness:start-session h :title "no system prompt"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "say hi")
+           (is (wait-until (lambda () captured)))
+           (is (null (claude-agent-sdk-cl:agent-options-system-prompt captured))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

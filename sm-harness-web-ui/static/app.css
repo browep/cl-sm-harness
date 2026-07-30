@@ -44,5 +44,17 @@ body {
 .composer { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
 .prompt { flex: 1; min-height: 72px; border-radius: 8px; border: 1px solid #3a4656; background: #0f1419; color: #e7ecf3; padding: 0.5rem; }
 .status-chip { padding: 0.2rem 0.55rem; border-radius: 999px; background: #243044; font-size: 0.85rem; }
+/* Click-to-copy chip for the harness session id (the transcript file name). */
+.session-id {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+  color: #9aa7b8;
+  background: none;
+  border: 1px dashed #3a4656;
+  border-radius: 6px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+.session-id:hover, .session-id:focus-visible { color: #e7ecf3; border-color: #9aa7b8; }
 .canonical-id { font-family: ui-monospace, monospace; font-size: 0.8rem; color: #9aa7b8; }
 .error { color: #ffb4b4; margin-top: 0.5rem; }

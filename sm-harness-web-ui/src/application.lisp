@@ -67,6 +67,25 @@
          (loop until shutdown-requested do (sleep 0.1))
       (stop-web-ui))))
 
+(defun %chat-agent-system-prompt (data-root)
+  "System prompt for the chat agent this UI fronts.
+DATA-ROOT is the harness data directory as the agent's container sees it;
+the repository itself is bind-mounted at /app (compose.sm-harness-web-ui.yaml)."
+  (format nil
+          "You are the chat agent of the sm-harness web UI, running inside ~
+its app container. The project repository (claude-agent-sdk-cl, sm-harness, ~
+sm-harness-web-ui — Common Lisp) is mounted read-write at /app, and durable ~
+harness state lives under ~A.~2%~
+Project documentation lives in /app/docs/. When the user gives you a ~
+session id (they look like sess-<digits>-<digits>, and the chat header ~
+shows a copyable one) and asks you to debug or investigate it, do not ~
+guess: first list /app/docs/ and read the docs that currently exist there ~
+that bear on the question — start with sm-harness.md and ~
+sm-harness-web-ui.md — then read that session's transcript file at ~
+~:*~Aweb/sessions/<session-id>.json. Session ids map one-to-one onto those ~
+files, and ~:*~Aweb/index.json lists every session."
+          (namestring (uiop:ensure-directory-pathname data-root))))
+
 (defun main ()
   "Docker entrypoint helper."
   ;; reload_harness (issue #65) targets this system, not bare sm-harness:
@@ -78,10 +97,17 @@
          (host (or (uiop:getenv "SM_HARNESS_HOST") "0.0.0.0"))
          (fixture (equal (uiop:getenv "WEB_UI_E2E") "1"))
          (read-recovery (equal (uiop:getenv "E2E_SCENARIO") "read-recovery"))
+         ;; Resolved once: the CLOG static root and the E2E contract's home
+         ;; must be the same directory, or the fixture contract is written
+         ;; where no route serves it (#90 moved the default off /app/static).
+         (static-root (uiop:ensure-directory-pathname
+                       (or (uiop:getenv "SM_HARNESS_STATIC_ROOT")
+                           "/app/static/")))
          (hcfg (sm-harness:make-harness-config
                 :data-root data
                 :project-key "web"
                 :idle-ttl-seconds (if read-recovery 1 1800)
+                :system-prompt (%chat-agent-system-prompt data)
                 :transport-factory (when fixture (%fixture-transport-factory))))
          (harness (sm-harness:make-harness
                    :config hcfg
@@ -90,14 +116,13 @@
       (let ((writer (find-symbol "WRITE-E2E-CONTRACT" :sm-harness-web-ui)))
         (unless (and writer (fboundp writer))
           (error "WEB_UI_E2E requires the sm-harness-web-ui/e2e-contract ASDF system"))
-        (funcall (symbol-function writer))))
+        (funcall (symbol-function writer)
+                 (merge-pathnames "e2e-contract.json" static-root))))
     (start-web-ui :harness harness
                   :config (make-web-ui-config
                            :host host :port port
                            ;; Overridable because the image assembles CLOG's
                            ;; static files outside /app (#90): a bind-mounted
                            ;; repo at /app would shadow a baked /app/static.
-                           :static-root (uiop:ensure-directory-pathname
-                                         (or (uiop:getenv "SM_HARNESS_STATIC_ROOT")
-                                             "/app/static/"))))
+                           :static-root static-root))
     (%run-until-shutdown)))

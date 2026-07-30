@@ -30,7 +30,7 @@
 (defun %sdk-catalog (catalog)
   (mapcar #'%sdk-server-from-definition (tool-catalog-servers catalog)))
 
-(defun build-agent-options (catalog policy &key resume model)
+(defun build-agent-options (catalog policy &key resume model system-prompt)
   "Map catalog availability to session-start options with automatic execution."
   (claude-agent-sdk-cl:make-agent-options
    :builtin-tools (tool-policy-builtin-tools policy)
@@ -38,7 +38,8 @@
    :strict-mcp-config (tool-policy-strict-mcp-p policy)
    :permission-mode "bypassPermissions"
    :resume resume
-   :model model))
+   :model model
+   :system-prompt system-prompt))
 
 (defun make-sdk-client (options &key transport cli-path control-handlers)
   (apply #'claude-agent-sdk-cl:make-claude-sdk-client

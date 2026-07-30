@@ -167,6 +167,22 @@ chain so a later, genuine attempt gets a fresh allowance."
       (sb-thread:condition-wait (session-runtime-mailbox-cv rt)
                                 (session-runtime-mailbox-lock rt)))))
 
+(defun %session-system-prompt (cfg rt)
+  "Configured base prompt plus a per-session identity line.
+The identity line names the id shown in the UI and the transcript file it
+maps onto, so an agent asked about \"this session\" needs no discovery step."
+  (let ((base (harness-config-system-prompt cfg)))
+    (when base
+      (let ((id (session-record-id (session-runtime-record rt))))
+        (format nil "~A~2%The id of the session you are currently serving is ~A. ~
+Its transcript is persisted at ~A."
+                base id
+                (namestring
+                 (merge-pathnames
+                  (format nil "~A/sessions/~A.json"
+                          (harness-config-project-key cfg) id)
+                  (harness-config-data-root cfg))))))))
+
 (defun %ensure-client (harness rt &key resume)
   (when (session-runtime-client rt)
     (return-from %ensure-client (session-runtime-client rt)))
@@ -175,7 +191,8 @@ chain so a later, genuine attempt gets a fresh allowance."
          (policy (harness-policy harness))
          (options (build-agent-options catalog policy
                                        :resume resume
-                                       :model (harness-config-model cfg)))
+                                       :model (harness-config-model cfg)
+                                       :system-prompt (%session-system-prompt cfg rt)))
          (factory (harness-config-transport-factory cfg))
          (transport (when factory (funcall factory options)))
          (client (make-sdk-client options

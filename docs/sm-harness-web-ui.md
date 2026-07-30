@@ -37,6 +37,26 @@ inside it is:
 The `web-ui-e2e-app` service keeps its narrower read-only source mounts and
 the baked-in source copy; only `web-ui` gets the writable repo mount.
 
+## Session-id chip and the chat agent's system prompt
+
+The chat header shows the harness session id as a click-to-copy chip
+(`#session-id`, next to the status chip). One click puts the id on the
+system clipboard — via `navigator.clipboard` in secure contexts, else a
+hidden-textarea `execCommand` fallback, since this UI is usually served
+over plain http where the async clipboard API does not exist. The id is
+also the transcript file name: `/data/web/sessions/<id>.json` in the
+container (`sess-…` ids, distinct from the provider's canonical id shown
+beside it).
+
+`main` configures the harness with a chat-agent system prompt
+(`%chat-agent-system-prompt`, `src/application.lisp`): the agent is told
+the repo is mounted at `/app` and docs live in `/app/docs/`, and that when
+given a session id and asked to debug it, it must read the docs that
+currently exist there first, then that session's transcript under
+`/data/web/sessions/`. The harness appends the agent's own session id and
+transcript path (see [Agent system prompt in
+docs/sm-harness.md](sm-harness.md#agent-system-prompt)).
+
 ## Fixture E2E
 
 ```bash

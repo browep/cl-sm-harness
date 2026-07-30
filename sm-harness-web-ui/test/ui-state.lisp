@@ -51,3 +51,85 @@
       ;; test process normally.
       (sb-sys:enable-interrupt sb-unix:sigterm :default)
       (sb-sys:enable-interrupt sb-unix:sigint :default))))
+
+;;; --- markdown-to-html (#71) ---------------------------------------------
+
+(test markdown-bold
+  (is (string= "<p><strong>hi</strong></p>"
+               (sm-harness-web-ui::markdown-to-html "**hi**"))))
+
+(test markdown-bold-underscore
+  (is (string= "<p><strong>hi</strong></p>"
+               (sm-harness-web-ui::markdown-to-html "__hi__"))))
+
+(test markdown-italic
+  (is (string= "<p><em>hi</em></p>"
+               (sm-harness-web-ui::markdown-to-html "*hi*"))))
+
+(test markdown-italic-underscore
+  (is (string= "<p><em>hi</em></p>"
+               (sm-harness-web-ui::markdown-to-html "_hi_"))))
+
+(test markdown-inline-code
+  (is (string= "<p><code>hi</code></p>"
+               (sm-harness-web-ui::markdown-to-html "`hi`"))))
+
+(test markdown-inline-code-protects-content-from-emphasis
+  (is (string= "<p><code>*not em*</code></p>"
+               (sm-harness-web-ui::markdown-to-html "`*not em*`"))))
+
+(test markdown-heading-levels
+  (is (string= "<h1>Title</h1>" (sm-harness-web-ui::markdown-to-html "# Title")))
+  (is (string= "<h3>Sub</h3>" (sm-harness-web-ui::markdown-to-html "### Sub"))))
+
+(test markdown-unordered-list
+  (is (string= "<ul><li>a</li><li>b</li></ul>"
+               (sm-harness-web-ui::markdown-to-html (format nil "- a~%- b")))))
+
+(test markdown-ordered-list
+  (is (string= "<ol><li>a</li><li>b</li></ol>"
+               (sm-harness-web-ui::markdown-to-html (format nil "1. a~%2. b")))))
+
+(test markdown-fenced-code-block-is-not-interpreted
+  (is (string= "<pre><code>*x* [y](https://z)</code></pre>"
+               (sm-harness-web-ui::markdown-to-html
+                (format nil "```~%*x* [y](https://z)~%```")))))
+
+(test markdown-paragraph-lines-keep-their-newline
+  ;; A literal newline, not <br>: the transcript renders pre-wrap, and the
+  ;; newline must survive into text content (selection, text assertions).
+  (is (string= (format nil "<p>a~%b</p>")
+               (sm-harness-web-ui::markdown-to-html (format nil "a~%b")))))
+
+(test markdown-https-link-is-rendered
+  (let ((html (sm-harness-web-ui::markdown-to-html "[go](https://example.com)")))
+    (is (search "<a href=\"https://example.com\" target=\"_blank\" rel=\"noopener noreferrer\">go</a>"
+                html))))
+
+(test markdown-mailto-link-is-rendered
+  (let ((html (sm-harness-web-ui::markdown-to-html "[mail](mailto:a@b.com)")))
+    (is (search "<a href=\"mailto:a@b.com\"" html))))
+
+(test markdown-javascript-link-is-not-rendered
+  ;; A disallowed scheme must never become a clickable <a>; it degrades to
+  ;; literal, already-escaped text instead.
+  (let ((html (sm-harness-web-ui::markdown-to-html "[bad](javascript:alert(1))")))
+    (is (not (search "<a " html)))
+    (is (search "[bad](javascript:alert(1))" html))))
+
+(test markdown-raw-html-is-neutralized
+  (let ((html (sm-harness-web-ui::markdown-to-html "<script>alert(1)</script>")))
+    (is (not (search "<script>" html)))
+    (is (search "&lt;script&gt;" html))))
+
+(test markdown-safe-rendering-fixture-has-no-script-or-anchor
+  ;; The exact assistant text used by the safe-rendering E2E fixture
+  ;; (fixture-transport.lisp): a raw <script> tag, an unrecognized
+  ;; disallowed-scheme "link", and legitimate bold syntax alongside it.
+  ;; None of that may ever produce a real <script> or <a> element.
+  (let ((html (sm-harness-web-ui::markdown-to-html
+               "<script>e2e-xss</script> **not bold** [not-link](javascript:alert(1))")))
+    (is (not (search "<script>" html)))
+    (is (not (search "<a " html)))
+    (is (search "e2e-xss" html))
+    (is (search "<strong>not bold</strong>" html))))

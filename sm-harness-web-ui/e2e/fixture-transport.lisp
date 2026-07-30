@@ -62,7 +62,10 @@
   "Return the post-handler CLI events, derived from the real handler response."
   (let ((nl (string #\Newline)))
     (concatenate 'string
-                 (format nil "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e2e-tool-1\",\"content\":\"~A\",\"is_error\":false}],\"model\":\"fixture\"}}" result-text)
+                 ;; The real CLI wraps a tool result in a type="user" message
+                 ;; (#58); an assistant-wrapped tool_result is silently
+                 ;; dropped by the adapter and no tool-completed ever renders.
+                 (format nil "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e2e-tool-1\",\"content\":[{\"type\":\"text\",\"text\":\"~A\"}],\"is_error\":false}]}}" result-text)
                  nl
                  "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"custom tool lifecycle complete\"}],\"model\":\"fixture\"}}"
                  nl
@@ -95,7 +98,7 @@
     (setf (e2e-chunks tport)
           (append (e2e-chunks tport)
                   (list (concatenate 'string
-                         "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e2e-tool-fail-1\",\"content\":\"Tool failed\",\"is_error\":true}],\"model\":\"fixture\"}}\n"
+                         "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e2e-tool-fail-1\",\"content\":[{\"type\":\"text\",\"text\":\"Tool failed\"}],\"is_error\":true}]}}\n"
                          "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"e2e-canon\",\"result\":\"tool handler failure handled\"}\n")))))
   (let ((result-text (%e2e-mcp-result-text input)))
     (when result-text
