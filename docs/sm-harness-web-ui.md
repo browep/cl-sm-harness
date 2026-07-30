@@ -285,6 +285,83 @@ off *after* `load`, and closing too early can abort the connection
 server-side before `on-new-window` ever runs. `open_tab` waits for `load`
 plus a short settle window (`settle_ms`, default 500ms) before closing.
 
+## Contentless "SYSTEM" chips fixed (#102)
+
+The transcript used to show a wall of chips labeled just `SYSTEM` (or
+`RATE-LIMIT`) with no other content — see the issue for a screenshot. Root
+cause, traced end to end from the CLI's own wire messages through
+`sm-harness/src/sdk-adapter.lisp`'s `map-sdk-message` to
+`sm-harness-web-ui/src/presenter.lisp`'s `event-display`:
+
+- `event-display`'s `case` had no clause for `:system` or `:rate-limit` —
+  two normal, frequent event types, not edge cases — so both fell through
+  to the generic catch-all, which rendered only `(princ-to-string type)`
+  and discarded the entire payload.
+- The single biggest source of chips: the adapter synthesizes
+  `(:system :subtype "thinking")` once per extended-thinking block the CLI
+  omits from the wire (`sdk-adapter.lisp`), so a turn with several thinking
+  blocks produced several contentless chips on its own, on top of the
+  CLI's own `type="system"` messages (`subtype "init"` at session/turn
+  start, possibly `"compact_boundary"`).
+- Separately, `:rate-limit` was worse: `map-sdk-message` mapped
+  `rate-limit-event` to a bare `(list (list :rate-limit))`, discarding
+  `rate_limit_info` (`status`, `utilization`, `resets-at`, `rate-limit-type`,
+  `overage-status`, ...) before it ever reached the UI — no presenter fix
+  alone could have shown it.
+
+**Fix:**
+
+- `sdk-adapter.lisp` now carries the real `rate-limit-info` fields through
+  to the `:rate-limit` event payload instead of dropping them.
+- `event-display` gained dedicated clauses: `:system` renders `"System:
+  <subtype>"` (or `"Thinking (details omitted)"` for the synthetic
+  thinking subtype specifically, since there's nothing else to show once
+  the CLI has omitted the actual thinking text), `:rate-limit` renders its
+  fields (`"Rate limit: status: ..., utilization: ..., ..."`), and
+  `:unrecognized` renders the SDK class name the adapter already captured.
+- The catch-all itself no longer shows only the bare type name: it now
+  dumps the full payload as `key: value` pairs via
+  `%format-payload-fields`, so a genuinely new, still-unmapped event type
+  shows real information instead of a blank badge.
+- Per the issue's own ask ("if we have a parser and it ends up at a
+  default then we should log that"): every time the catch-all actually
+  fires, `%log-presenter-fallback` calls `warn` with the event type,
+  session id, and sequence — SBCL prints an unhandled `WARN` to
+  `*error-output*` (this container's stdout) with no extra plumbing, so
+  it's grep-able apart from ordinary traffic and distinct from the
+  existing full-payload `SM-HARNESS-EVENT` operator log (see
+  [Operator diagnostics in docs/sm-harness.md](sm-harness.md#operator-diagnostics-per-session-event-logging)),
+  which already contains the payload but isn't itself a "this needs a
+  dedicated chip" signal.
+
+`:system`/`:rate-limit` events are still not persisted to the durable
+transcript (only appended via `%append-transcript` for tool calls,
+assistant text, user messages, the followup-cap notice, and a genuinely
+distinct terminal outcome) — they remain a live-view-only stream and
+vanish on reload/reopen. Left as-is for this fix; a follow-up issue can
+revisit whether they belong in the persisted transcript.
+
+### A latent reload bug found (and fixed) while verifying this
+
+Confirming the presenter fix actually reached the running image surfaced a
+separate, previously invisible bug: `*reload-harness-system*` and
+`*post-reload-hook*` (`sm-harness/src/tool-catalog.lisp`) were both
+`DEFPARAMETER`, not `DEFVAR`. `main` (`sm-harness-web-ui/src/application.lisp`)
+sets `*reload-harness-system*` to `:sm-harness-web-ui` once at startup so
+`reload_harness` covers the whole tree — but `tool-catalog.lisp` is itself
+part of `:sm-harness`, so it gets reloaded as a dependency on *every*
+`reload_harness` call, including ones targeting `:sm-harness-web-ui`. A
+`DEFPARAMETER` unconditionally reassigns on each load, silently resetting
+the variable back to its `:sm-harness` default immediately after each
+reload finished — so only the very first `reload_harness` call of a
+process's life ever actually reloaded `sm-harness-web-ui`; every call after
+that quietly reloaded `:sm-harness` alone (still reported as a success)
+while the running web UI's own Lisp source went stale, with no error or
+warning anywhere. The same reset silently dropped the installed
+`*post-reload-hook*` (#78's CLOG re-routing + live browser tab refresh)
+after the first reload too. Both are now `DEFVAR`, which only initializes
+when unbound, so `main`'s startup `SETF` survives every later reload.
+
 ## Self-healing CLOG's static-root after a whole-tree reload (#105)
 
 A `reload_harness` call is meant to touch only this project's own Lisp

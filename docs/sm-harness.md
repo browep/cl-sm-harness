@@ -173,6 +173,22 @@ the timestamp check and recompiles everything — direct fix for a stale
 compiled-`.fasl`-cache problem encountered firsthand while building the
 `bash` tool.
 
+**`*reload-harness-system*` and `*post-reload-hook*` (both in
+`tool-catalog.lisp`) must stay `DEFVAR`, not `DEFPARAMETER` (#102).**
+`tool-catalog.lisp` is part of `:sm-harness`, so it gets recompiled as a
+dependency on *every* `reload_harness` call, including ones targeting
+`:sm-harness-web-ui`. A `DEFPARAMETER` unconditionally reassigns on each
+load — that silently reset `*reload-harness-system*` back to its
+`:sm-harness` default (and dropped the web UI's installed
+`*post-reload-hook*`, see #78 below) immediately after every reload
+finished, so only the very first `reload_harness` call of a process's life
+ever actually reloaded `sm-harness-web-ui`; every call after that quietly
+reloaded `:sm-harness` alone while still reporting success, with the
+running web UI's own Lisp source silently going stale and no error
+anywhere to notice by. `DEFVAR` only initializes an unbound variable, so
+the web UI's startup `SETF` (`main`, `sm-harness-web-ui/src/application.lisp`)
+now survives every later reload instead of just the first.
+
 **An incompatible structure/class redefinition can permanently disable
 further reloads for the rest of the process's life — empirically
 confirmed, not theoretical.** Changing a `defstruct`'s slots while live

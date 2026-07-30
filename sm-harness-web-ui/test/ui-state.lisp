@@ -33,6 +33,72 @@
          (d (sm-harness-web-ui::event-display ev)))
     (is (string= "harness" (car d)))))
 
+(test event-display-system-init-subtype-is-legible
+  ;; #102: this used to render as a bare, contentless "SYSTEM" chip -- the
+  ;; CLI's own type="system" subtype="init" message reaching here every
+  ;; session/turn start.
+  (let* ((ev (sm-harness:make-event :type :system :sequence 1
+                                    :session-id "s"
+                                    :payload (list :subtype "init")))
+         (d (sm-harness-web-ui::event-display ev)))
+    (is (string= "system" (car d)))
+    (is (search "init" (cdr d)))))
+
+(test event-display-system-thinking-subtype-is-a-friendly-label
+  ;; sm-harness/src/sdk-adapter.lisp synthesizes (:SYSTEM :SUBTYPE "thinking")
+  ;; once per omitted extended-thinking block -- often several per turn, and
+  ;; the single biggest source of the "wall of SYSTEM chips" in #102.
+  (let* ((ev (sm-harness:make-event :type :system :sequence 1
+                                    :session-id "s"
+                                    :payload (list :subtype "thinking"
+                                                   :text "[thinking omitted]")))
+         (d (sm-harness-web-ui::event-display ev)))
+    (is (string= "system" (car d)))
+    (is (search "Thinking" (cdr d)))))
+
+(test event-display-rate-limit-shows-its-fields
+  ;; #102: sm-harness/src/sdk-adapter.lisp used to drop rate_limit_info
+  ;; entirely before it reached here; this asserts the presenter actually
+  ;; surfaces the fields it now receives.
+  (let* ((ev (sm-harness:make-event :type :rate-limit :sequence 1
+                                    :session-id "s"
+                                    :payload (list :status "allowed"
+                                                   :rate-limit-type "5h"
+                                                   :utilization 42
+                                                   :resets-at "2026-08-01T00:00:00Z")))
+         (d (sm-harness-web-ui::event-display ev)))
+    (is (string= "system" (car d)))
+    (is (search "allowed" (cdr d)))
+    (is (search "42" (cdr d)))
+    (is (search "2026-08-01T00:00:00Z" (cdr d)))))
+
+(test event-display-unrecognized-shows-the-sdk-class-name
+  (let* ((ev (sm-harness:make-event :type :unrecognized :sequence 1
+                                    :session-id "s"
+                                    :payload (list :class "SOME-FUTURE-SDK-CLASS")))
+         (d (sm-harness-web-ui::event-display ev)))
+    (is (string= "system" (car d)))
+    (is (search "SOME-FUTURE-SDK-CLASS" (cdr d)))))
+
+(test event-display-unmapped-type-warns
+  ;; The catch-all is meant to be a safety net, not a normal path (#102):
+  ;; every time it fires should be discoverable in operator logs.
+  (let ((ev (sm-harness:make-event :type :something-brand-new :sequence 1
+                                   :session-id "s" :payload nil)))
+    (signals warning (sm-harness-web-ui::event-display ev))))
+
+(test event-display-unmapped-type-still-shows-type-and-payload
+  ;; Muffled here only so the test can inspect EVENT-DISPLAY's return value
+  ;; without the expected WARN aborting the form; the warning itself is
+  ;; covered separately above.
+  (let* ((ev (sm-harness:make-event :type :something-brand-new :sequence 1
+                                    :session-id "s" :payload (list :foo "bar")))
+         (d (handler-bind ((warning #'muffle-warning))
+              (sm-harness-web-ui::event-display ev))))
+    (is (string= "system" (car d)))
+    (is (search "SOMETHING-BRAND-NEW" (cdr d)))
+    (is (search "foo: bar" (cdr d)))))
+
 (test shutdown-signal-handler-survives-a-real-three-argument-signal-call
   ;; #82: SB-SYS:ENABLE-INTERRUPT invokes handlers with 3 arguments; the
   ;; previous 0-arg lambda died with "invalid number of arguments: 3" on

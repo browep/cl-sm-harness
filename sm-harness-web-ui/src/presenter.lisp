@@ -238,6 +238,38 @@
       (close-fence) (flush-para) (close-list)
       (get-output-stream-string out))))
 
+(defun %humanize-payload-key (key)
+  "Turn a payload plist key such as :RATE-LIMIT-TYPE into \"rate limit type\"
+   for human-readable chip text."
+  (substitute #\Space #\- (string-downcase (symbol-name key))))
+
+(defun %format-payload-fields (payload &key exclude)
+  "Render PAYLOAD (an event plist) as a comma-separated \"key: value\" list,
+   skipping any key in EXCLUDE and any key whose value is NIL/empty. Used
+   both by the dedicated :SYSTEM/:RATE-LIMIT/:UNRECOGNIZED chips below and by
+   the final catch-all, so a genuinely new event type still shows its real
+   payload instead of just its type name (#102)."
+  (let ((parts '()))
+    (loop for (k v) on payload by #'cddr
+          unless (or (member k exclude)
+                     (null v)
+                     (and (stringp v) (zerop (length v))))
+          do (push (format nil "~A: ~A" (%humanize-payload-key k) v) parts))
+    (format nil "~{~A~^, ~}" (nreverse parts))))
+
+(defun %log-presenter-fallback (ev)
+  "#102: EVENT-DISPLAY's catch-all is meant to be a safety net, not the
+   normal path for any event type this UI actually expects to see. Every
+   time it fires, warn (SBCL prints unhandled WARN conditions to
+   *error-output*, i.e. this container's stdout, with no extra plumbing
+   needed) so an operator grepping logs can tell 'the presenter has no
+   dedicated rendering for this event type' apart from ordinary traffic,
+   instead of that gap being silently invisible."
+  (warn "sm-harness-web-ui presenter: no dedicated rendering for event type ~A (session ~A, sequence ~A) -- falling back to a generic payload dump; see issue #102"
+        (sm-harness:event-type ev)
+        (sm-harness:event-session-id ev)
+        (sm-harness:event-sequence ev)))
+
 (defun event-display (ev)
   (let ((type (sm-harness:event-type ev))
         (payload (sm-harness:event-payload ev)))
@@ -262,8 +294,41 @@
        (cons "error" (escape-text (or (getf payload :message) "error"))))
       (:status
        (cons "status" (status-label (getf payload :status))))
+      (:system
+       ;; #102: the CLI's own system messages (subtype "init" at
+       ;; session/turn start, possibly "compact_boundary") and the
+       ;; synthetic "thinking" subtype the adapter emits per omitted
+       ;; extended-thinking block (sm-harness/src/sdk-adapter.lisp) both
+       ;; used to render as a bare, contentless "SYSTEM" chip.
+       (let ((subtype (getf payload :subtype)))
+         (cons "system"
+               (escape-text
+                (cond
+                  ((equal subtype "thinking") "Thinking (details omitted)")
+                  (subtype
+                   (let ((extra (%format-payload-fields payload :exclude '(:subtype))))
+                     (if (plusp (length extra))
+                         (format nil "System: ~A (~A)" subtype extra)
+                         (format nil "System: ~A" subtype))))
+                  (t (let ((extra (%format-payload-fields payload)))
+                       (if (plusp (length extra)) (format nil "System (~A)" extra) "System"))))))))
+      (:rate-limit
+       ;; #102: sm-harness/src/sdk-adapter.lisp used to drop the CLI's
+       ;; rate_limit_info entirely before it ever reached here, so even a
+       ;; fixed chip had nothing real to show; that payload now carries the
+       ;; actual fields.
+       (cons "system" (escape-text (format nil "Rate limit: ~A" (%format-payload-fields payload)))))
+      (:unrecognized
+       (cons "system"
+             (escape-text (format nil "Unrecognized event: ~A" (or (getf payload :class) "?")))))
       (t
-       (cons "system" (escape-text (princ-to-string type)))))))
+       (%log-presenter-fallback ev)
+       (let ((extra (%format-payload-fields payload)))
+         (cons "system"
+               (escape-text
+                (if (plusp (length extra))
+                    (format nil "~A (~A)" (princ-to-string type) extra)
+                    (princ-to-string type)))))))))
 
 ;;; ---------------------------------------------------------------------
 ;;; Session backend/model display (#106)

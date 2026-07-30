@@ -57,3 +57,37 @@ array into."
                    (list (let ((h (make-hash-table :test #'equal)))
                            (setf (gethash "type" h) "image")
                            h))))))
+
+(test map-sdk-message-rate-limit-event-carries-its-fields
+  ;; #102: this used to collapse to a bare (:RATE-LIMIT), discarding the
+  ;; CLI's actual rate_limit_info before it ever reached the UI, so even a
+  ;; presenter fix would have had nothing real to render.
+  (let* ((info (make-instance 'claude-agent-sdk-cl:rate-limit-info
+                              :status "allowed"
+                              :resets-at "2026-08-01T00:00:00Z"
+                              :rate-limit-type "5h"
+                              :utilization 42
+                              :overage-status "allowed"
+                              :overage-resets-at nil
+                              :overage-disabled-reason nil
+                              :raw (make-hash-table :test #'equal)))
+         (message (make-instance 'claude-agent-sdk-cl:rate-limit-event
+                                 :rate-limit-info info
+                                 :uuid "u1"
+                                 :session-id "canon-1"))
+         (mapped (sm-harness::map-sdk-message message)))
+    (is (= 1 (length mapped)))
+    (is (eq :rate-limit (first (first mapped))))
+    (is (string= "allowed" (getf (rest (first mapped)) :status)))
+    (is (string= "5h" (getf (rest (first mapped)) :rate-limit-type)))
+    (is (= 42 (getf (rest (first mapped)) :utilization)))
+    (is (string= "2026-08-01T00:00:00Z" (getf (rest (first mapped)) :resets-at)))))
+
+(test map-sdk-message-system-message-carries-subtype
+  (let* ((message (make-instance 'claude-agent-sdk-cl:system-message
+                                 :subtype "init"
+                                 :data (make-hash-table :test #'equal)))
+         (mapped (sm-harness::map-sdk-message message)))
+    (is (= 1 (length mapped)))
+    (is (eq :system (first (first mapped))))
+    (is (string= "init" (getf (rest (first mapped)) :subtype)))))

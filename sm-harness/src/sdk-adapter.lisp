@@ -139,7 +139,20 @@ Each item is (event-type . plist-or-string)."
      (list (list :system
                  :subtype (claude-agent-sdk-cl:system-message-subtype message))))
     ((typep message 'claude-agent-sdk-cl:rate-limit-event)
-     (list (list :rate-limit)))
+     ;; #102: previously dropped every field, leaving the UI nothing to
+     ;; render but the bare event type. rate-limit-info is always present
+     ;; (decode-rate-limit-event requires it before constructing the
+     ;; event), so these accessors never signal here even when an
+     ;; individual field's own value happens to be NIL.
+     (let ((info (claude-agent-sdk-cl:rate-limit-event-rate-limit-info message)))
+       (list (list :rate-limit
+                   :status (claude-agent-sdk-cl:rate-limit-info-status info)
+                   :rate-limit-type (claude-agent-sdk-cl:rate-limit-info-rate-limit-type info)
+                   :utilization (claude-agent-sdk-cl:rate-limit-info-utilization info)
+                   :resets-at (claude-agent-sdk-cl:rate-limit-info-resets-at info)
+                   :overage-status (claude-agent-sdk-cl:rate-limit-info-overage-status info)
+                   :overage-resets-at (claude-agent-sdk-cl:rate-limit-info-overage-resets-at info)
+                   :overage-disabled-reason (claude-agent-sdk-cl:rate-limit-info-overage-disabled-reason info)))))
     (t
      (list (list :unrecognized :class (symbol-name (class-name (class-of message))))))))
 

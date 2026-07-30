@@ -508,23 +508,40 @@ when the goal is picking up Lisp source edits in this harness itself."
    :input-schema (%bash-schema)
    :handler #'%bash-tool-handler))
 
-(defparameter *reload-harness-system* :sm-harness
+(defvar *reload-harness-system* :sm-harness
   "ASDF system RELOAD_HARNESS recompiles and reloads. Defaults to
 :sm-harness itself so this tool (and its tests) work standalone: sm-harness
 must load and run without CLOG (see docs/sm-harness.md), so it cannot
 depend on sm-harness-web-ui to know its name. The web UI application layer
 overrides this at startup to :sm-harness-web-ui, since ASDF's own
 dependency graph then transitively covers sm-harness and
-claude-agent-sdk-cl too in a single call.")
+claude-agent-sdk-cl too in a single call.
 
-(defparameter *post-reload-hook* nil
+MUST stay DEFVAR, not DEFPARAMETER (found while chasing #102): this very
+file is part of :sm-harness, so it gets reloaded as a dependency on *every*
+RELOAD_HARNESS call, including ones targeting :sm-harness-web-ui. A
+DEFPARAMETER unconditionally reassigns on each load, which silently reset
+this back to :sm-harness right after the web UI's startup override took
+effect -- so only the very first reload of a process's life ever actually
+touched sm-harness-web-ui; every one after that quietly reloaded
+:sm-harness alone (still reported as success) while the running web UI's
+own Lisp source went stale. DEFVAR only initializes when unbound, so
+main's startup SETF (application.lisp) survives every later reload.")
+
+(defvar *post-reload-hook* nil
   "Optional zero-argument function RELOAD_HARNESS calls (best-effort, never
 allowed to turn a successful reload into a failure -- see #78) once
 *RELOAD-HARNESS-SYSTEM* has finished reloading without error. Defaults to
 nil so sm-harness stays usable standalone/headless. sm-harness-web-ui
 installs one at startup to re-point CLOG's routing at the freshly reloaded
 code and push a page refresh to every currently open browser tab, so a
-successful reload is visible without a human noticing and hitting F5.")
+successful reload is visible without a human noticing and hitting F5.
+
+Also DEFVAR, not DEFPARAMETER, for the same reason as
+*RELOAD-HARNESS-SYSTEM* above: this file reloads on every RELOAD_HARNESS
+call, and a DEFPARAMETER here would silently drop the web UI's installed
+hook (CLOG re-routing + live browser refresh, #78) after the first reload
+of a process's life.")
 
 (defun %reload-schema ()
   (let ((schema (%json-object "type" "object"))
