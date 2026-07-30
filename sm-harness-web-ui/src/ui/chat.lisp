@@ -6,6 +6,11 @@
 (defun render-chat (body session-id)
   (clear-body body)
   (setf (clog:title (clog:html-document body)) "Chat — sm-harness")
+  ;; Browser log capture (#92): tag this tab's captured entries with the
+  ;; session id being opened, and record the navigation itself so exported
+  ;; logs can be matched against which session was active when.
+  (%log-set-session body session-id)
+  (%log-nav body (format nil "chat ~A" session-id))
   (let* ((snap (ui-open-session session-id))
          (root (clog:create-div body :class "page chat" :html-id "chat-root"))
          (header (clog:create-div root :class "header"))
@@ -23,6 +28,11 @@
          (canon-el (clog:create-div header :class "canonical-id" :html-id "canonical-id"
                                     :content (or (sm-harness:session-snapshot-canonical-id snap)
                                                  "Pending…")))
+         ;; Positioned here (#92) so the panel opens directly under the
+         ;; header row that holds the button, above the transcript,
+         ;; instead of appearing after everything at the bottom of the
+         ;; page.
+         (log-panel (install-log-export-panel body header root))
          (transcript (clog:create-div root :class "transcript" :html-id "transcript"))
          (composer-wrap (clog:create-div root :class "composer"))
          (input (clog:create-text-area composer-wrap :class "prompt" :html-id "prompt"))
@@ -34,7 +44,7 @@
          (listener-id nil)
          (busy nil)
          (pending-prompt nil))
-    (declare (ignore title-el))
+    (declare (ignore title-el log-panel))
     (setf (clog:attribute id-el "title") "Copy session id"
           (clog:attribute id-el "aria-label")
           (format nil "Copy session id ~A to clipboard" session-id))

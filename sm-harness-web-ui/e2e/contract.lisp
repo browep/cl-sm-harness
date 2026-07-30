@@ -27,7 +27,8 @@
         (e2e-safe-rendering-scenario)
         (e2e-accessibility-scenario)
         (e2e-stop-deadline-scenario)
-        (e2e-custom-tool-lifecycle-scenario)))
+        (e2e-custom-tool-lifecycle-scenario)
+        (e2e-export-logs-scenario)))
 
 (defparameter +e2e-supported-ops+
   '("assert_text_count" "wait" "wait_text" "assert_text" "assert_title"

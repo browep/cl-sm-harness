@@ -20,9 +20,19 @@
 
 (defun render-home (body)
   (setf (clog:title (clog:html-document body)) "sm-harness")
+  ;; Browser log capture (#92): no session is active on this screen, and
+  ;; recording the navigation itself lets exported logs be matched against
+  ;; when the tab left a session for home.
+  (%log-set-session body nil)
+  (%log-nav body "home")
   (let* ((root (clog:create-div body :class "page" :html-id "home-root"))
          (header (clog:create-div root :class "header"))
          (_title (clog:create-section header :h1 :content "sm-harness"))
+         ;; Positioned here (#92) so the panel opens directly under the
+         ;; header row that holds the button, above the session actions
+         ;; and list, instead of appearing after everything at the bottom
+         ;; of the page.
+         (log-panel (install-log-export-panel body header root))
          (actions (clog:create-div root :class "actions"))
          (new-btn (clog:create-button actions :content "New session"
                                       :class "btn primary"
@@ -31,7 +41,7 @@
                                        :html-id "session-list"))
          (status (clog:create-div root :class "status" :html-id "home-status"
                                   :content "Loading…")))
-    (declare (ignore _title))
+    (declare (ignore _title log-panel))
     (setf (clog:attribute root "role") "main"
           (clog:attribute list-region "role") "region"
           (clog:attribute list-region "aria-label") "Sessions")
