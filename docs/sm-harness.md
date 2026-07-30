@@ -59,6 +59,15 @@ outright** — the write does not happen and the existing file, if any, is
 left untouched — rather than truncated: a truncated write would silently
 corrupt the caller's intended file content, which is worse than refusing.
 
+The rename step uses `SB-POSIX:RENAME` on native namestrings rather than
+`CL:RENAME-FILE` / `UIOP:RENAME-FILE-OVERWRITING-TARGET`: for any `path`
+whose file name has no extension (`Dockerfile`, `Makefile`, `LICENSE`, ...),
+`PATHNAME-TYPE` is NIL, and `CL:RENAME-FILE` merges components left
+unspecified (NIL) in its new-name argument in from the pathname of the file
+actually being renamed — the `.tmp` file, whose type is `"tmp"` — per CLHS
+19.2.3. That silently turned the rename into a self-rename no-op: `path` was
+left untouched while the tool still reported a fabricated success (see #96).
+
 ### `bash`
 
 Runs a shell command via `/bin/sh -c`. **No sandboxing beyond the

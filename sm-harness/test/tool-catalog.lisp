@@ -127,6 +127,32 @@
              (is (string= "replaced" (%read-whole-file path)))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
+(test write-file-tool-overwrites-an-existing-extensionless-file
+  ;; Regression test for #96: PATH names with no extension (Dockerfile,
+  ;; Makefile, LICENSE, ...) have PATHNAME-TYPE NIL. CL:RENAME-FILE (what
+  ;; UIOP:RENAME-FILE-OVERWRITING-TARGET wraps) merges unspecified (NIL)
+  ;; components of its new-name argument in from the pathname of the file
+  ;; actually being renamed -- the .tmp file, whose type is "tmp" -- which
+  ;; silently turned the rename into a no-op self-rename onto the .tmp
+  ;; file's own name. The destination was left untouched while the tool
+  ;; still reported a fabricated success with the *old* file's byte count.
+  (let* ((root (temp-data-root))
+         (path (merge-pathnames "Dockerfile" root)))
+    (unwind-protect
+         (progn
+           (%write-text-file path "FROM debian:stable-slim AS original-base-image-content")
+           (destructuring-bind (text is-error)
+               (%call-write-tool :path (namestring path) :content "UNIQUE_MARKER_ABCDEF_TEST_ONLY")
+             (is (null is-error))
+             (is (search "wrote" text))
+             ;; The reported byte count must match what was actually written,
+             ;; not a stale count from the untouched original file.
+             (is (search (format nil "~:D" (length "UNIQUE_MARKER_ABCDEF_TEST_ONLY")) text))
+             (is (string= "UNIQUE_MARKER_ABCDEF_TEST_ONLY" (%read-whole-file path))))
+           ;; No orphaned temp file should survive a successful write.
+           (is (not (probe-file (make-pathname :defaults path :type "tmp")))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
 (test write-file-tool-rejects-oversized-content-and-leaves-target-untouched
   (let* ((root (temp-data-root))
          (path (merge-pathnames "capped.txt" root)))

@@ -152,14 +152,27 @@ file content, which is worse than refusing the write entirely.")
 
 (defun %write-file-atomic (path content)
   "Write CONTENT to PATH via temp-file-then-rename so a failure partway
-through never leaves a partially-written file at PATH."
+through never leaves a partially-written file at PATH.
+
+Renames via SB-POSIX:RENAME on native namestrings, deliberately bypassing
+CL:RENAME-FILE (what UIOP:RENAME-FILE-OVERWRITING-TARGET wraps around).
+For any PATH whose file name has no extension (\"Dockerfile\",
+\"Makefile\", \"LICENSE\", ...), PATHNAME-TYPE is NIL, and per CLHS
+19.2.3 RENAME-FILE merges components left unspecified (NIL) in its
+new-name argument in from the pathname of the file actually being
+renamed -- i.e. the TMP file, whose type is \"tmp\". That silently
+rewrites the destination back onto TMP's own name, so the rename becomes
+a no-op self-rename: PATH is left untouched, the .tmp file survives
+renamed onto itself, and the caller is told the write succeeded (see
+#96). SB-POSIX:RENAME is a thin syscall wrapper over raw strings with no
+such pathname-merging semantics."
   (ensure-directories-exist path)
   (let ((tmp (make-pathname :defaults path :type "tmp")))
     (with-open-file (out tmp :direction :output :if-exists :supersede
                          :if-does-not-exist :create :external-format :utf-8)
       (write-string content out)
       (finish-output out))
-    (uiop:rename-file-overwriting-target tmp path)))
+    (sb-posix:rename (uiop:native-namestring tmp) (uiop:native-namestring path))))
 
 (defun %write-file-tool-handler (arguments context)
   (declare (ignore context))
