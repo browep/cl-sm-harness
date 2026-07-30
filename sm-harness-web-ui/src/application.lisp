@@ -14,6 +14,14 @@
   ;; (CLOG swaps innerHTML rather than navigating), so this single load
   ;; covers the whole tab lifetime, including later session switches.
   (clog:load-script (clog:html-document body) "/log-capture.js")
+  ;; #100 fix A: a visible, actionable fallback if this connection's
+  ;; websocket ever reaches its terminal "Shutdown_ws already ran" state
+  ;; (e.g. a rejected stale reconnect after a container/process restart) --
+  ;; see docs/sm-harness-web-ui.md and browser-logs.lisp. This is a
+  ;; backstop: log-capture.js's own self-heal (fix B) already reloads the
+  ;; tab automatically in the common case, before a user is likely to see
+  ;; this at all.
+  (%install-connection-lost-fallback body)
   ;; Tracked so a later successful reload_harness can refresh this tab
   ;; (#78).
   (%track-live-browser-window body)
@@ -24,8 +32,11 @@
           (sm-harness:harness-not-found-error () (render-not-found body)))
         (render-home body))))
 
-(defun start-web-ui (&key harness config)
-  "Start CLOG server. HARNESS must already be constructed."
+(defun start-web-ui (&key harness config fixture-p)
+  "Start CLOG server. HARNESS must already be constructed. FIXTURE-P, when
+true, additionally registers test-only E2E routes (#100) if the
+sm-harness-web-ui/e2e system providing them is loaded -- see
+%MAYBE-INSTALL-E2E-TEST-ROUTES."
   (setf *app-harness* harness
         *web-ui-config* (or config (make-web-ui-config)))
   (let ((cfg *web-ui-config*))
@@ -37,6 +48,7 @@
                            :boot-file "/boot.html"
                            :extended-routing t))
     (clog:set-on-new-window #'on-new-window :path "/sessions" :boot-file "/boot.html")
+    (%maybe-install-e2e-test-routes fixture-p)
     ;; Once this system's own source reloads, re-point CLOG's routing at
     ;; fresh code and push open tabs a refresh (#78).
     (setf sm-harness:*post-reload-hook* #'%refresh-after-reload)
@@ -63,6 +75,18 @@
     (unless (and symbol (fboundp symbol))
       (error "WEB_UI_E2E requires the sm-harness-web-ui/e2e ASDF system"))
     (symbol-function symbol)))
+
+(defun %maybe-install-e2e-test-routes (fixture-p)
+  "Register test-only CLOG routes (#100 browser E2E coverage) when
+FIXTURE-P is true and the sm-harness-web-ui/e2e system (which defines
+them) happens to be loaded. Unlike %FIXTURE-TRANSPORT-FACTORY this does
+not error when the symbol is absent: e2e-contract-only load paths (e.g.
+WRITE-E2E-CONTRACT callers that never load sm-harness-web-ui/e2e) must
+keep working without this route existing."
+  (when fixture-p
+    (let ((symbol (find-symbol "%E2E-INSTALL-TEST-ROUTES" :sm-harness-web-ui)))
+      (when (and symbol (fboundp symbol))
+        (funcall (symbol-function symbol))))))
 
 (defun %run-until-shutdown ()
   "Block until Docker's TERM/INT request is received, then release durable state."
@@ -138,5 +162,6 @@ process's own command line."
                            ;; Overridable because the image assembles CLOG's
                            ;; static files outside /app (#90): a bind-mounted
                            ;; repo at /app would shadow a baked /app/static.
-                           :static-root static-root))
+                           :static-root static-root)
+                  :fixture-p fixture)
     (%run-until-shutdown)))

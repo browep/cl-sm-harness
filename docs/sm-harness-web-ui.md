@@ -153,6 +153,98 @@ connection id it no longer knows ("Reconnection id … not found" in the
 log). Reload the page; the session reopens from its durable record and the
 next prompt resumes the same provider conversation.
 
+## Silently dead buttons after a stale reconnect (#100)
+
+A *different* bug from the listener-delivery story above: that one is about
+the harness stalling on a dead listener callback, this one is CLOG's own
+client-side reconnect logic leaving a tab in a permanently broken zombie
+state, with the app never telling the user.
+
+**Root cause.** `static/js/boot.js` (CLOG's own file, not one this project
+overrides) keeps one global `var ws`; every click/form handler CLOG binds is
+server-generated JS closing over that same global for the page's entire
+life. If the **web-ui process itself restarts** (container restart,
+crash+respawn — *not* `reload_harness`, which already pushes a real
+`location.reload()` to every open tab post-reload, see `src/live-reload.lisp`
+and #78) while a tab is still open, that tab reconnects using its old
+`connection_id`. The fresh process's connection table doesn't know that id
+and rejects it via `websocket-driver:close-connection` with the default
+close code 1000 ("normal closure"). The browser's `ws.onclose` treats code
+1000 as a deliberate, final, application-initiated close and calls
+`Shutdown_ws()`, which sets `ws = null` **permanently** with no further
+reconnect attempt. Because this app didn't call `clog:set-html-on-close`,
+the DOM was left fully intact and interactive-looking — every button then
+throws `TypeError: Cannot read properties of null (reading 'send')` on
+click (visible only in devtools), with zero application-level feedback.
+
+**Fix (two parts, deliberately not a third):**
+
+- **A — `clog:set-html-on-close` fallback.** `on-new-window`
+  (`src/application.lisp`) calls `%install-connection-lost-fallback`
+  (`src/browser-logs.lisp`) once per connection, replacing
+  `document.body`'s HTML with a visible, actionable "Connection lost.
+  Reload to continue." message plus a real `#sm-connection-lost-reload`
+  button the moment `Shutdown_ws` runs.
+- **B — self-heal in `static/log-capture.js`.** A `setInterval` poll
+  watches the plain global `window.ws` (`boot.js` declares it with `var` at
+  top level, no module/IIFE, so it really is `window.ws`) for the
+  live-then-null transition and auto-`location.reload()`s a couple of poll
+  intervals later, so in the common case a user never even sees fix A's
+  banner. A `smSawLiveConnection` guard is load-bearing, not decorative:
+  `ws` also starts out `null` before the *first* successful connect (e.g. a
+  slow initial handshake), and without the guard the poll would misfire a
+  reload loop before the app ever got a chance to connect at all. The
+  poll/reload-delay interval is overridable via a `?smSelfHealPollMs=<ms>`
+  query parameter, purely so browser E2E coverage can isolate fix A from
+  fix B racing it (see below); production never sets this.
+- **Owning CLOG's `boot.html`/patching `Setup_ws`'s reconnect-vs-shutdown
+  distinction at the source was deliberately not done** — same call as
+  already made on #97 (see "Export browser logs" above): owning CLOG
+  internals is more surface than warranted for this.
+
+**Testing this deterministically, without an actual process restart.** CLOG
+exposes the exact client-side trigger as a Lisp-callable function, but note
+the correct call is in the `clog-connection` package, *not* `clog:shutdown`
+(that symbol is CLOG's whole-server 0-arg shutdown and errors with "called
+with one argument, but wants exactly zero" if you reach for it here — an
+easy mistake, since the per-connection one isn't re-exported under `clog:`):
+
+```lisp
+(clog-connection:shutdown (clog::connection-id body))
+;; => (execute connection-id "Shutdown_ws(event.reason='user')")
+```
+
+This puts a live tab into exactly the same terminal `ws = null`,
+`Shutdown_ws`-already-ran state that a rejected stale reconnect produces.
+`e2e/test-hooks.lisp` wraps this as a fixture-only CLOG route,
+`/e2e-drop-connection`: opening it (via the generic `open_tab` Playwright
+op added to `bridge.mjs`/`+e2e-supported-ops+`, which opens a second tab at
+a path and closes it again) shuts down every other currently tracked live
+tab — in practice, during a scenario, exactly the primary tab under test.
+Two scenarios cover this:
+
+- `connection-lost-recovery` (`e2e/scenarios/connection-lost-recovery.lisp`)
+  drops the primary tab's connection, waits for fix B's self-heal, then
+  proves recovery by clicking a button again — the only way that click can
+  succeed post-drop is a genuine reload (CLOG never revives a connection id
+  it no longer knows, see above), and separately confirms the captured
+  browser-log buffer was actually discarded by a real page load, not just
+  business as usual.
+- `connection-lost-fallback` (`e2e/scenarios/connection-lost-fallback.lisp`)
+  navigates with `?smSelfHealPollMs=600000` to effectively disable fix B
+  for the scenario's lifetime, isolating fix A's banner (`#sm-connection-lost`)
+  so it can be asserted on directly, then clicks its own
+  `#sm-connection-lost-reload` button to confirm that manual recovery path
+  too.
+
+Gotcha hit writing these: `open_tab` must not close the second tab right
+after Playwright's `domcontentloaded` fires — that tab's own CLOG
+websocket handshake (and so its `on-new-window` server-side callback,
+which is what actually triggers the drop) is still client-side JS kicked
+off *after* `load`, and closing too early can abort the connection
+server-side before `on-new-window` ever runs. `open_tab` waits for `load`
+plus a short settle window (`settle_ms`, default 500ms) before closing.
+
 ## Fixture E2E
 
 ```bash
@@ -207,6 +299,23 @@ baked-in assets instead of the source tree being tested (see the "`reload_harnes
 only reloads Lisp" note above; the same staleness applies here for the same
 reason, just one directory over).
 
+Note also (found writing #100's coverage): a handful of fixture scenarios
+(`connect-recovery`, `malformed-event-recovery`, `tool-handler-failure`,
+`read-recovery`) gate their fixture transport behind a module-level
+`defparameter` "available" flag that is only ever consumed *once* per
+server-process lifetime, by design (they model a failure that happens
+exactly once before a retry succeeds). Re-running one of those scenarios a
+second time against the *same* still-running fixture process (rather than a
+fresh one) will fail — that is expected, not a regression; restart the
+fixture process first. Separately, running the *entire* suite locally in one
+pass can hit a pre-existing, unrelated flake: `turn-identity` asserts on
+exactly one `.session-row` matching generic "New session — Ready —
+<canonical>" text, which can collide with another scenario's own
+still-generically-titled session left over earlier in the same run (this
+reproduces identically against an unmodified checkout, so it is a known gap
+in scenario isolation for local/non-disposable-volume runs, not something
+any single scenario is doing wrong).
+
 ## Lisp-owned browser E2E contract
 
 The E2E fixture app owns test intent. In fixture mode only, it serializes a
@@ -224,8 +333,11 @@ sm-harness-web-ui/e2e/
 │   ├── turn-identity.lisp
 │   ├── streaming-layout.lisp
 │   ├── errors-recovery.lisp
+│   ├── connection-lost-recovery.lisp
+│   ├── connection-lost-fallback.lisp
 │   └── export-logs.lisp
 ├── fixture-transport.lisp     test-only deterministic SDK transport
+├── test-hooks.lisp            test-only CLOG routes (#100: /e2e-drop-connection)
 ├── bridge.mjs                 generic Playwright contract interpreter
 ├── run-e2e.mjs                discovers requested scenario entry points
 └── tests/
@@ -239,10 +351,10 @@ logs, canonical IDs, persistence expectations, and all test data crossing the
 SDK boundary.
 
 **JavaScript owns only:** generic Playwright browser operations (`click`,
-`fill`, `press`, waits, DOM assertions), per-context console/page-error
-collection, screenshots, traces on failure, and native WebM finalization. It
-must not define fixture responses, expected application state, or bespoke
-scenario assertions.
+`fill`, `press`, waits, DOM assertions, opening/closing an extra tab at a
+given path), per-context console/page-error collection, screenshots, traces
+on failure, and native WebM finalization. It must not define fixture
+responses, expected application state, or bespoke scenario assertions.
 
 Each scenario starts in a fresh browser context. Any cross-scenario dependency
 (such as reopening a persisted session) must be expressed explicitly in its
@@ -278,3 +390,7 @@ second submission creates a new client and completes canonically. This is a
 real harness/transport recovery path, not a mocked DOM error. Other #28 cases
 (connect, read, malformed SDK/tool, and persistence failures) remain separate
 coverage work.
+
+`connection-lost-recovery` and `connection-lost-fallback` (#100) cover the
+client-side stale-reconnect zombie-tab recovery described above — see
+"Silently dead buttons after a stale reconnect (#100)".

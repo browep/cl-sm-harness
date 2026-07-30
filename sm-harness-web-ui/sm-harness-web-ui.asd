@@ -41,13 +41,16 @@
                              (:file "accessibility")
                              (:file "stop-deadline")
                              (:file "custom-tool-lifecycle")
+                             (:file "connection-lost-recovery")
+                             (:file "connection-lost-fallback")
                              (:file "export-logs")))))
 
 (asdf:defsystem #:sm-harness-web-ui/e2e
   :description "Test-only deterministic SDK transport for browser E2E"
   :depends-on (#:sm-harness-web-ui #:sm-harness-web-ui/e2e-contract)
   :serial t
-  :components ((:file "e2e/fixture-transport")))
+  :components ((:file "e2e/fixture-transport")
+               (:file "e2e/test-hooks")))
 
 (asdf:defsystem #:sm-harness-web-ui/presenter-tests
   :description "Presenter-only tests (no CLOG runtime required)"

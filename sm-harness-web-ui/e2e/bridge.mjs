@@ -31,6 +31,28 @@ async function executeStep(page, base, step) {
     case 'goto': return page.goto(new URL(step.path, base).toString(), { waitUntil: 'domcontentloaded', timeout });
     case 'reload': return page.reload({ waitUntil: 'domcontentloaded', timeout });
     case 'sleep': return new Promise((resolve) => setTimeout(resolve, step.milliseconds));
+    // Generic Playwright operation, not app-specific: open a second tab in
+    // this same browser context at the given path, then close it. Used
+    // (#100) where a test needs to reach a server-side effect scoped to a
+    // *new* connection -- e.g. a test-only route whose entire purpose, on
+    // the Lisp side, is triggered by that connection simply opening (see
+    // e2e/test-hooks.lisp) -- without navigating the primary page under
+    // test away from what the scenario is asserting on.
+    case 'open_tab': {
+      const tab = await page.context().newPage();
+      try {
+        await tab.goto(new URL(step.path, base).toString(), { waitUntil: 'load', timeout });
+        // A generic settle window, not app-specific: this tab's own
+        // client-side JS (e.g. a websocket handshake it kicks off on
+        // load) may still be in flight right after the 'load' event
+        // fires, and closing the tab mid-handshake can abort it entirely
+        // server-side before it has any effect (#100).
+        await tab.waitForTimeout(step.settle_ms ?? 500);
+      } finally {
+        await tab.close();
+      }
+      return;
+    }
     case 'assert_url_pattern': return assert.match(new URL(page.url()).pathname, new RegExp(step.pattern));
     case 'assert_title': return assert.equal(await page.title(), step.value);
     case 'assert_active_id': return page.waitForFunction(
