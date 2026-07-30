@@ -54,6 +54,19 @@
                  (list (concatenate 'string +init-ok+ +nl+)
                       (concatenate 'string +assistant+ +nl+ +result+ +nl+))))
 
+(defun make-n-simple-turns-transport (n)
+  "One already-connected client that can carry N sequential plain-text
+turns (no tool use), each its own assistant/result cycle queued up front --
+for tests of a session's *second and later* turns, where SUBMIT-TURN never
+needs to (re)connect and so returns to its caller with nothing more than a
+mailbox enqueue between it and the harness dispatcher thread picking the
+turn straight up (sm-harness-web-ui #69)."
+  (make-instance 'harness-fake-transport
+                 :chunks
+                 (list* (concatenate 'string +init-ok+ +nl+)
+                        (loop for i from 1 to n
+                              collect (concatenate 'string +assistant+ +nl+ +result+ +nl+)))))
+
 (defparameter +echo-assistant+
   "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"e2e hello\"}],\"model\":\"fixture\"}}")
 (defparameter +echo-result+

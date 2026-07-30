@@ -95,13 +95,38 @@
                (handler-case
                    (progn
                      (setf pending-prompt prompt)
+                     ;; #69 follow-up: this flag MUST flip before calling
+                     ;; UI-SUBMIT, not after. CLOG runs every incoming
+                     ;; browser event in its own fresh thread, and once a
+                     ;; session's SDK client is already connected (i.e. any
+                     ;; turn past the first), the harness's dispatcher
+                     ;; thread can publish this turn's :USER-MESSAGE event
+                     ;; and have the *listener's own dispatcher thread*
+                     ;; deliver it to ON-EVENT below fast enough to win a
+                     ;; race against this thread's own ADD-LINE call, which
+                     ;; needs a real round trip to the browser. Flipping the
+                     ;; flag here, strictly before the call that can
+                     ;; trigger that delivery, closes the race: program
+                     ;; order on this one thread guarantees it is already
+                     ;; true by the time any other thread could observe the
+                     ;; enqueued turn (UI-SUBMIT's enqueue and the
+                     ;; listener's own delivery queue are each mutex-guarded,
+                     ;; so the happens-before edge carries all the way
+                     ;; through). Setting it only after ADD-LINE (as a
+                     ;; first cut of this fix did) left that race open and
+                     ;; showed up as a duplicated user line in real usage.
+                     (setf awaiting-user-echo t)
                      (ui-submit session-id prompt)
                      (add-line "user" (escape-text prompt))
-                     (setf awaiting-user-echo t)
                      (setf (clog:text-value input) "")
                      (setf (clog:text err) "")
                      (set-busy t))
                  (error (c)
+                   ;; UI-SUBMIT never accepted this prompt (no turn was
+                   ;; enqueued), so no :USER-MESSAGE event is coming for it;
+                   ;; leaving the flag set would wrongly swallow the next,
+                   ;; genuinely submitted turn's echo.
+                   (setf awaiting-user-echo nil)
                    (setf (clog:text err) (format nil "~A" c)))))
              (on-event (ev)
                (let* ((d (event-display ev))

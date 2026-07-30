@@ -1140,3 +1140,117 @@ an agent told to debug \"this session\" needs no discovery step."
       (sb-thread:signal-semaphore gate 64)
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(defun %submit-turn-once-idle (harness session-id prompt &key (timeout 5))
+  "SUBMIT-TURN, retrying briefly on HARNESS-STATE-ERROR: the worker thread
+publishes :TERMINAL and only *then* clears the previous turn's active-turn-id
+a few forms later (RUNTIME.LISP's %RUN-TURN), so a caller that submits its
+next turn the instant it observes that :TERMINAL event -- exactly what
+CLIENT-SIDE-ECHO-MARKER-MUST-BE-SET-BEFORE-SUBMIT-TURN-NOT-AFTER below does,
+deliberately, to pin down turn ordering precisely -- can still race that
+narrow window. A real UI does not hit this: SUBMIT-TURN's own error there
+already surfaces as a normal, retryable \"busy\" error to the user, not a
+correctness bug."
+  (let ((deadline (+ (get-internal-real-time)
+                      (round (* timeout internal-time-units-per-second)))))
+    (loop
+      (handler-case
+          (return (sm-harness:submit-turn harness session-id prompt))
+        (sm-harness:harness-state-error (c)
+          (when (> (get-internal-real-time) deadline) (error c))
+          (sleep 0.01))))))
+
+(test client-side-echo-marker-must-be-set-before-submit-turn-not-after
+  "Regression for sm-harness-web-ui #69 (a submitted prompt rendered twice
+   on send). Once a session's client is already connected -- i.e. any turn
+   after the first -- SUBMIT-TURN returns to its caller after nothing more
+   than a mailbox enqueue: the harness dispatcher thread, and in turn the
+   listener's own separate dispatcher thread (see
+   BLOCKED-LISTENER-CALLBACK-DOES-NOT-STALL-THE-TURN above), can process
+   and deliver that turn's :USER-MESSAGE event well before the submitting
+   thread gets around to its own later work -- notably a UI's own
+   optimistic echo of the prompt it just sent, which needs a real round
+   trip to a browser.
+
+   A caller-side de-duplication marker (sm-harness-web-ui's chat.lisp
+   AWAITING-USER-ECHO) is therefore only race-free set BEFORE calling
+   SUBMIT-TURN, not after: this test proves both halves of that claim on
+   an already-connected client. The 'unsafe' turns below simulate that
+   slow post-submit round trip with a sleep before raising the marker --
+   exactly the ordering an earlier version of the #69 fix used, which
+   still showed a duplicated prompt in real usage -- and the listener
+   reliably observes the marker still unset. The 'safe' turns raise the
+   marker first and the listener never observes it unset, on any turn,
+   confirming the ordering sm-harness-web-ui/src/ui/chat.lisp relies on."
+  (let* ((root (temp-data-root))
+         (turns 5)
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-n-simple-turns-transport turns)))))
+         (snapshot (sm-harness:start-session h :title "echo-race"))
+         (session-id (sm-harness:session-snapshot-id snapshot))
+         (listener-id nil)
+         (marker nil)
+         (results '())
+         (lock (sb-thread:make-mutex :name "echo-race-results"))
+         ;; SEEN fires per :USER-MESSAGE, DONE fires per :TERMINAL -- an
+         ;; exact, low-latency completion signal for "this submitted turn
+         ;; is fully done", unlike polling SESSION-STATUS: :READY is also a
+         ;; freshly-started session's untouched initial status (see the
+         ;; comment on TEXT-ONLY-TURN-RENDERS-AND-PERSISTS-THE-RESPONSE-
+         ;; EXACTLY-ONCE above), so a status-only wait right after the
+         ;; first SUBMIT-TURN can spuriously return before that first turn
+         ;; ever really finishes.
+         (seen (sb-thread:make-semaphore :name "echo-race-seen"))
+         (done (sb-thread:make-semaphore :name "echo-race-done")))
+    (unwind-protect
+         (progn
+           ;; Attach before any turn is submitted, so DONE/SEEN cover turn 1
+           ;; too, with no window where a completion could be missed.
+           (multiple-value-bind (snap lid cursor)
+               (sm-harness:attach-session-listener
+                h session-id
+                :callback (lambda (ev)
+                            (case (sm-harness:event-type ev)
+                              (:user-message
+                               (sb-thread:with-mutex (lock) (push (not marker) results))
+                               (sb-thread:signal-semaphore seen))
+                              (:terminal (sb-thread:signal-semaphore done)))))
+             (declare (ignore snap cursor))
+             (setf listener-id lid))
+           ;; Turn 1 connects the client; every turn below runs on an
+           ;; already-connected client, the scenario that matters here. Its
+           ;; own marker/results entry is discarded below -- only turns 2+
+           ;; are on the ordering under test.
+           (setf marker t)
+           (%submit-turn-once-idle h session-id "turn 1")
+           (is (sb-thread:wait-on-semaphore seen :timeout 5))
+           (is (sb-thread:wait-on-semaphore done :timeout 5))
+           (sb-thread:with-mutex (lock) (setf results '()))
+           (dotimes (i (1- turns))
+             (setf marker nil)
+             (if (evenp i)
+                 (progn
+                   (%submit-turn-once-idle h session-id (format nil "turn ~D" (+ i 2)))
+                   (sleep 0.2)
+                   (setf marker t))
+                 (progn
+                   (setf marker t)
+                   (%submit-turn-once-idle h session-id (format nil "turn ~D" (+ i 2)))))
+             (is (sb-thread:wait-on-semaphore seen :timeout 5))
+             (is (sb-thread:wait-on-semaphore done :timeout 5)))
+           (let ((seen-results (nreverse (sb-thread:with-mutex (lock) results))))
+             (is (= (1- turns) (length seen-results)))
+             (loop for i from 0
+                   for unset in seen-results
+                   do (if (evenp i)
+                          (is (eq t unset)
+                              "unsafe order (marker raised after SUBMIT-TURN) must be observably racy")
+                          (is (not unset)
+                              "safe order (marker raised before SUBMIT-TURN) must never be observed racy")))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
