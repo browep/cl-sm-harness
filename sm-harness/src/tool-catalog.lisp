@@ -368,6 +368,88 @@ kill): the handler reports that distinctly rather than blocking forever."
                   final-timed-out
                   final-kill-failure))))))
 
+(defparameter *bash-guard-command-line*
+  (format nil "~{~A~^ ~}" sb-ext:*posix-argv*)
+  "Command line the bash tool's self-kill guard protects, in the
+space-joined form pkill -f matches against /proc/<pid>/cmdline. Defaults
+to this process's own argv. A special so tests can rebind it to a known
+value instead of depending on how the test image was invoked.")
+
+(defun %bash-guard-process-name ()
+  "Process name (comm) form of *BASH-GUARD-COMMAND-LINE*'s executable,
+which is what pkill and killall match when -f is not given. The kernel
+truncates comm to 15 characters, and the matchers compare against that."
+  (let* ((cmdline *bash-guard-command-line*)
+         (end (or (position #\Space cmdline) (length cmdline)))
+         (name (file-namestring (subseq cmdline 0 end))))
+    (if (> (length name) 15) (subseq name 0 15) name)))
+
+(defun %strip-token-quotes (token)
+  (let ((len (length token)))
+    (if (and (>= len 2)
+             (member (char token 0) '(#\' #\"))
+             (char= (char token 0) (char token (1- len))))
+        (subseq token 1 (1- len))
+        token)))
+
+(defun %pattern-matches-guarded-p (pattern subject)
+  "True when PATTERN, read as the extended regex pkill/pgrep would use,
+matches SUBJECT. An unparsable pattern counts as non-matching: pkill
+itself would error out on it rather than kill anything."
+  (handler-case (and (cl-ppcre:scan pattern subject) t)
+    (error () nil)))
+
+(defun %self-kill-command-p (command)
+  "True when some shell segment of COMMAND would signal the harness's own
+Lisp process: a kill targeting PID 1 (the harness under Docker) or this
+process's PID, or a pkill/killall whose pattern matches the harness's own
+command line or process name -- the same match those tools themselves
+would make. Kills aimed at any other process, including scratch sbcl
+servers a session starts to test its changes, are deliberately allowed:
+the guard checks what a command would hit, not what tool it uses. A
+best-effort static reading of the command string, not a sandbox (#61/#64
+keep bash unsandboxed on purpose); its job is the reflexive
+restart-the-server footgun (#101), not deliberate evasion."
+  (dolist (segment (uiop:split-string command :separator '(#\; #\& #\| #\Newline)) nil)
+    (let* ((tokens (mapcar #'%strip-token-quotes
+                           (remove "" (uiop:split-string segment
+                                                         :separator '(#\Space #\Tab))
+                                   :test #'string=)))
+           (head (and tokens (string-downcase (file-namestring (first tokens)))))
+           (args (rest tokens))
+           ;; Flag values (e.g. a -P parent pid) can land in here too; a
+           ;; stray candidate only costs a spurious regex test.
+           (candidates (remove-if (lambda (tok)
+                                    (or (zerop (length tok)) (char= (char tok 0) #\-)))
+                                  args)))
+      (cond
+        ((equal head "kill")
+         (when (or (member "1" candidates :test #'string=)
+                   (member (princ-to-string (sb-posix:getpid)) candidates
+                           :test #'string=))
+           (return t)))
+        ((equal head "pkill")
+         (let ((subject (if (or (member "-f" args :test #'string=)
+                                (member "--full" args :test #'string=))
+                            *bash-guard-command-line*
+                            (%bash-guard-process-name))))
+           (when (some (lambda (p) (%pattern-matches-guarded-p p subject)) candidates)
+             (return t))))
+        ((equal head "killall")
+         ;; Exact name comparison, as killall does -- except under -r,
+         ;; where it too matches by regex.
+         (let ((name (%bash-guard-process-name)))
+           (when (some (lambda (p)
+                         (or (string= p name)
+                             (and (member "-r" args :test #'string=)
+                                  (%pattern-matches-guarded-p p name))))
+                       candidates)
+             (return t))))))))
+
+(defun %bash-self-kill-rejection ()
+  (format nil "command rejected, not run: it would signal the harness's own sbcl process -- the server running this very session -- whose command line is: ~A~%Stopping other processes is fine, including scratch sbcl servers started to test changes: kill their specific PID, or use a pkill pattern that cannot match the command line above. To make Lisp source edits take effect in this harness, call reload_harness."
+          *bash-guard-command-line*))
+
 (defun %bash-tool-handler (arguments context)
   (declare (ignore context))
   (let* ((command (gethash "command" arguments))
@@ -378,6 +460,8 @@ kill): the handler reports that distinctly rather than blocking forever."
        (values "bash requires a non-empty command" t))
       ((not (and (integerp timeout) (plusp timeout)))
        (values "bash requires a positive integer timeout_seconds" t))
+      ((%self-kill-command-p command)
+       (values (%bash-self-kill-rejection) t))
       ((> timeout +bash-tool-max-timeout-seconds+)
        (values (format nil "timeout_seconds exceeds the ~D second limit; command rejected, not run"
                        +bash-tool-max-timeout-seconds+)
@@ -415,7 +499,12 @@ process isolation. COMMAND is required. TIMEOUT_SECONDS defaults to 120,
 capped at 600 (a larger request is rejected outright, not clamped). CWD
 defaults to the harness process's own working directory. Output over
 roughly 200KB per stream is truncated. A non-zero exit code is a normal
-result, not a tool failure -- check the reported exit code."
+result, not a tool failure -- check the reported exit code. One
+guardrail: a kill/pkill/killall whose target or pattern would hit the
+harness's own sbcl process -- the server running this session -- is
+rejected outright. Kills aimed at any other process, including scratch
+sbcl servers started to test changes, run normally; call reload_harness
+when the goal is picking up Lisp source edits in this harness itself."
    :input-schema (%bash-schema)
    :handler #'%bash-tool-handler))
 

@@ -5,7 +5,11 @@
   :version "0.1.0"
   ;; sb-posix: the bash tool's timeout kill uses killpg directly so it can
   ;; never silently no-op in an image that ships no kill binary (#79).
-  :depends-on (#:claude-agent-sdk-cl #:yason (:require #:sb-posix))
+  ;; cl-ppcre: the bash tool's self-kill guard (#101) reads pkill/killall
+  ;; patterns the way those tools would, to reject only commands that
+  ;; would hit the harness's own process -- same no-external-binary
+  ;; reasoning as #79, an in-image pgrep is not assumed either.
+  :depends-on (#:claude-agent-sdk-cl #:yason #:cl-ppcre (:require #:sb-posix))
   :serial t
   :components ((:module "src"
                 :components

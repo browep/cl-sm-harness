@@ -201,6 +201,40 @@
     (is (null is-error))
     (is (search "exit code: 7" text))))
 
+(test bash-tool-rejects-kills-that-would-hit-the-harness-own-process
+  ;; Pinned guard identity: what matters is the pattern-vs-own-cmdline
+  ;; match, not how this test image happened to be invoked. The pkill
+  ;; commands are the exact ones that killed the web UI twice in #101.
+  (let ((sm-harness::*bash-guard-command-line*
+          "sbcl --non-interactive --eval (sm-harness-web-ui:main)"))
+    (dolist (command (list "pkill -f \"sbcl.*sm-harness-web-ui\" 2>/dev/null; sleep 1"
+                           "pkill -f \"sbcl.*non-interactive\" 2>/dev/null; sleep 1; echo done"
+                           "pkill sbcl"
+                           "killall sbcl"
+                           "kill -9 1"
+                           "kill 1"))
+      (destructuring-bind (text is-error) (%call-bash-tool :command command)
+        (is (eq t is-error))
+        (is (search "rejected" text))
+        (is (search "reload_harness" text))))))
+
+(test bash-tool-self-kill-guardrail-still-allows-other-sbcl-kills
+  ;; Sessions legitimately start and stop scratch sbcl servers to test
+  ;; changes: a kill is allowed whenever its target/pattern cannot hit the
+  ;; guarded process, even when it names sbcl. Also covers specific-PID
+  ;; kills and an incidental "1" argument in a later segment.
+  (let ((sm-harness::*bash-guard-command-line*
+          "sbcl --non-interactive --eval (sm-harness-web-ui:main)"))
+    (dolist (command (list "kill -0 999999 2>/dev/null; echo ran"
+                           "kill -9 4242 && sleep 1; echo ran"
+                           ;; [.] keeps the regex from matching the /bin/sh -c
+                           ;; wrapper's own command line and killing it.
+                           "pkill -f 'sbcl.*scratch-server[.]lisp'; echo ran"
+                           "killall my-scratch-server 2>/dev/null; echo ran"))
+      (destructuring-bind (text is-error) (%call-bash-tool :command command)
+        (is (null is-error))
+        (is (search "ran" text))))))
+
 (test bash-tool-kills-a-command-that-exceeds-its-timeout
   (destructuring-bind (text is-error)
       (%call-bash-tool :command "sleep 5" :timeout-seconds 1)

@@ -88,7 +88,16 @@ guess: first list /app/docs/ and read the docs that currently exist there ~
 that bear on the question — start with sm-harness.md and ~
 sm-harness-web-ui.md — then read that session's transcript file at ~
 ~:*~Aweb/sessions/<session-id>.json. Session ids map one-to-one onto those ~
-files, and ~:*~Aweb/index.json lists every session."
+files, and ~:*~Aweb/index.json lists every session.~2%~
+You are running inside the very sbcl process that serves this web UI ~
+(PID 1). Never kill or restart that process from bash: it takes down ~
+the UI, this session, and every other open session mid-turn, and the ~
+bash tool rejects kill/pkill/killall commands that would hit it (see ~
+issue #101). To make your Lisp source edits take effect in this ~
+harness, call the reload_harness tool instead. Starting and stopping ~
+your own scratch sbcl servers to test changes is fine -- stop them by ~
+their specific PID, or with a pkill pattern that cannot match this ~
+process's own command line."
           (namestring (uiop:ensure-directory-pathname data-root))))
 
 (defun main ()
