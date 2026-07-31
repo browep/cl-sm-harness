@@ -58,6 +58,17 @@
               (declare (ignore context))
               (format nil "echo: ~A" (or (gethash "text" arguments) "")))))
 
+(defparameter +tool-result-max-chars+ (* 32 1024)
+  "Ceiling on the characters a single tool result hands back to the model.
+
+Not a memory guard -- it is a client-side constraint. The CLI persists any
+tool result above roughly 45KB to a file on disk and replaces it with a 2KB
+preview whose wrapper text carries no instruction to go read the rest, so an
+oversized result reaches the model as a short, plausible-looking answer that
+is silently missing most of its content: a session asked to read a 959-line
+doc received about 40 lines of it and reasoned from those alone (#126).
+Handlers stay under that line and say where to resume instead.")
+
 (defparameter +read-tool-max-chars+ (* 2 1024 1024)
   "Cap on characters read from a file before line-slicing. Approximate for
 multi-byte UTF-8 content (a character cap, not a strict byte cap) -- this
@@ -101,6 +112,48 @@ characters, or NIL if PATH does not decode as UTF-8 text."
           (values (subseq buf 0 n) (not (null (read-char in nil nil))))))
     (error () nil)))
 
+(defun %read-result-text (selected first-line file-truncated-p)
+  "Render SELECTED lines, numbered from FIRST-LINE, as one tool result of
+at most +TOOL-RESULT-MAX-CHARS+ characters. A result cut short by that cap
+ends with a notice naming the offset to resume from, so paging through a
+large file is an instruction the model receives rather than a convention it
+has to infer (#126)."
+  (let* ((cap +tool-result-max-chars+)
+         (emitted 0)
+         (cut-line nil)
+         (body
+           (with-output-to-string (out)
+             (let ((used 0))
+               (loop for line in selected
+                     for number from first-line
+                     do (let* ((chunk (format nil "~D~C~A~%" number #\Tab line))
+                               (len (length chunk)))
+                          (cond
+                            ;; One line longer than the entire cap (minified
+                            ;; JSON, a bundled .js, ...) is cut mid-line:
+                            ;; emitting it whole would defeat the cap.
+                            ((and (zerop emitted) (> len cap))
+                             (write-string (subseq chunk 0 (max 1 (1- cap))) out)
+                             (terpri out)
+                             (setf cut-line number emitted 1)
+                             (return))
+                            ((> (+ used len) cap) (return))
+                            (t (write-string chunk out)
+                               (incf used len)
+                               (incf emitted)))))))))
+    (with-output-to-string (out)
+      (write-string body out)
+      (let ((remaining (- (length selected) emitted)))
+        (cond
+          (cut-line
+           (format out "[truncated: line ~:D exceeds this tool's ~:D character result cap and was cut mid-line; ~:D further line~:P not shown -- read it in pieces with bash]~%"
+                   cut-line cap remaining))
+          ((plusp remaining)
+           (format out "[truncated: ~:D more line~:P not shown, this result hit the ~:D character cap -- continue with read_file offset=~D]~%"
+                   remaining cap (+ first-line emitted)))))
+      (when file-truncated-p
+        (format out "[truncated: file exceeds ~:D characters]~%" +read-tool-max-chars+)))))
+
 (defun %read-file-tool-handler (arguments context)
   (declare (ignore context))
   (let ((path (gethash "path" arguments))
@@ -124,29 +177,25 @@ characters, or NIL if PATH does not decode as UTF-8 text."
                         (selected (if (< start (length lines))
                                       (subseq lines start end)
                                       '())))
-                   (values
-                    (with-output-to-string (out)
-                      (loop for line in selected
-                            for n from (1+ start)
-                            do (format out "~D~C~A~%" n #\Tab line))
-                      (when truncated-p
-                        (format out "[truncated: file exceeds ~:D characters]~%"
-                                +read-tool-max-chars+)))
-                    nil))))
+                   (values (%read-result-text selected (1+ start) truncated-p)
+                           nil))))
          (error ()
            (values (format nil "unable to read file: ~A" path) t)))))))
 
 (defun make-read-tool-definition ()
   "No sandboxing: any path the harness process can reach is readable (see
 issue #61/#62). OFFSET/LIMIT select a 1-indexed line range; content beyond
-+READ-TOOL-MAX-CHARS+ is truncated, not silently dropped without notice."
++READ-TOOL-MAX-CHARS+ (or beyond one result's +TOOL-RESULT-MAX-CHARS+) is
+truncated, not silently dropped without notice."
   (make-tool-definition
    :name "read_file"
    :description "Read a file's contents from the container's filesystem.
 No sandboxing: any path the harness process can reach is readable, not
 just a project directory. PATH is required. OFFSET (1-indexed) and LIMIT
-select a line range. Output is line-numbered (\"<n>\\t<text>\"). Large
-files are truncated with an explicit notice; binary/non-UTF-8 files
+select a line range. Output is line-numbered (\"<n>\\t<text>\"). One
+result is capped at roughly 32,000 characters: a read cut short by that
+cap ends with a notice naming the offset to continue from, and reading a
+large file whole therefore takes several calls. Binary/non-UTF-8 files
 return a size summary instead of their content."
    :input-schema (%read-schema)
    :handler '%read-file-tool-handler))
@@ -232,11 +281,14 @@ write does not happen) rather than truncated."
 
 (defparameter +bash-tool-default-timeout-seconds+ 120)
 (defparameter +bash-tool-max-timeout-seconds+ 600)
-(defparameter +bash-tool-max-output-chars+ (* 200 1024)
+(defparameter +bash-tool-max-output-chars+ (floor +tool-result-max-chars+ 2)
   "Cap per stream (stdout, stderr independently), not one shared budget:
 stdout and stderr are drained concurrently on separate threads to avoid the
 classic pipe deadlock when a command fills both simultaneously, which makes
-a single shared byte budget impractical to enforce precisely.")
+a single shared byte budget impractical to enforce precisely. Half of
++TOOL-RESULT-MAX-CHARS+ each, so even a command that fills both streams
+still returns a result the client delivers intact instead of persisting to
+disk behind a 2KB preview (#126).")
 
 (defun %bash-schema ()
   (let ((schema (%json-object "type" "object"))
@@ -392,13 +444,27 @@ space-joined form pkill -f matches against /proc/<pid>/cmdline. Defaults
 to this process's own argv. A special so tests can rebind it to a known
 value instead of depending on how the test image was invoked.")
 
+(defun %command-basename (token)
+  "TOKEN's file-name component, or TOKEN itself when it is not a parsable
+namestring. SBCL's pathname parser reads a backslash as an escape character,
+so FILE-NAMESTRING signals NAMESTRING-PARSE-ERROR on any shell token ending
+in one. The guard splits a command on the pipe character, so a grep pattern
+using two or more escaped-pipe alternations produces exactly such a token as
+a segment's head -- the escaped pipe before the second alternative becomes a
+trailing backslash. That error escaped the handler as a bare JSON-RPC -32603
+'SDK tool handler failed', rejecting an ordinary grep with no diagnosis and
+no mention of the guard at all (#126). An unparsable token is by definition
+not kill/pkill/killall, so reading it literally is also the right answer."
+  (handler-case (file-namestring token)
+    (error () token)))
+
 (defun %bash-guard-process-name ()
   "Process name (comm) form of *BASH-GUARD-COMMAND-LINE*'s executable,
 which is what pkill and killall match when -f is not given. The kernel
 truncates comm to 15 characters, and the matchers compare against that."
   (let* ((cmdline *bash-guard-command-line*)
          (end (or (position #\Space cmdline) (length cmdline)))
-         (name (file-namestring (subseq cmdline 0 end))))
+         (name (%command-basename (subseq cmdline 0 end))))
     (if (> (length name) 15) (subseq name 0 15) name)))
 
 (defun %strip-token-quotes (token)
@@ -432,7 +498,7 @@ restart-the-server footgun (#101), not deliberate evasion."
                            (remove "" (uiop:split-string segment
                                                          :separator '(#\Space #\Tab))
                                    :test #'string=)))
-           (head (and tokens (string-downcase (file-namestring (first tokens)))))
+           (head (and tokens (string-downcase (%command-basename (first tokens)))))
            (args (rest tokens))
            ;; Flag values (e.g. a -P parent pid) can land in here too; a
            ;; stray candidate only costs a spurious regex test.
@@ -515,9 +581,10 @@ whatever filesystem/network access it has -- there is no additional
 process isolation. COMMAND is required. TIMEOUT_SECONDS defaults to 120,
 capped at 600 (a larger request is rejected outright, not clamped). CWD
 defaults to the harness process's own working directory. Output over
-roughly 200KB per stream is truncated. A non-zero exit code is a normal
-result, not a tool failure -- check the reported exit code. One
-guardrail: a kill/pkill/killall whose target or pattern would hit the
+roughly 16KB per stream is truncated (pipe through head/grep, or write to
+a file and read it back in ranges, when you need more). A non-zero exit
+code is a normal result, not a tool failure -- check the reported exit
+code. One guardrail: a kill/pkill/killall whose target or pattern would hit the
 harness's own sbcl process -- the server running this session -- is
 rejected outright. Kills aimed at any other process, including scratch
 sbcl servers started to test changes, run normally; call reload_harness

@@ -77,6 +77,61 @@
                (is (search "[truncated: file exceeds 15 characters]" text)))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
+(test read-file-tool-caps-one-result-and-names-the-offset-to-resume-from
+  ;; #126: the client persists an oversized tool result to disk and shows the
+  ;; model a 2KB preview carrying no instruction to read the rest, so a result
+  ;; that does not fit must stop early and say where to continue instead.
+  (let* ((root (temp-data-root))
+         (path (merge-pathnames "many-lines.txt" root)))
+    (unwind-protect
+         (progn
+           (%write-text-file path (format nil "~{line ~D~%~}"
+                                          (loop for i from 1 to 20 collect i)))
+           (let ((sm-harness::+tool-result-max-chars+ 40))
+             (destructuring-bind (text is-error) (%call-read-tool :path (namestring path))
+               (is (null is-error))
+               (is (search (format nil "1~Cline 1" #\Tab) text))
+               (is (search "[truncated:" text))
+               (is (search "more lines not shown" text))
+               ;; The notice names the next unread line, so paging on is an
+               ;; instruction the model receives, not a convention to infer.
+               (let* ((marker "offset=")
+                      (pos (search marker text))
+                      (resume (and pos (parse-integer text :start (+ pos (length marker))
+                                                          :junk-allowed t))))
+                 (is (integerp resume))
+                 (destructuring-bind (rest-text rest-error)
+                     (%call-read-tool :path (namestring path) :offset resume :limit 1)
+                   (is (null rest-error))
+                   (is (search (format nil "~D~Cline ~D" resume #\Tab resume) rest-text)))))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test read-file-tool-cuts-a-single-line-longer-than-the-result-cap
+  ;; A minified one-line file must respect the cap too: emitting the line
+  ;; whole "because it is one line" would reintroduce the oversized result.
+  (let* ((root (temp-data-root))
+         (path (merge-pathnames "minified.json" root)))
+    (unwind-protect
+         (progn
+           (%write-text-file path (format nil "~A~%" (make-string 5000 :initial-element #\x)))
+           (let ((sm-harness::+tool-result-max-chars+ 100))
+             (destructuring-bind (text is-error) (%call-read-tool :path (namestring path))
+               (is (null is-error))
+               (is (< (length text) 400))
+               (is (search "cut mid-line" text)))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test read-file-tool-emits-no-truncation-notice-when-everything-fits
+  (let* ((root (temp-data-root))
+         (path (merge-pathnames "small.txt" root)))
+    (unwind-protect
+         (progn
+           (%write-text-file path (format nil "a~%b~%"))
+           (destructuring-bind (text is-error) (%call-read-tool :path (namestring path))
+             (is (null is-error))
+             (is (null (search "[truncated" text)))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
 (test read-file-tool-handles-a-binary-file-safely
   (let* ((root (temp-data-root))
          (path (merge-pathnames "binary.dat" root)))
@@ -235,6 +290,32 @@
         (is (null is-error))
         (is (search "ran" text))))))
 
+(test bash-tool-guard-does-not-crash-on-backslash-tokens
+  ;; #126: the guard splits a command on the pipe character, so a grep pattern
+  ;; with two or more escaped-pipe alternations leaves a segment whose head
+  ;; token ends in a backslash. FILE-NAMESTRING signalled on that token and the
+  ;; error left the handler as an opaque JSON-RPC -32603 "SDK tool handler
+  ;; failed" -- eleven such rejections in one real session, including its own
+  ;; attempts to grep the project docs.
+  (let ((sm-harness::*bash-guard-command-line*
+          "sbcl --non-interactive --eval (sm-harness-web-ui:main)"))
+    (dolist (command (list "printf '%s' 'x\\|y\\|z'"
+                           "printf '%s' 'a\\|b\\|c\\|d'"
+                           "printf 'ran' | grep -c 'ran\\|other\\|third'"))
+      (destructuring-bind (text is-error) (%call-bash-tool :command command)
+        (is (null is-error))
+        (is (search "exit code: 0" text))))))
+
+(test bash-tool-guard-still-rejects-self-kills-written-with-a-backslash
+  ;; Reading an unparsable token literally must not open a hole in the guard:
+  ;; the pkill segment of the same command is still parsed and still matched.
+  (let ((sm-harness::*bash-guard-command-line*
+          "sbcl --non-interactive --eval (sm-harness-web-ui:main)"))
+    (destructuring-bind (text is-error)
+        (%call-bash-tool :command "echo 'a\\|b\\|c'; pkill -f 'sbcl.*sm-harness-web-ui'")
+      (is (eq t is-error))
+      (is (search "rejected" text)))))
+
 (test bash-tool-kills-a-command-that-exceeds-its-timeout
   (destructuring-bind (text is-error)
       (%call-bash-tool :command "sleep 5" :timeout-seconds 1)
@@ -297,6 +378,12 @@
     (is (search "could not be killed" unkilled))
     (is (search "EPERM" unkilled))
     (is (search "may still be running" unkilled))))
+
+(test bash-tool-output-cap-keeps-both-streams-inside-one-result
+  ;; #126: the two streams are capped independently, so the pair still has to
+  ;; fit the client's tool-result ceiling when a command fills both.
+  (is (<= (* 2 sm-harness::+bash-tool-max-output-chars+)
+          sm-harness::+tool-result-max-chars+)))
 
 (test bash-tool-truncates-output-over-the-character-cap
   (let ((sm-harness::+bash-tool-max-output-chars+ 5))

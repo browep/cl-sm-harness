@@ -91,6 +91,21 @@ currently exist there first, then that session's transcript under
 transcript path (see [Agent system prompt in
 docs/sm-harness.md](sm-harness.md#agent-system-prompt)).
 
+Since #126 that prompt also says **how** to read those docs: list headings
+first (`grep -n '^## '`), then read the relevant sections with
+`read_file`'s `offset`/`limit`, rather than pulling a thousand-line file
+into context; treat a `[truncated: ...]` notice as an instruction to page
+on from the offset it names; and never state a capability limit ("I can't
+run X here") without first checking whether a doc section covers exactly
+that. All three come from one incident: a session read this file whole, the
+client silently replaced the result with a 2KB preview, and the agent then
+reported twice that it could not run the browser E2E suite — while the
+section "Running browser E2E without Docker" below, written for precisely
+that situation, sat unread at line 832. The harness-side half of that fix
+(bounded, self-describing tool results) is in [Every tool result must fit
+the client's inline budget in
+docs/sm-harness.md](sm-harness.md#every-tool-result-must-fit-the-clients-inline-budget-126).
+
 ## Backend/model selection and the session info panel (#106)
 
 The new-session flow (`render-home`, `src/ui/home.lisp`) has two `<select>`

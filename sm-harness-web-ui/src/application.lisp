@@ -157,6 +157,16 @@ that bear on the question — start with sm-harness.md and ~
 sm-harness-web-ui.md — then read that session's transcript file at ~
 ~:*~Aweb/sessions/<session-id>.json. Session ids map one-to-one onto those ~
 files, and ~:*~Aweb/index.json lists every session.~2%~
+Those docs are long (sm-harness-web-ui.md is around a thousand lines), so ~
+orient by section before reading: list the headings first (grep -n '^## ') ~
+and then read the sections that bear on the question with read_file's ~
+offset/limit, rather than pulling a whole file into context. A tool result ~
+that ends in a [truncated: ...] notice is a partial answer telling you how ~
+to continue — page on from the offset it names before concluding anything ~
+from it, and never state a capability limit ('I can't run X here') without ~
+first checking whether a doc section covers exactly that; several do, ~
+including running the browser E2E suite in this container without ~
+Docker.~2%~
 You are running inside the very sbcl process that serves this web UI ~
 (PID 1). Never kill or restart that process from bash: it takes down ~
 the UI, this session, and every other open session mid-turn, and the ~

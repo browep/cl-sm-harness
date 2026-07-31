@@ -104,6 +104,36 @@ still maps to a generic, safe JSON-RPC error instead, per the existing
 contract — reserve that path for genuine handler bugs/crashes, not expected
 domain failures like a missing file.
 
+### Every tool result must fit the client's inline budget (#126)
+
+`+tool-result-max-chars+` (32KB) caps what one tool result hands back to
+the model, and it is **not** a memory guard — it is a client-side
+constraint discovered the hard way. The CLI persists any tool result above
+roughly 45KB to a file under
+`~/.claude/projects/<project>/<uuid>/tool-results/` and replaces it with a
+`<persisted-output>` wrapper containing a **2KB preview**. That short
+wrapper variant contains no instruction to go read the saved file, so from
+the model's side an oversized result is indistinguishable from a small,
+complete one: it just quietly loses ~95% of its content.
+
+The failure this caused is the reason the cap exists. A session asked to
+debug an issue read `docs/sm-harness-web-ui.md` (959 lines) as its second
+action, received ~40 lines of it, and — never having seen the section
+titled "Running browser E2E without Docker" — twice told the user it could
+not run the Playwright suite in this container. It could: Chromium is baked
+into the image at `/opt/ms-playwright` precisely so it can. Every cap
+below is derived from this one:
+
+| tool | cap | on overflow |
+| --- | --- | --- |
+| `read_file` | `+tool-result-max-chars+` per result | stops at a line boundary, names the offset to resume from |
+| `bash` | `+bash-tool-max-output-chars+` = half of it, per stream | `[stdout truncated]` / `[stderr truncated]` marker |
+
+The bash cap is halved because stdout and stderr are capped independently
+(see below), so a command that fills both must still produce one result
+that fits. A handler that grows a new large output path should take its
+budget from `+tool-result-max-chars+` rather than inventing another number.
+
 ### `read_file`
 
 Reads a file's contents. **No sandboxing** (see #61): `path` can be any
@@ -113,6 +143,22 @@ line-numbered (`"<n>\t<text>"`). Content beyond `+read-tool-max-chars+`
 (2MB, a character count, not a strict byte count) is truncated with an
 explicit notice rather than silently dropped. A missing file or non-UTF-8
 binary content is reported as a safe result, not a crash.
+
+One *result* is separately bounded by `+tool-result-max-chars+`
+(`%read-result-text`). A read cut short by that ceiling stops on a line
+boundary and ends with
+
+```text
+[truncated: 453 more lines not shown, this result hit the 32,768 character cap -- continue with read_file offset=507]
+```
+
+so paging is an instruction the model receives rather than a convention it
+has to infer — the whole point of #126, where the missing content was
+never announced at all. A single line longer than the entire cap (minified
+JSON, a bundled `.js`) is cut mid-line and says so, instead of being
+emitted whole and re-creating the oversized result. When everything
+requested fits, no notice is emitted, so ordinary small reads are
+byte-identical to what they were before.
 
 ### `write_file`
 
@@ -166,11 +212,40 @@ the process-status wait both give up after `timeout_seconds` + 10s,
 abandoning the readers) so a kill failure degrades to a leaked thread and
 an honest error — never a permanently wedged session worker.
 
-Output is capped at roughly 200KB per stream (stdout and stderr are capped
-independently, read concurrently on separate threads to avoid the classic
-pipe deadlock when a command fills both simultaneously — so this is not a
-single precise combined budget). `cwd` defaults to the harness process's
+Output is capped at `+bash-tool-max-output-chars+` — half of
+`+tool-result-max-chars+`, so roughly 16KB — per stream (stdout and stderr
+are capped independently, read concurrently on separate threads to avoid
+the classic pipe deadlock when a command fills both simultaneously, so this
+is not a single precise combined budget; halving it is what keeps the
+*pair* inside one deliverable result, per #126 above). Commands that
+genuinely produce more should filter (`head`, `grep`, `wc`) or write to a
+file and read it back in ranges. `cwd` defaults to the harness process's
 own working directory.
+
+#### The self-kill guard, and why it must never signal (#101, #126)
+
+`%self-kill-command-p` rejects, without running it, any command whose
+`kill`/`pkill`/`killall` would hit the harness's own process — the
+reflexive restart-the-server footgun that took the web UI down twice. It is
+a best-effort *static* reading of the command string (splitting on `;`,
+`&`, `|`, newline, then reading each segment's head token), not a sandbox:
+#61/#64 keep bash unsandboxed on purpose. Kills aimed at anything else,
+including the scratch sbcl servers sessions legitimately start, are allowed
+— the guard checks what a command *would hit*, not which binary it names.
+
+Because the guard runs before every command, **any Lisp error it signals
+becomes a rejection of an unrelated command**. It reached the model as a
+bare JSON-RPC `-32603 "SDK tool handler failed"`, naming neither the guard
+nor the reason. That is exactly what happened in #126: the guard splits on
+`|`, so a grep pattern using two or more escaped-pipe alternations leaves a
+segment whose head token ends in a backslash, and SBCL's pathname parser
+reads a backslash as an escape character, so `FILE-NAMESTRING` signalled
+`NAMESTRING-PARSE-ERROR` on it. Every such grep — eleven calls in the
+session that surfaced this — was refused with no usable diagnosis.
+`%command-basename` now falls back to the raw token, which is also the
+correct guard answer (a token that is not a parsable namestring is not
+`kill`, `pkill`, or `killall`), and a regression test covers both halves:
+the greps run, and a self-`pkill` written alongside one is still rejected.
 
 ### `reload_harness`
 
