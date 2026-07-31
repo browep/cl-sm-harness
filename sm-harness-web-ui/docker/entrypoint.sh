@@ -11,7 +11,13 @@ for d in /data /cache; do
 done
 # entrypoint runs as app user already in image
 mode="${1:-web}"
-export CL_SOURCE_REGISTRY="/app//:/usr/share/common-lisp/source//"
+# The baked quicklisp software tree sits BEFORE the Debian tree: apt's
+# cl-drakma (#112) drags in Debian's cl-bordeaux-threads 0.8.8 (no BT2
+# package), and if it shadowed the dist's bordeaux-threads, recompiling the
+# dist's ironclad-v0.61 (clog's dep closure) would fail at boot with
+# "Package BT2 does not exist". Debian's tree stays last so systems not in
+# the dist still resolve offline.
+export CL_SOURCE_REGISTRY="/app//:/opt/quicklisp/dists/quicklisp/software//:/usr/share/common-lisp/source//"
 case "$mode" in
   web)
     system=':sm-harness-web-ui'

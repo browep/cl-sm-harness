@@ -69,8 +69,14 @@ RUN mkdir -p "$PLAYWRIGHT_BROWSERS_PATH" \
 USER app
 WORKDIR /home/app
 ENV HOME=/home/app
+# CL_SOURCE_REGISTRY here hides /usr/share/common-lisp/source from ASDF for
+# this build step only: the apt layer's cl-drakma (#112) drags in Debian's
+# cl-bordeaux-threads 0.8.8 (no BT2 package), which would otherwise shadow
+# the quicklisp dist's bordeaux-threads and break ironclad-v0.61's compile.
+# With the registry scoped to quicklisp's own tree, ql:quickload fetches the
+# dist-consistent bordeaux-threads instead.
 RUN curl -fsSL https://beta.quicklisp.org/quicklisp.lisp -o /tmp/quicklisp.lisp \
- && sbcl --non-interactive \
+ && CL_SOURCE_REGISTRY=/opt/quicklisp/local-projects// sbcl --non-interactive \
       --load /tmp/quicklisp.lisp \
       --eval '(quicklisp-quickstart:install :path "/opt/quicklisp/")' \
       --eval '(load "/opt/quicklisp/setup.lisp")' \
