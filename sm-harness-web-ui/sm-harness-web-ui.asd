@@ -33,6 +33,7 @@
                              (:file "turn-identity")
                              (:file "direct-session-routes")
                              (:file "direct-session-resume")
+                             (:file "back-navigation")
                              (:file "streaming-layout")
                              (:file "errors-recovery")
                              (:file "connect-recovery")

@@ -1,8 +1,12 @@
 (in-package #:sm-harness-web-ui)
 
 (defun set-session-route (body session-id)
+  ;; #125 (Back button closing the tab): pushState, not replaceState, and
+  ;; only when the target path actually differs from where we already are
+  ;; -- see the comment on SET-HOME-ROUTE below for the reasoning (this is
+  ;; its mirror image for the chat-view route).
   (clog:js-execute body
-                   (format nil "window.history.replaceState(null, '', '/sessions/~A');" session-id)))
+                   (format nil "(function () { var p = '/sessions/~A'; if (window.location.pathname !== p) { window.history.pushState(null, '', p); } })();" session-id)))
 
 ;; #124: the address bar must follow whichever view is actually on screen,
 ;; not just the one call site (originally just "New session", #43) that
@@ -11,8 +15,28 @@
 ;; this screen's own "Back to home" button, and any future one -- gets it
 ;; for free instead of leaving a stale /sessions/<id> in the bar while home
 ;; is what's actually rendered (the bug in #124's screenshot).
+;;
+;; #125: SET-SESSION-ROUTE/SET-HOME-ROUTE both moved from replaceState to
+;; pushState here, guarded by a same-path check so a render that already
+;; matches the current URL (the common case: the initial render of a fresh
+;; connection) never pushes a redundant duplicate entry -- only a genuine
+;; view change (new session, a session-list click, "Back to home") does.
+;; replaceState alone (the #43/#124 behavior) never grows this tab's
+;; session-history stack past its single starting entry, no matter how many
+;; views get visited in it -- so the browser's Back button had nothing real
+;; to go back to, and browsers close a tab outright on Back when its history
+;; stack is otherwise empty, rather than doing nothing (the bug reported
+;; right after #124 shipped: Back from a chat view closed the tab). Actually
+;; growing the stack via pushState fixes that; log-capture.js's popstate
+;; listener is the other half -- it reloads on Back/Forward so whatever URL
+;; was popped to actually gets (re)rendered, reusing the same "reload and
+;; let the durable session record resolve the right view" recovery pattern
+;; already established by #100's self-heal and #110 v3's hide/resume reload,
+;; rather than adding new in-place-DOM-patching logic for arbitrary popped
+;; routes.
 (defun set-home-route (body)
-  (clog:js-execute body "window.history.replaceState(null, '', '/');"))
+  (clog:js-execute body
+                   "(function () { if (window.location.pathname !== '/') { window.history.pushState(null, '', '/'); } })();"))
 
 (defun render-not-found (body)
   (setf (clog:title (clog:html-document body)) "Session not found — sm-harness")

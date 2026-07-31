@@ -18,6 +18,7 @@
         (e2e-turn-identity-scenario)
         (e2e-direct-session-routes-scenario)
         (e2e-direct-session-resume-scenario)
+        (e2e-back-navigation-scenario)
         (e2e-streaming-layout-scenario)
         (e2e-errors-recovery-scenario)
         (e2e-connect-recovery-scenario)
@@ -39,7 +40,7 @@
     "wait_pattern" "assert_value" "assert_input_pattern" "assert_count"
     "wait_disabled" "assert_text_order" "assert_overflow_fits" "assert_scrolled_to_bottom"
     "assert_attribute" "goto" "reload" "sleep" "assert_url_pattern" "assert_not_text"
-    "open_tab" "select_option"))
+    "open_tab" "select_option" "go_back"))
 
 (defun validate-e2e-contract (contract)
   (let ((names (make-hash-table :test #'equal)))

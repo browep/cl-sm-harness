@@ -323,6 +323,31 @@
     smReloadIfHiddenLongEnough('pageshow');
   });
 
+  // #125 (Back/Forward): render-chat/render-home (src/ui/home.lisp) push a
+  // new history entry, via pushState, for every genuine view change instead
+  // of only ever replacing the current one (the #43/#124 behavior), so this
+  // tab's session-history stack actually grows as the app is navigated --
+  // without that, the stack never grew past its single starting entry no
+  // matter how many views got visited, so pressing Back from a chat view
+  // had nothing real to go back to, and a tab with nothing before it in
+  // history closes outright on Back rather than doing nothing. Growing the
+  // stack is only half the fix, though: this app never in-place-renders in
+  // response to a popped-to URL on its own, so without this listener the
+  // address bar would silently drift out of sync with the still-rendered
+  // view on every Back/Forward press -- the same class of bug #124 fixed
+  // for forward navigation, now for backward. Reloading here, rather than
+  // adding new client-side logic to re-render for an arbitrary popped
+  // route, reuses the same "reload and let the durable session record
+  // resolve the correct view" pattern already established by #100's
+  // self-heal and #110 v3's hide/resume reload -- on-new-window
+  // (application.lisp) already renders home or chat correctly from
+  // whatever path is in the bar on a fresh connection, which is exactly
+  // what a reload here produces.
+  window.addEventListener('popstate', function () {
+    push('info', 'popstate: ' + window.location.pathname + ' -- reloading');
+    window.location.reload();
+  });
+
   // Self-heal (#100, fix B): boot.js's own reconnect logic can permanently
   // null out its global `ws` if a stale reconnect id (e.g. this
   // container/process restarted while this tab was still open) gets

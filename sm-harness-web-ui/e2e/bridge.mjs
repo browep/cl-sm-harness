@@ -34,6 +34,11 @@ async function executeStep(page, base, step) {
     case 'click': return target().click();
     case 'goto': return page.goto(new URL(step.path, base).toString(), { waitUntil: 'domcontentloaded', timeout });
     case 'reload': return page.reload({ waitUntil: 'domcontentloaded', timeout });
+    // #125: the browser Back button, exercised for real via Playwright's
+    // own history navigation (not a click on any in-app control) --
+    // this is what actually caught the tab-closing bug, which only shows
+    // up on genuine browser back/forward, never on an app-level link.
+    case 'go_back': return page.goBack({ waitUntil: 'domcontentloaded', timeout });
     case 'sleep': return new Promise((resolve) => setTimeout(resolve, step.milliseconds));
     // Generic Playwright operation, not app-specific: open a second tab in
     // this same browser context at the given path, then close it. Used

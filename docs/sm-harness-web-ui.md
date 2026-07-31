@@ -724,6 +724,59 @@ from there actually resumes the session on screen, not a stale one —
 mirroring how `direct-session-resume` already proves this for the
 session-creation path alone.
 
+## Browser Back closing the tab from a chat view (#125, follow-up to #124)
+
+#124's fix kept the address bar in sync via `window.history.replaceState`
+on every view change. That fixed the reload-resumes-the-wrong-session bug,
+but `replaceState` overwrites the *current* history entry instead of
+adding a new one — so no matter how many views a tab visited (home → chat
+A → home → chat B, …), that tab's actual browser session-history stack
+never grew past its single starting entry. Reported symptom: pressing the
+browser's own **Back** button (not the in-app "Back to home" button, which
+#124 already covered) from a chat view **closed the tab** instead of going
+anywhere. Root cause: a tab whose session-history stack has nothing before
+the current entry has, by design in every major browser, nothing for Back
+to do — and the documented behavior for that case, when the tab has no
+prior page in history either (opened as a fresh tab/window, exactly how
+this app is normally reached), is to close the tab outright rather than do
+nothing.
+
+**Fix, two parts:**
+
+- `set-session-route`/`set-home-route` (`src/ui/home.lisp`) switched from
+  `replaceState` to `pushState`, guarded by a same-path check
+  (`window.location.pathname !== <target>`) so a render whose target
+  already matches the current URL — the common case, the initial render
+  of a fresh connection — never pushes a redundant duplicate entry; only a
+  genuine view change (new session, a session-list click, "Back to home")
+  does. This is what actually grows the tab's history stack, restoring
+  real Back/Forward semantics.
+- Growing the stack alone isn't enough: this app has no logic to
+  re-render in place for an arbitrary popped-to URL (it only ever renders
+  forward, from a click or a fresh connection). Without more, Back would
+  now move the address bar to the previous URL while leaving the *old*
+  view still on screen — the same class of bug #124 fixed for forward
+  navigation, reintroduced for backward. `static/log-capture.js` gained a
+  `popstate` listener that reloads the page outright on Back/Forward,
+  reusing the same "reload and let the durable session record resolve the
+  correct view" pattern already established by #100's self-heal and #110
+  v3's hide/resume reload — `on-new-window` (`application.lisp`) already
+  renders home or chat correctly from whatever path is in the bar on a
+  fresh connection, which is exactly what a reload here produces, without
+  needing new client-side re-render logic for an arbitrary popped route.
+
+**Coverage:** a new `back-navigation` browser E2E scenario
+(`e2e/scenarios/back-navigation.lisp`) drives a real `page.goBack()` — a
+new generic `go_back` Playwright op (`e2e/bridge.mjs`/
+`+e2e-supported-ops+` in `contract.lisp`) — after creating a session, and
+asserts the tab lands back on the home screen with the address bar reset
+to `/`. This is deliberately a *different* exercise from `turn-identity`'s
+existing "Back to home"/session-list clicks: those only ever click
+in-app controls, never touch the actual browser history stack, and so
+could not have caught this bug (`set-session-route`'s pre-#125
+`replaceState` call satisfied every one of those assertions just fine —
+the address bar was correct at each step, only Back itself was broken).
+
 ## Self-healing CLOG's static-root after a whole-tree reload (#105)
 
 A `reload_harness` call is meant to touch only this project's own Lisp
