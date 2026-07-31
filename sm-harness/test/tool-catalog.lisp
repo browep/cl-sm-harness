@@ -310,3 +310,105 @@
       (%call-bash-tool :command "echo hi" :timeout-seconds 99999)
     (is (eq t is-error))
     (is (search "exceeds" text))))
+
+(defun %call-web-search-tool (&key query max-results)
+  (let ((arguments (make-hash-table :test #'equal)))
+    (setf (gethash "query" arguments) query)
+    (when max-results (setf (gethash "max_results" arguments) max-results))
+    (multiple-value-bind (text is-error)
+        (sm-harness::%web-search-tool-handler arguments nil)
+      (list text is-error))))
+
+(defmacro with-stubbed-tavily-key ((&optional (key "test-key")) &body body)
+  `(let ((sm-harness::*tavily-api-key-fn* (lambda () ,key)))
+     ,@body))
+
+(test web-search-tool-rejects-an-empty-query
+  (with-stubbed-tavily-key ()
+    (destructuring-bind (text is-error) (%call-web-search-tool :query "")
+      (is (eq t is-error))
+      (is (search "non-empty query" text)))))
+
+(test web-search-tool-rejects-a-non-positive-max-results
+  (with-stubbed-tavily-key ()
+    (destructuring-bind (text is-error) (%call-web-search-tool :query "x" :max-results 0)
+      (is (eq t is-error))
+      (is (search "positive integer max_results" text)))))
+
+(test web-search-tool-reports-a-missing-api-key-as-a-safe-error-not-a-crash
+  (let ((sm-harness::*tavily-api-key-fn* (lambda () nil)))
+    (destructuring-bind (text is-error) (%call-web-search-tool :query "common lisp")
+      (is (eq t is-error))
+      (is (search "TAVILY_API_KEY" text)))))
+
+(test web-search-tool-formats-results-from-a-stubbed-response
+  (with-stubbed-tavily-key ()
+    (let ((sm-harness::*web-search-request-fn*
+            (lambda (api-key query max-results)
+              (declare (ignore max-results))
+              (is (string= "test-key" api-key))
+              (is (string= "common lisp" query))
+              (values "{\"results\":[{\"title\":\"CL\",\"url\":\"http://example.com\",\"content\":\"about lisp\"}]}"
+                      200))))
+      (destructuring-bind (text is-error) (%call-web-search-tool :query "common lisp")
+        (is (null is-error))
+        (is (search "CL" text))
+        (is (search "http://example.com" text))
+        (is (search "about lisp" text))))))
+
+(test web-search-tool-reports-no-results-explicitly
+  (with-stubbed-tavily-key ()
+    (let ((sm-harness::*web-search-request-fn*
+            (lambda (api-key query max-results)
+              (declare (ignore api-key query max-results))
+              (values "{\"results\":[]}" 200))))
+      (destructuring-bind (text is-error) (%call-web-search-tool :query "nothing found ever")
+        (is (null is-error))
+        (is (string= "no results" text))))))
+
+(test web-search-tool-clamps-max-results-to-the-hard-cap
+  (with-stubbed-tavily-key ()
+    (let* ((seen nil)
+           (sm-harness::*web-search-request-fn*
+            (lambda (api-key query max-results)
+              (declare (ignore api-key query))
+              (setf seen max-results)
+              (values "{\"results\":[]}" 200))))
+      (%call-web-search-tool :query "x" :max-results 9999)
+      (is (= sm-harness::+web-search-max-results-cap+ seen)))))
+
+(test web-search-tool-maps-a-non-200-status-to-a-safe-error
+  (with-stubbed-tavily-key ()
+    (let ((sm-harness::*web-search-request-fn*
+            (lambda (api-key query max-results)
+              (declare (ignore api-key query max-results))
+              (values "rate limited" 429))))
+      (destructuring-bind (text is-error) (%call-web-search-tool :query "x")
+        (is (eq t is-error))
+        (is (search "429" text))
+        (is (search "rate limited" text))))))
+
+(test web-search-tool-maps-an-unparsable-response-to-a-safe-error
+  (with-stubbed-tavily-key ()
+    (let ((sm-harness::*web-search-request-fn*
+            (lambda (api-key query max-results)
+              (declare (ignore api-key query max-results))
+              (values "not json" 200))))
+      (destructuring-bind (text is-error) (%call-web-search-tool :query "x")
+        (is (eq t is-error))
+        (is (search "could not parse" text))))))
+
+(test web-search-tool-maps-a-transport-failure-to-a-safe-error-not-a-crash
+  (with-stubbed-tavily-key ()
+    (let ((sm-harness::*web-search-request-fn*
+            (lambda (api-key query max-results)
+              (declare (ignore api-key query max-results))
+              (error "connection refused"))))
+      (destructuring-bind (text is-error) (%call-web-search-tool :query "x")
+        (is (eq t is-error))
+        (is (search "web search failed" text))))))
+
+(test web-search-tool-is-registered-in-the-default-catalog
+  (let* ((catalog (sm-harness:default-tool-catalog))
+         (tools (sm-harness:tool-server-definition-tools (first (sm-harness:tool-catalog-servers catalog)))))
+    (is (find "web_search" tools :key #'sm-harness:tool-definition-name :test #'string=))))

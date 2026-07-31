@@ -617,6 +617,147 @@ fix it, not another reload_harness call."
    :input-schema (%reload-schema)
    :handler #'%reload-harness-tool-handler))
 
+(defparameter +web-search-max-results-default+ 5
+  "MAX_RESULTS when a caller omits it entirely.")
+
+(defparameter +web-search-max-results-cap+ 10
+  "Hard ceiling on MAX_RESULTS regardless of what a caller asks for --
+clamped silently, not rejected: unlike write_file's oversized-content
+guard (where truncating would corrupt the caller's data), a smaller
+result set here is still a fully valid, honest answer to the same
+query.")
+
+(defparameter +web-search-timeout-seconds+ 20
+  "Connection/request timeout for the Tavily HTTPS call. A hung upstream
+must not wedge the session worker indefinitely (same concern as the bash
+tool's own timeout, #79) -- this bounds it instead.")
+
+(defvar *tavily-api-key-fn* (lambda () (uiop:getenv "TAVILY_API_KEY"))
+  "Zero-argument function returning the Tavily API key configured in the
+process environment, or NIL/empty if there isn't one. A function, not a
+bare special holding the value, so: (1) tests can stub it without ever
+touching the real process environment, and (2) a key set or rotated in
+the environment before a session starts is always picked up at call
+time, not frozen at image-load time the way a top-level (UIOP:GETENV
+...) capture would be.")
+
+(defun %web-search-schema ()
+  (let ((schema (%json-object "type" "object"))
+        (props (%json-object))
+        (query-field (%json-object "type" "string"))
+        (max-results-field (%json-object "type" "integer")))
+    (setf (gethash "query" props) query-field
+          (gethash "max_results" props) max-results-field
+          (gethash "properties" schema) props
+          (gethash "required" schema) (list "query"))
+    schema))
+
+(defun %tavily-search-request (api-key query max-results)
+  "Perform the actual HTTPS POST to Tavily's /search endpoint (see
+https://docs.tavily.com). Returns (values response-body-string
+http-status); a transport failure (DNS, TLS, timeout, connection
+refused, ...) signals a Lisp error rather than fabricating a status, so
+%WEB-SEARCH-TOOL-HANDLER's own HANDLER-CASE is what turns that into a
+safe tool-result error -- this function's job is only the HTTP call."
+  (let ((body (with-output-to-string (s)
+                (yason:encode (%json-object "api_key" api-key
+                                             "query" query
+                                             "max_results" max-results
+                                             "search_depth" "basic")
+                              s))))
+    (multiple-value-bind (response-body status)
+        (drakma:http-request "https://api.tavily.com/search"
+                              :method :post
+                              :content-type "application/json"
+                              :content body
+                              :connection-timeout +web-search-timeout-seconds+
+                              :external-format-out :utf-8
+                              :external-format-in :utf-8
+                              :want-stream nil)
+      (values (if (stringp response-body)
+                  response-body
+                  (map 'string #'code-char response-body))
+              status))))
+
+(defvar *web-search-request-fn* #'%tavily-search-request
+  "(api-key query max-results) -> (values response-body-string
+http-status). The tool handler's sole network seam: defaults to the real
+Tavily HTTPS call, but tests rebind this to a stub so the suite never
+makes a live network request or depends on a real TAVILY_API_KEY, the
+same dependency-injection shape *BASH-GUARD-COMMAND-LINE* uses above for
+the bash tool's self-kill guard.")
+
+(defun %web-search-format-results (parsed)
+  "PARSED is Tavily's JSON response, decoded by YASON into hash-tables
+(objects) and lists (arrays) -- the same representation
+%JSON-DECODE-FILE relies on elsewhere in this system. Renders the
+\"results\" array as numbered, readable text; a missing or empty array
+renders as an explicit \"no results\" line so an empty answer is never
+mistaken for truncated or failed output."
+  (let ((results (gethash "results" parsed)))
+    (if (or (not (consp results)) (zerop (length results)))
+        "no results"
+        (with-output-to-string (out)
+          (loop for r in results
+                for n from 1
+                do (let ((content (or (gethash "content" r) "")))
+                     (format out "~D. ~A~%   ~A~%   ~A~%~%"
+                             n
+                             (or (gethash "title" r) "(untitled)")
+                             (or (gethash "url" r) "")
+                             (if (> (length content) 400)
+                                 (concatenate 'string (subseq content 0 400) "...")
+                                 content))))))))
+
+(defun %web-search-tool-handler (arguments context)
+  (declare (ignore context))
+  (let* ((query (gethash "query" arguments))
+         (max-results (or (gethash "max_results" arguments)
+                          +web-search-max-results-default+))
+         (api-key (funcall *tavily-api-key-fn*)))
+    (cond
+      ((not (and (stringp query) (plusp (length query))))
+       (values "web_search requires a non-empty query" t))
+      ((not (and (integerp max-results) (plusp max-results)))
+       (values "web_search requires a positive integer max_results" t))
+      ((not (and (stringp api-key) (plusp (length api-key))))
+       (values "web_search is not configured: no TAVILY_API_KEY is set in the environment" t))
+      (t
+       (let ((capped (min max-results +web-search-max-results-cap+)))
+         (handler-case
+             (multiple-value-bind (body status)
+                 (funcall *web-search-request-fn* api-key query capped)
+               (if (eql status 200)
+                   (handler-case
+                       (values (%web-search-format-results (yason:parse body)) nil)
+                     (error ()
+                       (values "web search failed: could not parse the response" t)))
+                   (values (format nil "web search failed: HTTP ~A~@[~%~A~]"
+                                   status
+                                   (and (stringp body) (plusp (length body)) body))
+                           t)))
+           (error (c)
+             (values (format nil "web search failed: ~A" c) t))))))))
+
+(defun make-web-search-tool-definition ()
+  "Uses Tavily's HTTPS search API (docs.tavily.com), reading
+TAVILY_API_KEY from the environment at call time via
+*TAVILY-API-KEY-FN* -- not at catalog-build time -- so a key configured
+before a session starts is always honored. An unconfigured key, an
+upstream HTTP error, or a malformed response all report as a normal
+(is-error t) tool result rather than a Lisp condition, matching every
+other catalog tool's contract; only a genuine handler bug still escalates
+to the SDK's generic crash path."
+  (make-tool-definition
+   :name "web_search"
+   :description "Search the web via the Tavily API. QUERY is required.
+MAX_RESULTS (default 5) is clamped to 10 regardless of what is
+requested. Requires TAVILY_API_KEY to be configured in the environment;
+if it is not, this returns a tool-result error rather than crashing.
+Each result includes a title, URL, and a short content excerpt."
+   :input-schema (%web-search-schema)
+   :handler #'%web-search-tool-handler))
+
 (defun default-tool-catalog ()
   "Return product-owned tool metadata, not SDK objects."
   (make-tool-catalog
@@ -628,4 +769,5 @@ fix it, not another reload_harness call."
                        (make-read-tool-definition)
                        (make-write-tool-definition)
                        (make-bash-tool-definition)
-                       (make-reload-tool-definition))))))
+                       (make-reload-tool-definition)
+                       (make-web-search-tool-definition))))))

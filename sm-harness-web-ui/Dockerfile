@@ -22,6 +22,8 @@ RUN apt-get update \
       cl-yason \
       cl-fiveam \
       cl-trivial-gray-streams \
+      cl-ppcre \
+      cl-drakma \
       ca-certificates \
       curl \
       git \

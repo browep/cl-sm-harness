@@ -43,6 +43,8 @@ ARG SBCL_VERSION=2:2.2.9-1
 ARG FIVEAM_VERSION=1.4.2-1
 ARG YASON_VERSION=0.7.6-1.1
 ARG TRIVIAL_GRAY_STREAMS_VERSION=20210117.git2b3823e-1
+ARG PPCRE_VERSION=20220126.gitb4056c5-1
+ARG DRAKMA_VERSION=2.0.8-1
 ARG CLAUDE_CODE_VERSION=2.1.219
 
 RUN apt-get update \
@@ -51,6 +53,8 @@ RUN apt-get update \
         "cl-fiveam=${FIVEAM_VERSION}" \
         "cl-yason=${YASON_VERSION}" \
         "cl-trivial-gray-streams=${TRIVIAL_GRAY_STREAMS_VERSION}" \
+        "cl-ppcre=${PPCRE_VERSION}" \
+        "cl-drakma=${DRAKMA_VERSION}" \
         ca-certificates \
         procps \
     && npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \

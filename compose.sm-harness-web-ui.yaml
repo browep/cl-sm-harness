@@ -15,6 +15,10 @@ services:
       # Consumed by gh's credential-helper wiring (sm-harness-web-ui/Dockerfile)
       # so plain git/gh operations against github.com authenticate automatically.
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      # Consumed by the web_search tool (#112, sm-harness/src/tool-catalog.lisp)
+      # to call the Tavily search API; unset -> the tool reports a safe
+      # tool-result error instead of crashing.
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
     volumes:
       # Live repo at /app (#90): write_file/reload_harness edits persist on
       # the host instead of dying with the container. CLOG static assets are
