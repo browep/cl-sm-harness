@@ -8,6 +8,23 @@
         (and (null (position #\/ id)) id)))))
 
 (defun on-new-window (body)
+  ;; #122: idempotent-guarded, so this is a cheap no-op on every ordinary
+  ;; connection once installed -- but it is also the *only* way a process
+  ;; already running before this feature existed picks up
+  ;; connection-log.lisp without a full restart: %INSTALL-CONNECTION-LOG is
+  ;; otherwise only called once, from START-WEB-UI at actual process boot
+  ;; (main()), which a bare RELOAD_HARNESS never re-runs. ON-NEW-WINDOW
+  ;; itself *does* get re-pointed at fresh code on every reload (via
+  ;; %REINSTALL-CLOG-ROUTES, called by name from the post-reload hook --
+  ;; see live-reload.lisp and docs/sm-harness-web-ui.md, "RELOAD_HARNESS
+  ;; only reloads Lisp"), so installing here too means the very next
+  ;; connection after a reload activates it live, not just the next full
+  ;; container restart.
+  (when *app-harness*
+    (%install-connection-log (sm-harness:harness-config-data-root
+                              (sm-harness:harness-config *app-harness*))
+                             (sm-harness:harness-config-project-key
+                              (sm-harness:harness-config *app-harness*))))
   ;; Cache-busted (found chasing #111's follow-up incident, see
   ;; %APP-CSS-HREF in presenter.lisp/docs/sm-harness-web-ui.md): a plain
   ;; unversioned "/app.css" lets a browser keep serving a stale copy from
@@ -29,6 +46,12 @@
   ;; Tracked so a later successful reload_harness can refresh this tab
   ;; (#78).
   (%track-live-browser-window body)
+  ;; Durable connection-lifecycle logging (#122): this only fires for a
+  ;; genuinely new connection id -- CLOG never calls ON-NEW-WINDOW for a
+  ;; reconnect, successful or rejected, only for a brand-new one. See
+  ;; src/connection-log.lisp for where those other two (and a ping-derived
+  ;; staleness sweep) are captured instead, and why.
+  (ignore-errors (%note-connection-opened (clog::connection-id body)))
   (let ((session-id (%session-id-from-route
                      (clog:path-name (clog:location body)))))
     (if session-id
@@ -44,6 +67,18 @@ sm-harness-web-ui/e2e system providing them is loaded -- see
   (setf *app-harness* harness
         *web-ui-config* (or config (make-web-ui-config)))
   (let ((cfg *web-ui-config*))
+    ;; #122: durable connection-lifecycle logging (web/connection-log.jsonl,
+    ;; web/clog-stdout.log -- see src/connection-log.lisp), installed
+    ;; before CLOG:INITIALIZE so this process's very first connection's
+    ;; lifecycle lines are captured too, not just later ones. (ON-NEW-WINDOW
+    ;; above also installs it, idempotently, so a process that picks up
+    ;; this feature via RELOAD_HARNESS rather than a fresh boot still gets
+    ;; it from its next connection onward.)
+    (when harness
+      (%install-connection-log (sm-harness:harness-config-data-root
+                                (sm-harness:harness-config harness))
+                               (sm-harness:harness-config-project-key
+                                (sm-harness:harness-config harness))))
     (setf *clog-server*
           (clog:initialize #'on-new-window
                            :host (web-ui-config-host cfg)
@@ -71,6 +106,11 @@ sm-harness-web-ui/e2e system providing them is loaded -- see
   (setf *live-browser-windows* nil)
   (when (eq sm-harness:*post-reload-hook* #'%refresh-after-reload)
     (setf sm-harness:*post-reload-hook* nil))
+  ;; #122: undo connection-log.lisp's installs, mainly for test/REPL
+  ;; hygiene across repeated start/stop cycles within one process --
+  ;; production shutdown (%RUN-UNTIL-SHUTDOWN) hits this right before exit
+  ;; anyway.
+  (%stop-connection-log)
   t)
 
 (defun %fixture-transport-factory ()

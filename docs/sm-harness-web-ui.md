@@ -404,6 +404,106 @@ off *after* `load`, and closing too early can abort the connection
 server-side before `on-new-window` ever runs. `open_tab` waits for `load`
 plus a short settle window (`settle_ms`, default 500ms) before closing.
 
+## Durable connection-lifecycle logging (#122)
+
+Follow-up to #110 ("reconnect detection takes too long"): before another
+attempt at detection logic, #110's own investigation called for
+instrumenting the connection lifecycle first, since two prior debugging
+rounds were inconclusive purely because there was no durable ground truth
+to check a guess against (see #110's comments for the full history,
+including a stale-closure bug that silently disarmed an earlier
+prototype's own probe). This is that instrumentation — no detection logic
+changed here, only visibility.
+
+Two files, both under the same durable `web/` project directory
+`sm-harness`'s own `session-repository.lisp` already uses for
+`index.json`/`sessions/*.json` — no new Docker volume or image change
+needed, `/data` is already a durable named volume, already writable
+(#89/#90):
+
+- **`web/connection-log.jsonl`** — clean, first-party JSON lines this
+  project writes itself, one per line:
+  `{"ts":..., "connection_id":..., "event":"opened"|"stale", ...}`.
+  `"opened"` comes from `on-new-window` (`src/application.lisp`), which
+  CLOG only ever calls for a genuinely *new* connection id, never for a
+  reconnect (successful or rejected). `"stale"` comes from a ping-derived
+  liveness table: CLOG's own client (`static-files/js/boot.js`'s
+  `Ping_ws`) already sends a bare `"0"` message every 10s from every open
+  tab: a handler registered on `clog-connection::*message-handlers*` (an
+  internal, unexported list, but a `defvar`, not a `defparameter` —
+  confirmed by reading `clog-connection-websockets.lisp` — so it is not
+  reset by a stray whole-CLOG re-evaluation the way a `defparameter`
+  global would be, #105's failure class; the same extension point the
+  reverted #110 prototype already used for its `SMPROBE` handler) records
+  each ping's connection id as alive with no client-side change at all.
+  A background thread (`%install-connection-sweep-thread`,
+  `src/connection-log.lisp`) then logs `"stale"` once for any connection
+  that has gone `*connection-stale-after-seconds*` (default 30s — three
+  missed pings, not one unlucky poll tick) without being seen, and clears
+  that flag if the connection is later heard from again so a second lapse
+  is reported too.
+- **`web/clog-stdout.log`** — a verbatim tee of `*standard-output*`,
+  covering the connection-lifecycle lines CLOG's own private, non-exported
+  `handle-new-connection` (`clog-connection-websockets.lisp`) already
+  prints via plain `(format t ...)`, with no handler-list hook of its own
+  to intercept instead: `"New connection id - ID - CONN"`,
+  `"Reconnection id - ID to CONN"` (a stale connection's tab successfully
+  resuming), and `"Reconnection id ID not found. Closing the connection."`
+  (the terminal, unrecoverable case #100/#110 care about most).
+  Monkeypatching that private `defun` was deliberately not done: unlike
+  `*message-handlers*`, an ordinary `defun` *is* clobbered by any
+  re-evaluation of that file — the same failure class as #105 and the
+  invalidated #110 field test (see that issue's addendum). `*standard-output*`
+  is a plain CL special variable nothing in this project's reload path
+  ever resets, and a fresh `bordeaux-threads` thread (which is how CLOG
+  spawns its own connection callbacks) was confirmed live, before writing
+  this, to still observe a broadcast stream installed this way. Because
+  CLOG's own `format t` calls never `force-output` afterward (why would
+  they, against a plain console stream), the sweep thread above also
+  force-outputs this stream once per tick — worst case this file lags
+  real time by one sweep interval, acceptable for a diagnostic log, and a
+  clean shutdown (`%stop-connection-log`, below) flushes immediately
+  regardless.
+- **Deliberately not captured:** CLOG's `"Connection id ID has closed"`
+  line (`handle-close-connection`) turns out to be gated behind
+  `clog-connection:*verbose-output*` (default `nil`, confirmed by reading
+  the same file) — and that flag also makes every ping, every UI event
+  dispatch, and every JS query round trip log a line, i.e. one line per
+  user interaction with the whole app. Far too much durable write volume
+  for what this exists to do, so it was not enabled. The ping-derived
+  `"stale"` event above is the substitute signal for "this connection is
+  effectively gone", and arguably a better fit for #110's actual failure
+  modes 2 (an endless silent reconnect retry loop) and 3 (a half-open
+  socket) anyway, since neither of those ever reaches a real close at all.
+
+**Installed from two places** (`src/connection-log.lisp`,
+`%install-connection-log`, idempotent): `start-web-ui`, before
+`clog:initialize`, so a fresh process boot captures its very first
+connection too; and the top of `on-new-window` itself, because
+`%install-connection-log` is otherwise boot-time-only code that a bare
+`reload_harness` does not re-run (see "`reload_harness` only reloads
+Lisp" above) — `on-new-window` *does* get re-pointed at fresh code on
+every reload (`%reinstall-clog-routes`, called by name from the
+post-reload hook, `live-reload.lisp`), so installing there too means a
+process that already existed before this feature shipped picks it up live,
+from its very next connection onward, without needing a restart.
+
+**Reading it.** Both files are plain, greppable text under `$SM_HARNESS_DATA/web/`
+(`/data/web/` in the running container) — an agent working inside this
+container can read them directly, unlike the per-session event log
+(`docs/sm-harness.md`, "Operator diagnostics"), which only ever goes to
+PID 1's stdout, a pipe to Docker this container has no socket to read
+(#61). Correlate a specific tab's trouble by `connection_id` across both
+files; `boot.js` also assigns that same id to the client-side
+`clog['connection_id']`, though nothing yet logs it into the browser's own
+captured log (`static/log-capture.js`, #120) — that pairing is left for a
+future pass, along with the two other deliverables #122 originally scoped
+(a client log recoverable without a live socket, and a build/version
+marker on `log-capture.js`).
+
+**Not yet done:** the actual reconnect-detection logic this instruments
+for is still #110, unchanged by this work.
+
 ## Contentless "SYSTEM" chips fixed (#102)
 
 The transcript used to show a wall of chips labeled just `SYSTEM` (or

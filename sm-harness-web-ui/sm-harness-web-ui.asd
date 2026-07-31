@@ -12,6 +12,7 @@
                  (:file "presenter")
                  (:file "shutdown")
                  (:file "harness-adapter")
+                 (:file "connection-log")
                  (:file "browser-logs")
                  (:file "ui/log-export")
                  (:file "ui/session-info")
