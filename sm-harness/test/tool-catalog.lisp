@@ -506,3 +506,48 @@ late-bind) or a captured #'name FUNCTION object would both fail this."
         (is (symbolp (sm-harness:tool-definition-handler tool))
             (format nil "~A's handler should be a symbol designator, not a captured function object"
                     (sm-harness:tool-definition-name tool)))))))
+
+;;;; addition tool
+
+(defun %call-addition-tool (a b)
+  (let ((arguments (make-hash-table :test #'equal)))
+    (setf (gethash "a" arguments) a
+          (gethash "b" arguments) b)
+    (multiple-value-bind (text is-error)
+        (sm-harness::%addition-tool-handler arguments nil)
+      (list text is-error))))
+
+(test addition-tool-adds-two-integers
+  (destructuring-bind (text is-error) (%call-addition-tool 2 3)
+    (is (null is-error))
+    (is (string= "2 + 3 = 5" text))))
+
+(test addition-tool-adds-negative-and-decimal-values
+  (destructuring-bind (text is-error) (%call-addition-tool -1.5d0 4)
+    (is (null is-error))
+    (is (search "2.5" text))
+    ;; The double-float exponent marker must never leak into the result.
+    (is (not (search "d0" text)))))
+
+(test addition-tool-rejects-a-non-numeric-argument-as-a-safe-error
+  (destructuring-bind (text is-error) (%call-addition-tool "seven" 1)
+    (is (eq t is-error))
+    (is (search "numeric" text))))
+
+(test addition-tool-rejects-a-missing-argument-as-a-safe-error
+  (destructuring-bind (text is-error) (%call-addition-tool 1 nil)
+    (is (eq t is-error))
+    (is (search "numeric" text))))
+
+(test addition-tool-is-registered-in-the-default-catalog
+  (let* ((catalog (sm-harness:default-tool-catalog))
+         (tools (sm-harness:tool-server-definition-tools (first (sm-harness:tool-catalog-servers catalog)))))
+    (is (find "addition" tools :key #'sm-harness:tool-definition-name :test #'string=))))
+
+(test addition-tool-handler-is-a-late-bound-symbol-designator
+  ;; Per #116: a captured #'name would freeze the pre-reload body.
+  (let ((tool (find "addition" (sm-harness:tool-server-definition-tools
+                                (first (sm-harness:tool-catalog-servers
+                                        (sm-harness:default-tool-catalog))))
+                    :key #'sm-harness:tool-definition-name :test #'string=)))
+    (is (symbolp (sm-harness:tool-definition-handler tool)))))

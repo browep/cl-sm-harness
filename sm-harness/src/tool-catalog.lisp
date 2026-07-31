@@ -775,6 +775,58 @@ Each result includes a title, URL, and a short content excerpt."
    :input-schema (%web-search-schema)
    :handler '%web-search-tool-handler))
 
+(defun %addition-schema ()
+  (let ((schema (%json-object "type" "object"))
+        (props (%json-object))
+        (a-field (%json-object "type" "number"))
+        (b-field (%json-object "type" "number")))
+    (setf (gethash "a" props) a-field
+          (gethash "b" props) b-field
+          (gethash "properties" schema) props
+          (gethash "required" schema) (list "a" "b"))
+    schema))
+
+(defun %format-number (n)
+  "Render N the way a human wrote it, not the way CL prints it internally:
+YASON decodes a JSON fraction to a DOUBLE-FLOAT, and ~A would print that
+as e.g. 3.5d0 (the d0 exponent marker appears because
+*READ-DEFAULT-FLOAT-FORMAT* is SINGLE-FLOAT), which reads as noise in a
+tool result."
+  (if (integerp n) (format nil "~D" n) (format nil "~F" n)))
+
+(defun %addition-tool-handler (arguments context)
+  (declare (ignore context))
+  (let ((a (gethash "a" arguments))
+        (b (gethash "b" arguments)))
+    (cond
+      ((not (and (realp a) (realp b)))
+       (values "addition requires two numeric arguments, a and b" t))
+      (t
+       ;; Overflow is not a concern (CL integers are bignums), but a
+       ;; float trap (e.g. two enormous doubles) would otherwise escape as
+       ;; a Lisp condition instead of the safe tool-result error every
+       ;; catalog tool contracts for.
+       (handler-case
+           (values (format nil "~A + ~A = ~A"
+                           (%format-number a) (%format-number b)
+                           (%format-number (+ a b)))
+                   nil)
+         (error () (values "unable to add those numbers" t)))))))
+
+(defun make-addition-tool-definition ()
+  "Pure computation: no filesystem, process, or network reach at all, so
+unlike most of this catalog there is no safety boundary for the handler to
+enforce beyond validating its own argument types (a non-numeric argument
+is a normal is-error result, not a Lisp condition)."
+  (make-tool-definition
+   :name "addition"
+   :description "Add two numbers together and return their sum. A and B
+are both required and may be integers or decimals. Returns the sum
+rendered as readable text (e.g. \"2 + 3 = 5\"). Non-numeric arguments are
+reported as a tool-result error rather than crashing."
+   :input-schema (%addition-schema)
+   :handler '%addition-tool-handler))
+
 (defun default-tool-catalog ()
   "Return product-owned tool metadata, not SDK objects."
   (make-tool-catalog
@@ -787,4 +839,5 @@ Each result includes a title, URL, and a short content excerpt."
                        (make-write-tool-definition)
                        (make-bash-tool-definition)
                        (make-reload-tool-definition)
-                       (make-web-search-tool-definition))))))
+                       (make-web-search-tool-definition)
+                       (make-addition-tool-definition))))))
