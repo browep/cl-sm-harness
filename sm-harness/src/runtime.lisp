@@ -42,7 +42,18 @@
 (defstruct (harness (:constructor %make-harness))
   config
   repository
-  catalog
+  ;; Zero-argument function returning a TOOL-CATALOG, called fresh every
+  ;; time %ENSURE-CLIENT builds a *new* client connection -- never a
+  ;; materialized TOOL-CATALOG value read once (see #116). Before #116 this
+  ;; slot held a TOOL-CATALOG built once by (DEFAULT-TOOL-CATALOG) at
+  ;; MAKE-HARNESS time and never re-read, so a RELOAD_HARNESS that added a
+  ;; tool was invisible to every session for the rest of this process's
+  ;; life -- including a session that had not even been created yet.
+  ;; MAKE-HARNESS wraps an explicit :CATALOG argument (tests/fixtures that
+  ;; want a fixed, unchanging catalog) in a constant-returning closure, so
+  ;; only the *default*, no-:CATALOG-argument production path actually goes
+  ;; back to DEFAULT-TOOL-CATALOG on every new connection.
+  catalog-provider
   policy
   (sessions (make-hash-table :test #'equal))
   (lock (sb-thread:make-mutex :name "harness"))
@@ -216,7 +227,10 @@ Its transcript is persisted at ~A."
   (when (session-runtime-client rt)
     (return-from %ensure-client (session-runtime-client rt)))
   (let* ((cfg (harness-config harness))
-         (catalog (harness-catalog harness))
+         ;; Fresh every new connection, never cached across reconnects (#116):
+         ;; a RELOAD_HARNESS that added a tool must reach the *next* client
+         ;; this builds, including one for a session that already existed.
+         (catalog (funcall (harness-catalog-provider harness)))
          (policy (harness-policy harness))
          ;; #106: a session created with an explicit :MODEL overrides the
          ;; harness-wide default; a legacy or default-backend session (NIL

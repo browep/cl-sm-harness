@@ -1,14 +1,26 @@
 (in-package #:sm-harness)
 
 (defun make-harness (&key config catalog policy)
+  "CATALOG, if supplied, is a fixed TOOL-CATALOG value used for this
+harness's whole lifetime -- the shape every existing caller (tests, the
+web UI's E2E fixture catalog) already passes, and it keeps working
+unchanged. Omitting CATALOG (the real production path: sm-harness-web-ui's
+MAIN never passes one) instead defers to DEFAULT-TOOL-CATALOG, re-called
+fresh on every new client connection rather than fixed once here (#116) --
+see HARNESS-CATALOG-PROVIDER's docstring in runtime.lisp for why a fixed
+snapshot made a RELOAD_HARNESS-added tool invisible to every session,
+including ones not yet created, for the rest of a process's life."
   (let* ((cfg (or config (make-harness-config)))
          (repo (open-session-repository
                 :root (harness-config-data-root cfg)
-                :project-key (harness-config-project-key cfg))))
+                :project-key (harness-config-project-key cfg)))
+         (catalog-provider (if catalog
+                               (lambda () catalog)
+                               #'default-tool-catalog)))
     (%make-harness
      :config cfg
      :repository repo
-     :catalog (or catalog (default-tool-catalog))
+     :catalog-provider catalog-provider
      :policy (or policy (default-tool-policy)))))
 
 (defun close-harness (harness)

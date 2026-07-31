@@ -1254,3 +1254,71 @@ correctness bug."
                               "safe order (marker raised before SUBMIT-TURN) must never be observed racy")))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+;;;; #116 phase 1: MAKE-HARNESS's catalog is a zero-argument provider
+;;;; function, FUNCALLed fresh by %ENSURE-CLIENT every time it builds a
+;;;; *new* client connection -- not a TOOL-CATALOG value materialized once
+;;;; and read forever after. See HARNESS-CATALOG-PROVIDER's docstring
+;;;; (runtime.lisp) and MAKE-HARNESS's docstring (session-service.lisp).
+
+(defun %fixture-tool-catalog (&rest tool-names)
+  (sm-harness::make-tool-catalog
+   :servers (list (sm-harness::make-tool-server-definition
+                   :name "fixture"
+                   :tools (mapcar (lambda (name)
+                                    (sm-harness::make-tool-definition
+                                     :name name :description name
+                                     :input-schema (sm-harness::%echo-schema)
+                                     :handler (lambda (arguments context)
+                                                (declare (ignore arguments context))
+                                                "ok")))
+                                  tool-names)))))
+
+(defun %agent-options-tool-names (options)
+  (loop for server in (claude-agent-sdk-cl:agent-options-sdk-mcp-servers options)
+        append (mapcar #'claude-agent-sdk-cl:sdk-tool-name
+                       (claude-agent-sdk-cl:sdk-mcp-server-tools server))))
+
+(test new-session-after-catalog-provider-changes-sees-the-current-catalog
+  "A brand-new session created after the harness's catalog provider starts
+returning a different catalog must see that new catalog -- the harness-wide
+staleness #116 fixed. Independent of whether an already-open session's own
+connection gets refreshed (a separate, later phase)."
+  (let* ((root (temp-data-root))
+         (options-seen '())
+         (current-catalog (%fixture-tool-catalog "tool_a"))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (push options options-seen)
+                        (make-simple-turn-transport))))))
+    ;; No :CATALOG argument above -- exactly the real production call shape
+    ;; (sm-harness-web-ui's MAIN never passes one) -- so MAKE-HARNESS
+    ;; installed the real #'DEFAULT-TOOL-CATALOG as the provider. Swap it
+    ;; here for a controlled fixture provider instead of mutating the real
+    ;; default catalog out from under every other test in this suite.
+    (setf (sm-harness::harness-catalog-provider h) (lambda () current-catalog))
+    (unwind-protect
+         (progn
+           (let* ((snapshot-1 (sm-harness:start-session h :title "session one"))
+                  (id-1 (sm-harness:session-snapshot-id snapshot-1)))
+             (sm-harness:submit-turn h id-1 "turn one")
+             (is (wait-until (lambda () (string= "canon-42" (sm-harness:session-snapshot-canonical-id (sm-harness:open-session h id-1)))))))
+           (let ((names-1 (%agent-options-tool-names (first options-seen))))
+             (is (member "tool_a" names-1 :test #'string=))
+             (is (not (member "tool_b" names-1 :test #'string=))))
+           ;; Simulate what a successful RELOAD_HARNESS makes possible: the
+           ;; provider now returns a catalog with a brand-new tool.
+           (setf current-catalog (%fixture-tool-catalog "tool_a" "tool_b"))
+           (let* ((snapshot-2 (sm-harness:start-session h :title "session two"))
+                  (id-2 (sm-harness:session-snapshot-id snapshot-2)))
+             (sm-harness:submit-turn h id-2 "turn one")
+             (is (wait-until (lambda () (string= "canon-42" (sm-harness:session-snapshot-canonical-id (sm-harness:open-session h id-2)))))))
+           (let ((names-2 (%agent-options-tool-names (first options-seen))))
+             (is (member "tool_a" names-2 :test #'string=))
+             (is (member "tool_b" names-2 :test #'string=)
+                 "a brand-new session must see a tool added to the catalog after it started")))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
