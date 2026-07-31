@@ -412,3 +412,97 @@
   (let* ((catalog (sm-harness:default-tool-catalog))
          (tools (sm-harness:tool-server-definition-tools (first (sm-harness:tool-catalog-servers catalog)))))
     (is (find "web_search" tools :key #'sm-harness:tool-definition-name :test #'string=))))
+
+;;;; #116 phase 0: a tool-definition handler stored as a SYMBOL designator
+;;;; (not a captured #'name function object) must hot-reload -- a later
+;;;; redefinition of the underlying function (what RELOAD_HARNESS does) must
+;;;; be visible to a tool-definition built *before* that redefinition, with
+;;;; no new catalog/tool-definition construction in between.
+;;;;
+;;;; These tests reproduce a redefinition via genuinely separate
+;;;; COMPILE-FILE + LOAD calls against temp source files, not IN-PROCESS
+;;;; (COMPILE 'name ...) or (EVAL '(DEFUN ...)): verified directly that
+;;;; those lighter-weight redefinition paths do not reliably reproduce the
+;;;; frozen-old-closure behavior a real RELOAD_HARNESS run does (SBCL's
+;;;; single-image COMPILE can patch an existing function in ways a genuine
+;;;; separate fasl compile+load -- what ASDF:LOAD-SYSTEM actually performs
+;;;; -- never does), so only the file-based form here is a faithful stand-in.
+
+(defun %write-hot-reload-fixture-source (path return-value)
+  (with-open-file (out path :direction :output :if-exists :supersede
+                       :if-does-not-exist :create :external-format :utf-8)
+    (format out "(in-package #:sm-harness/tests)~%")
+    (format out "(defun %hot-reload-fixture-handler (arguments context)~%")
+    (format out "  (declare (ignore arguments context))~%")
+    (format out "  (values ~S nil))~%" return-value)
+    (format out "(defun %hot-reload-fixture-capture () (function %hot-reload-fixture-handler))~%")))
+
+(defun %compile-and-load-hot-reload-fixture (root return-value)
+  (let ((source (merge-pathnames "fixture.lisp" root)))
+    (%write-hot-reload-fixture-source source return-value)
+    (let ((fasl (compile-file source :output-file (merge-pathnames "fixture.fasl" root)
+                                     :verbose nil :print nil)))
+      (load fasl))))
+
+(test tool-handler-symbol-designator-hot-reloads-mid-session
+  (let* ((root (temp-data-root)))
+    (unwind-protect
+         (progn
+           (%compile-and-load-hot-reload-fixture root "before-reload")
+           (let ((def (sm-harness::make-tool-definition
+                       :name "fixture" :description "fixture"
+                       :input-schema (sm-harness::%echo-schema)
+                       :handler '%hot-reload-fixture-handler)))
+             (multiple-value-bind (text is-error)
+                 (funcall (sm-harness:tool-definition-handler def)
+                          (make-hash-table :test #'equal) nil)
+               (is (null is-error))
+               (is (string= "before-reload" text)))
+             ;; A genuinely separate recompile+reload -- exactly what
+             ;; RELOAD_HARNESS's (ASDF:LOAD-SYSTEM ... :FORCE T) performs.
+             ;; DEF itself is never touched: no new tool-definition, no new
+             ;; catalog, just the underlying function redefined out from
+             ;; under it.
+             (%compile-and-load-hot-reload-fixture root "after-reload")
+             (multiple-value-bind (text is-error)
+                 (funcall (sm-harness:tool-definition-handler def)
+                          (make-hash-table :test #'equal) nil)
+               (is (null is-error))
+               (is (string= "after-reload" text)
+                   "a symbol-designator handler must see a post-construction redefinition"))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test tool-handler-captured-function-object-does-not-hot-reload-illustrative
+  "Documents the exact defect #116 fixed, as a permanent regression guard: a
+CAPTURED #'name closure -- unlike a symbol designator -- keeps calling
+whatever body existed at capture time forever, even after the underlying
+function is reloaded via a genuinely separate recompile (what RELOAD_HARNESS
+performs). If this test ever starts failing, something in this Lisp
+implementation's redefinition semantics changed; it is not this project's
+own regression to chase."
+  (let* ((root (temp-data-root)))
+    (unwind-protect
+         (progn
+           (%compile-and-load-hot-reload-fixture root "before-reload")
+           (let ((captured (funcall (symbol-function '%hot-reload-fixture-capture))))
+             (%compile-and-load-hot-reload-fixture root "after-reload")
+             (multiple-value-bind (text is-error) (funcall captured (make-hash-table :test #'equal) nil)
+               (declare (ignore is-error))
+               (is (string= "before-reload" text)
+                   "a captured #'name handler froze the pre-redefinition body -- exactly the #116 defect a symbol designator avoids"))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test default-tool-catalog-handlers-are-symbol-designators-not-captured-closures
+  "Guards every catalog tool, not just one fixture: #116 requires each
+built-in tool's :HANDLER to be late-bound. An anonymous LAMBDA (no symbol to
+late-bind) or a captured #'name FUNCTION object would both fail this."
+  (let* ((catalog (sm-harness:default-tool-catalog))
+         (tools (sm-harness:tool-server-definition-tools
+                 (first (sm-harness:tool-catalog-servers catalog)))))
+    (dolist (tool tools)
+      ;; echo_text is deliberately exempted: its handler is a small anonymous
+      ;; LAMBDA with nothing else to late-bind against (see tool-catalog.lisp).
+      (unless (string= (sm-harness:tool-definition-name tool) "echo_text")
+        (is (symbolp (sm-harness:tool-definition-handler tool))
+            (format nil "~A's handler should be a symbol designator, not a captured function object"
+                    (sm-harness:tool-definition-name tool)))))))

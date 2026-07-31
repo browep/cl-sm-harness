@@ -7,6 +7,23 @@
   (name "" :type string)
   (description "" :type string)
   input-schema
+  ;; A function designator: a symbol naming a global function is strongly
+  ;; preferred over a captured #'name function object (see #116). SBCL/ANSI
+  ;; CL semantics: (function name), evaluated once when a *-TOOL-DEFINITION
+  ;; constructor runs, freezes a snapshot of NAME's function cell as of that
+  ;; moment -- a later (DEFUN NAME ...), e.g. from RELOAD_HARNESS, rebinds
+  ;; the symbol's global function cell to a *new* function object but does
+  ;; not mutate the already-captured one, so an already-open session's tool
+  ;; call keeps running the pre-reload body forever. FUNCALLing a symbol
+  ;; instead performs a fresh lookup every call, so a symbol handler's
+  ;; *own* top-level body hot-reloads correctly mid-session, same as calls
+  ;; it makes internally already did (ordinary, non-inlined function calls
+  ;; are late-bound by default). %SDK-TOOL-FROM-DEFINITION (sdk-adapter.lisp)
+  ;; already just FUNCALLs this slot's value, so either designator works;
+  ;; only the symbol form gets the hot-reload property. An anonymous LAMBDA
+  ;; (nothing else in this file needs one) has no symbol to late-bind and is
+  ;; frozen the same way a captured #'name would be -- fine for a handler
+  ;; that will never need a live edit, not otherwise.
   handler)
 
 (defstruct (tool-server-definition (:constructor make-tool-server-definition))
@@ -132,7 +149,7 @@ select a line range. Output is line-numbered (\"<n>\\t<text>\"). Large
 files are truncated with an explicit notice; binary/non-UTF-8 files
 return a size summary instead of their content."
    :input-schema (%read-schema)
-   :handler #'%read-file-tool-handler))
+   :handler '%read-file-tool-handler))
 
 (defparameter +write-tool-max-chars+ (* 5 1024 1024)
   "Cap on write_file's content length, rejected outright rather than
@@ -211,7 +228,7 @@ file without confirmation. PATH and CONTENT are both required. Creates
 parent directories as needed. Content over 5MB is rejected outright (the
 write does not happen) rather than truncated."
    :input-schema (%write-schema)
-   :handler #'%write-file-tool-handler))
+   :handler '%write-file-tool-handler))
 
 (defparameter +bash-tool-default-timeout-seconds+ 120)
 (defparameter +bash-tool-max-timeout-seconds+ 600)
@@ -506,7 +523,7 @@ rejected outright. Kills aimed at any other process, including scratch
 sbcl servers started to test changes, run normally; call reload_harness
 when the goal is picking up Lisp source edits in this harness itself."
    :input-schema (%bash-schema)
-   :handler #'%bash-tool-handler))
+   :handler '%bash-tool-handler))
 
 (defvar *reload-harness-system* :sm-harness
   "ASDF system RELOAD_HARNESS recompiles and reloads. Defaults to
@@ -615,7 +632,7 @@ unable to reload that type again, even after reverting the source: if an
 error mentions instance length or layout, only a container restart will
 fix it, not another reload_harness call."
    :input-schema (%reload-schema)
-   :handler #'%reload-harness-tool-handler))
+   :handler '%reload-harness-tool-handler))
 
 (defparameter +web-search-max-results-default+ 5
   "MAX_RESULTS when a caller omits it entirely.")
@@ -756,7 +773,7 @@ requested. Requires TAVILY_API_KEY to be configured in the environment;
 if it is not, this returns a tool-result error rather than crashing.
 Each result includes a title, URL, and a short content excerpt."
    :input-schema (%web-search-schema)
-   :handler #'%web-search-tool-handler))
+   :handler '%web-search-tool-handler))
 
 (defun default-tool-catalog ()
   "Return product-owned tool metadata, not SDK objects."
