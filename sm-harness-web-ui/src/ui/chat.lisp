@@ -12,6 +12,17 @@
   (%log-set-session body session-id)
   (%log-nav body (format nil "chat ~A" session-id))
   (let* ((snap (ui-open-session session-id))
+         ;; #124: sync the address bar to the session actually being
+         ;; rendered, here rather than at each caller -- every path into
+         ;; this function (direct "/sessions/<id>" load, "New session", and
+         ;; clicking an existing row in the home list, home.lisp) then gets
+         ;; a reload-safe URL for free, instead of relying on individual
+         ;; call sites to remember (the bug in #124: the session-list click
+         ;; never did). Placed after UI-OPEN-SESSION succeeds so a bad
+         ;; SESSION-ID never lands in the bar before HARNESS-NOT-FOUND-ERROR
+         ;; propagates to application.lisp's RENDER-NOT-FOUND, which resets
+         ;; it back to "/" via SET-HOME-ROUTE (home.lisp) anyway.
+         (%route (set-session-route body session-id))
          (root (clog:create-div body :class "page chat" :html-id "chat-root"))
          (header (clog:create-div root :class "header"))
          (back (clog:create-button header :content "Back to home"
@@ -54,7 +65,7 @@
          ;; outstanding so the *real* event, once it does arrive, updates
          ;; state without rendering that same line a second time.
          (awaiting-user-echo nil))
-    (declare (ignore title-el log-panel info-panel))
+    (declare (ignore title-el log-panel info-panel %route))
     (setf (clog:attribute id-el "title") "Copy session id"
           (clog:attribute id-el "aria-label")
           (format nil "Copy session id ~A to clipboard" session-id))

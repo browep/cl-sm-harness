@@ -668,6 +668,62 @@ warning anywhere. The same reset silently dropped the installed
 after the first reload too. Both are now `DEFVAR`, which only initializes
 when unbound, so `main`'s startup `SETF` survives every later reload.
 
+## Session-switch clicks not updating the address bar (#124)
+
+`render-chat`/`render-home` (`src/ui/chat.lisp`/`src/ui/home.lisp`) are
+in-place DOM rebuilds, not real browser navigations (CLOG swaps `innerHTML`
+over the same connection), so nothing updates `window.location` unless a
+handler does it explicitly via `window.history.replaceState`
+(`set-session-route`, added in #43 for the direct-load/new-session case).
+That turned out to be exactly the gap: `set-session-route` was only ever
+called from the "New session" button's click handler, not from every path
+that actually changes what's on screen. Reported symptom (with a
+screenshot): click a different session in the home list, and the address
+bar still shows a stale URL — reloading the page then resumes the *wrong*
+session, not the one visibly open.
+
+**The two missing call sites:**
+
+- Clicking an existing row in the home session list (`render-home`'s
+  `list-region` loop) called `render-chat` but never synced the route, so
+  the bar kept showing whatever it was on before the click (`/` from the
+  home screen itself, or a previous session's stale `/sessions/<id>`).
+- "Back to home" (the chat header's `#back-home` button, and the
+  not-found screen's `#not-found-home` button, `render-not-found` in
+  `home.lisp`) both called `render-home` but never reset the bar back to
+  `/`, leaving it pointing at the session just left while home was what
+  actually rendered.
+
+**Fix:** rather than patch each call site — which is how this bug happened
+in the first place, a case-by-case habit that's easy to forget for any new
+caller — the URL sync moved *into* `render-chat`/`render-home` themselves:
+
+- `render-chat` (`src/ui/chat.lisp`) now calls `set-session-route` itself,
+  right after `ui-open-session` succeeds (deliberately after, not before:
+  a bad `session-id` must not land in the bar ahead of
+  `harness-not-found-error` propagating to `application.lisp`'s
+  `render-not-found`, which resets the bar back to `/` anyway via the next
+  point below). Every caller — a direct `/sessions/<id>` load, "New
+  session", and clicking an existing row in the list — gets a correct,
+  reload-safe URL for free; the "New session" handler's own explicit call
+  (the only one that existed pre-#124) was removed as redundant.
+- `render-home` (`src/ui/home.lisp`) gained the mirror image,
+  `set-home-route` (`window.history.replaceState(null, '', '/')`), called
+  at the top of `render-home` itself. A no-op on a direct load of `/`;
+  what actually fixes both "Back to home" buttons, since they only ever
+  called `render-home`, never the route helper.
+
+**Coverage:** the `turn-identity` browser E2E scenario
+(`e2e/scenarios/turn-identity.lisp`) already drove exactly the click path
+that exposed this (create a session, go back to home, click that
+session's row from the list) — `assert_url_pattern` steps were added at
+each stage (`^/sessions/[^/]+$` after creation, `^/$` after "Back to
+home", `^/sessions/[^/]+$` again after clicking the row from the list),
+plus a `reload` immediately after the list-click step to prove a reload
+from there actually resumes the session on screen, not a stale one —
+mirroring how `direct-session-resume` already proves this for the
+session-creation path alone.
+
 ## Self-healing CLOG's static-root after a whole-tree reload (#105)
 
 A `reload_harness` call is meant to touch only this project's own Lisp

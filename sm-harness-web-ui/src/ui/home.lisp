@@ -4,6 +4,16 @@
   (clog:js-execute body
                    (format nil "window.history.replaceState(null, '', '/sessions/~A');" session-id)))
 
+;; #124: the address bar must follow whichever view is actually on screen,
+;; not just the one call site (originally just "New session", #43) that
+;; happened to remember to update it. RENDER-HOME calls this itself (below)
+;; so every path back to home -- the chat header's "Back to home" button,
+;; this screen's own "Back to home" button, and any future one -- gets it
+;; for free instead of leaving a stale /sessions/<id> in the bar while home
+;; is what's actually rendered (the bug in #124's screenshot).
+(defun set-home-route (body)
+  (clog:js-execute body "window.history.replaceState(null, '', '/');"))
+
 (defun render-not-found (body)
   (setf (clog:title (clog:html-document body)) "Session not found — sm-harness")
   (let ((root (clog:create-div body :class "page" :html-id "not-found-root"))
@@ -35,6 +45,12 @@ generically correct rather than assuming that never changes."
 
 (defun render-home (body)
   (setf (clog:title (clog:html-document body)) "sm-harness")
+  ;; #124: keep the address bar in sync with the view CLOG actually rendered
+  ;; -- see SET-HOME-ROUTE above. A no-op replaceState when we're already at
+  ;; "/" (e.g. a fresh direct load of "/"), otherwise this is what makes
+  ;; "Back to home" (chat.lisp) and this screen's own not-found "Back to
+  ;; home" button leave the URL correct for a subsequent reload.
+  (set-home-route body)
   ;; Browser log capture (#92): no session is active on this screen, and
   ;; recording the navigation itself lets exported logs be matched against
   ;; when the tab left a session for home.
@@ -94,8 +110,12 @@ generically correct rather than assuming that never changes."
         (handler-case
             (let ((snap (ui-start-session :backend (clog:value backend-select)
                                           :model (clog:value model-select))))
-              (render-chat body (sm-harness:session-snapshot-id snap))
-              (set-session-route body (sm-harness:session-snapshot-id snap)))
+              ;; #124: RENDER-CHAT itself now syncs the route (see chat.lisp),
+              ;; so no explicit SET-SESSION-ROUTE call is needed here anymore
+              ;; -- keeping the sync inside the render functions is what
+              ;; prevents call sites like the session-list click below from
+              ;; forgetting it.
+              (render-chat body (sm-harness:session-snapshot-id snap)))
           (error (c)
             (setf (clog:text status) (format nil "Error: ~A" c))))))
     (handler-case
