@@ -6,7 +6,7 @@
    #:harness-config-idle-ttl-seconds #:harness-config-turn-deadline-seconds
    #:make-harness #:close-harness #:mark-sessions-for-catalog-refresh
    #:start-session #:list-sessions #:open-session
-   #:submit-turn #:interrupt-turn #:evict-idle-sessions
+   #:submit-turn #:interrupt-turn #:evict-idle-sessions #:set-session-title
    #:attach-session-listener #:detach-session-listener
    #:session-status
    #:make-event #:event-type #:event-sequence #:event-session-id #:event-payload
@@ -24,7 +24,7 @@
    #:transcript-entry #:transcript-entry-role #:transcript-entry-text
    #:transcript-entry-kind #:transcript-entry-meta #:transcript-entry-created-at
    #:default-tool-catalog #:default-tool-policy #:*reload-harness-system*
-   #:*post-reload-hook*
+   #:*post-reload-hook* #:*tool-harness*
    #:make-tool-policy #:tool-policy-builtin-tools #:tool-policy-strict-mcp-p
    #:tool-catalog #:tool-catalog-servers
    #:tool-server-definition #:tool-server-definition-name #:tool-server-definition-version

@@ -240,3 +240,74 @@ through the real session-service path (not just the repository layer)."
                (sm-harness:detach-session-listener h sid listener-id))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+(test set-session-title-trims-persists-and-reopens
+  "SET-SESSION-TITLE trims whitespace, persists through the repository (not
+just the in-memory record), and is visible to a fresh OPEN-SESSION -- not
+merely to the runtime instance that made the change."
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config :data-root root))))
+    (unwind-protect
+         (let* ((snap (sm-harness:start-session h :title "Original"))
+                (sid (sm-harness:session-snapshot-id snap)))
+           (let ((summary (sm-harness:set-session-title h sid "  Renamed  ")))
+             (is (string= "Renamed" (sm-harness:session-summary-title summary))))
+           (let ((reopened (sm-harness:open-session h sid)))
+             (is (string= "Renamed" (sm-harness:session-snapshot-title reopened))))
+           (let ((listed (find sid (sm-harness:list-sessions h)
+                               :key #'sm-harness:session-summary-id :test #'string=)))
+             (is (string= "Renamed" (sm-harness:session-summary-title listed)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test set-session-title-rejects-empty-or-oversized-title
+  "An empty/whitespace-only title or one over +SESSION-TITLE-MAX-CHARS+ is
+rejected outright, not truncated -- and the stored title is left
+untouched by the rejected attempt."
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config :data-root root))))
+    (unwind-protect
+         (let* ((snap (sm-harness:start-session h :title "Original"))
+                (sid (sm-harness:session-snapshot-id snap)))
+           (signals sm-harness:harness-input-error
+             (sm-harness:set-session-title h sid "   "))
+           (signals sm-harness:harness-input-error
+             (sm-harness:set-session-title h sid ""))
+           (signals sm-harness:harness-input-error
+             (sm-harness:set-session-title
+              h sid (make-string 201 :initial-element #\x)))
+           (let ((reopened (sm-harness:open-session h sid)))
+             (is (string= "Original" (sm-harness:session-snapshot-title reopened)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test set-session-title-unknown-session-signals-not-found
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config :data-root root))))
+    (unwind-protect
+         (signals sm-harness:harness-not-found-error
+           (sm-harness:set-session-title h "sess-does-not-exist" "New title"))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test set-session-title-reopens-an-idle-session
+  "SESSION-ID need not already be attached in memory: an idle session (no
+open runtime) is transparently reopened, the same way a browser reopening
+an old session would be, rather than requiring the caller to OPEN-SESSION
+first."
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root :idle-ttl-seconds 1))))
+    (unwind-protect
+         (let* ((snap (sm-harness:start-session h :title "Original"))
+                (sid (sm-harness:session-snapshot-id snap)))
+           (sm-harness:evict-idle-sessions h :now (+ (get-universal-time) 10))
+           (let ((summary (sm-harness:set-session-title h sid "Revived title")))
+             (is (string= "Revived title" (sm-harness:session-summary-title summary))))
+           (let ((reopened (sm-harness:open-session h sid)))
+             (is (string= "Revived title" (sm-harness:session-snapshot-title reopened)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

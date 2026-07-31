@@ -152,6 +152,36 @@ useless if the provider they reconnect through is itself a frozen snapshot."
       (%open-runtime harness rec))
     (session-record->snapshot rec)))
 
+(defparameter +session-title-max-chars+ 200
+  "Ceiling on a session title's length. Rejected outright, not truncated --
+this is a short display label (home-screen chip, chat header info panel),
+so silently cutting it to fit is more likely to produce a confusing half
+title than a genuine size problem worth accommodating.")
+
+(defun set-session-title (harness session-id title)
+  "Update SESSION-ID's stored title to TITLE (leading/trailing whitespace
+trimmed). Returns the updated SESSION-SUMMARY. SESSION-ID need not already
+be attached in memory -- an idle session is transparently reopened first,
+the same way OPEN-SESSION would, so this works for any session this
+HARNESS's repository knows about, not just ones with a live client.
+Signals HARNESS-INPUT-ERROR for an empty/oversized title and
+HARNESS-NOT-FOUND-ERROR for an unknown SESSION-ID (via OPEN-SESSION)."
+  (let ((trimmed (and (stringp title)
+                      (string-trim '(#\Space #\Tab #\Newline #\Return) title))))
+    (unless (and trimmed (plusp (length trimmed)))
+      (error 'harness-input-error :message "title must be a non-empty string"))
+    (when (> (length trimmed) +session-title-max-chars+)
+      (error 'harness-input-error
+             :message (format nil "title exceeds the ~:D character limit"
+                              +session-title-max-chars+)))
+    (open-session harness session-id)
+    (let ((rt (%get-runtime harness session-id)))
+      (sb-thread:with-mutex ((session-runtime-lock rt))
+        (setf (session-record-title (session-runtime-record rt)) trimmed)
+        (repository-save-session (harness-repository harness)
+                                 (session-runtime-record rt)))
+      (session-record->summary (session-runtime-record rt)))))
+
 (defun submit-turn (harness session-id prompt &key (kind "message"))
   "KIND tags the durable transcript entry and published :user-message event
 (default \"message\"). Internal harness-initiated follow-ups (#76) pass

@@ -547,6 +547,51 @@ itself is never baked into an image or visible to the offline test
 services, per the existing `.env`-related guardrails elsewhere in this
 project.
 
+### `set_session_title`
+
+Renames a session: updates the stored `title` shown on the home screen's
+session chip and in a session's own Info panel (both currently always read
+the literal default, `"New session"` — nothing had ever edited a title
+before this). `session_id` and `title` are both required. `session_id` is
+never inferred from which session is making the call: a call always names
+the session explicitly, even to rename itself, matching every other
+harness-facing API in this project (`open-session`, `submit-turn`, ...)
+rather than introducing a first "current session" magic argument. An
+agent's own session id is already available to it, named in its own system
+prompt (`%session-system-prompt`, runtime.lisp) — but nothing stops one
+session from renaming another, consistent with this catalog's existing
+no-sandboxing stance (#61): `read_file`/`write_file` can already reach and
+corrupt another session's durable JSON record directly, so a validated,
+harness-level rename API is strictly *safer* than the status quo, not a
+new exposure.
+
+`title` is trimmed of leading/trailing whitespace and rejected outright —
+not silently truncated — if it is empty after trimming or exceeds
+`+session-title-max-chars+` (200): a short display label has no good
+truncation behavior, and rejecting means the caller finds out immediately
+rather than shipping a truncated, confusing chip.
+
+The actual mutation is `sm-harness:set-session-title` (session-service.lisp):
+it reopens `session-id` first (`open-session`, transparent for both an
+already-open and a durable-but-idle session — the caller never has to
+attach it first), updates the in-memory record's `title` under
+`session-runtime-lock`, and persists through `repository-save-session`,
+which also refreshes the summary index — so a rename is immediately
+reflected the next time the home screen or an Info panel reads either.
+Signals `harness-input-error` for an invalid title and
+`harness-not-found-error` (via `open-session`) for an unknown `session-id`,
+both surfaced as a normal `(is-error t)` tool result, not a crash.
+
+Unlike every other catalog tool, this handler needs a live `HARNESS`
+instance to act on — `tool-catalog.lisp` is deliberately harness-agnostic
+otherwise (a pure function of its arguments). `*tool-harness*` is the
+dependency-injection seam for that, mirroring `*tavily-api-key-fn*`
+above: `NIL` by default (so this file keeps loading/testing standalone,
+no application wired up), and set to the live harness by
+`sm-harness-web-ui:start-web-ui` at startup (alongside `*app-harness*`,
+which the CLOG-facing UI code reads instead — this file must not import
+that package, since `:sm-harness` has to load without CLOG).
+
 ## Turn deadline
 
 `turn-deadline-seconds` (default 600, `make-harness-config`) bounds

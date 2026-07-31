@@ -842,6 +842,86 @@ Each result includes a title, URL, and a short content excerpt."
    :input-schema (%web-search-schema)
    :handler '%web-search-tool-handler))
 
+(defvar *tool-harness* nil
+  "The live SM-HARNESS:HARNESS instance a tool handler may operate against,
+e.g. to look up or mutate a *different* session's durable state than the
+one the calling tool call is itself running inside. NIL by default so
+this file keeps loading and running standalone (headless sm-harness, its
+own test suite) with no application wired up -- a handler that needs it
+reports a safe, clear tool-result error instead of crashing when it is
+unset. sm-harness-web-ui's START-WEB-UI sets this to its own *APP-HARNESS*
+singleton at startup (the same instance already used for every other
+harness call), mirroring the *TAVILY-API-KEY-FN*/*BASH-GUARD-COMMAND-LINE*
+dependency-injection points above: this file (:SM-HARNESS) must not
+itself depend on :SM-HARNESS-WEB-UI, so the wiring happens in the other
+direction, at application startup, not via an import here.")
+
+(defun %set-session-title-schema ()
+  (let ((schema (%json-object "type" "object"))
+        (props (%json-object))
+        (session-id-field (%json-object "type" "string"))
+        (title-field (%json-object "type" "string")))
+    (setf (gethash "session_id" props) session-id-field
+          (gethash "title" props) title-field
+          (gethash "properties" schema) props
+          (gethash "required" schema) (list "session_id" "title"))
+    schema))
+
+(defun %set-session-title-tool-handler (arguments context)
+  (declare (ignore context))
+  (let ((session-id (gethash "session_id" arguments))
+        (title (gethash "title" arguments)))
+    (cond
+      ((not (and (stringp session-id) (plusp (length session-id))))
+       (values "set_session_title requires a non-empty session_id" t))
+      ((not (stringp title))
+       (values "set_session_title requires a string title" t))
+      ((null *tool-harness*)
+       (values "set_session_title is unavailable: no harness is wired up for tool calls in this process" t))
+      (t
+       (handler-case
+           (let ((summary (set-session-title *tool-harness* session-id title)))
+             (values (format nil "session ~A title set to ~S"
+                             session-id (session-summary-title summary))
+                     nil))
+         (harness-error (c)
+           (values (format nil "set_session_title failed: ~A" (harness-error-message c)) t))
+         (error (c)
+           (values (format nil "unable to set session title: ~A" c) t)))))))
+
+(defun make-set-session-title-tool-definition ()
+  "Renames a session's stored TITLE -- the label shown on the home screen's
+session chip and in a session's own Info panel. SESSION_ID is required: it
+is not inferred from which session is making the call, so a call always
+says explicitly which session it is renaming (a session normally already
+knows its own id -- it is named in this very agent's system prompt -- but
+nothing stops one session from renaming another, consistent with every
+other catalog tool's no-sandboxing stance, see #61 for read_file/write_file/
+bash). TITLE is rejected outright, not truncated, if empty or over
++SESSION-TITLE-MAX-CHARS+ (200) characters -- a short display label has no
+good silent-truncation behavior. Requires *TOOL-HARNESS* to be configured;
+reports a safe tool-result error, not a crash, when it is not, or when
+SESSION_ID names no known session."
+  (make-tool-definition
+   :name "set_session_title"
+   :description "Rename a session: update its stored title, which is what
+the home screen's session chip and a session's own Info panel display in
+place of the default \"New session\". SESSION_ID (required) is the id of
+the session to rename -- your own session id is given to you at the start
+of your system prompt; a call always names the session explicitly rather
+than assuming \"this one\", so pass it even when renaming yourself. TITLE
+(required) is the new title: a short, human-readable label, not a full
+description -- it renders as one line in the chip and the info panel.
+Whitespace at the ends is trimmed. An empty title or one over 200
+characters is rejected outright (nothing is changed) rather than silently
+truncated or blanked. The session need not be the one currently running
+this tool call, and it does not need an open connection -- an idle
+session already on disk is reopened automatically. This does not change
+the session's id, its transcript, or anything else about it -- only the
+display title."
+   :input-schema (%set-session-title-schema)
+   :handler '%set-session-title-tool-handler))
+
 (defun default-tool-catalog ()
   "Return product-owned tool metadata, not SDK objects."
   (make-tool-catalog
@@ -854,4 +934,5 @@ Each result includes a title, URL, and a short content excerpt."
                        (make-write-tool-definition)
                        (make-bash-tool-definition)
                        (make-reload-tool-definition)
-                       (make-web-search-tool-definition))))))
+                       (make-web-search-tool-definition)
+                       (make-set-session-title-tool-definition))))))

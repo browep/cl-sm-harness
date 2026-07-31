@@ -593,3 +593,76 @@ late-bind) or a captured #'name FUNCTION object would both fail this."
         (is (symbolp (sm-harness:tool-definition-handler tool))
             (format nil "~A's handler should be a symbol designator, not a captured function object"
                     (sm-harness:tool-definition-name tool)))))))
+
+(defun %call-set-session-title-tool (&key session-id title)
+  (let ((arguments (make-hash-table :test #'equal)))
+    (when session-id (setf (gethash "session_id" arguments) session-id))
+    (when title (setf (gethash "title" arguments) title))
+    (multiple-value-bind (text is-error)
+        (sm-harness::%set-session-title-tool-handler arguments nil)
+      (list text is-error))))
+
+(test set-session-title-tool-is-registered-in-the-default-catalog
+  (let* ((catalog (sm-harness:default-tool-catalog))
+         (tools (sm-harness:tool-server-definition-tools
+                 (first (sm-harness:tool-catalog-servers catalog))))
+         (tool (find "set_session_title" tools
+                     :key #'sm-harness:tool-definition-name :test #'string=)))
+    (is (not (null tool)))
+    (is (equal '("session_id" "title")
+               (gethash "required" (sm-harness:tool-definition-input-schema tool))))))
+
+(test set-session-title-tool-handler-requires-tool-harness-to-be-configured
+  "With *TOOL-HARNESS* unset (the default -- headless sm-harness with no
+application wired up), the handler reports a safe tool-result error
+instead of crashing."
+  (let ((sm-harness::*tool-harness* nil))
+    (destructuring-bind (text is-error)
+        (%call-set-session-title-tool :session-id "sess-1" :title "New title")
+      (is (eq t is-error))
+      (is (search "no harness is wired up" text)))))
+
+(test set-session-title-tool-handler-rejects-missing-arguments
+  (let ((sm-harness::*tool-harness* nil))
+    (destructuring-bind (text is-error)
+        (%call-set-session-title-tool :title "New title")
+      (is (eq t is-error))
+      (is (search "session_id" text)))
+    (destructuring-bind (text is-error)
+        (%call-set-session-title-tool :session-id "sess-1")
+      (is (eq t is-error))
+      (is (search "title" text)))))
+
+(test set-session-title-tool-handler-renames-a-real-session-end-to-end
+  "Exercises the handler exactly as a live tool call would: through
+*TOOL-HARNESS*, against a real (temp-rooted) HARNESS, confirming the
+rename is both reported back in the tool result text and durably
+persisted."
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config :data-root root))))
+    (unwind-protect
+         (let* ((snap (sm-harness:start-session h :title "Original"))
+                (sid (sm-harness:session-snapshot-id snap))
+                (sm-harness::*tool-harness* h))
+           (destructuring-bind (text is-error)
+               (%call-set-session-title-tool :session-id sid :title "  Renamed via tool  ")
+             (is (null is-error))
+             (is (search "Renamed via tool" text)))
+           (let ((reopened (sm-harness:open-session h sid)))
+             (is (string= "Renamed via tool" (sm-harness:session-snapshot-title reopened)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test set-session-title-tool-handler-reports-unknown-session-safely
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config :data-root root))))
+    (unwind-protect
+         (let ((sm-harness::*tool-harness* h))
+           (destructuring-bind (text is-error)
+               (%call-set-session-title-tool :session-id "sess-does-not-exist" :title "hi")
+             (is (eq t is-error))
+             (is (search "session not found" text))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

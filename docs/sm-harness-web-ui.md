@@ -169,8 +169,10 @@ chip.
 `%model-label` already live there: it gets `presenter-tests` coverage
 without needing a live CLOG server. Every field is `escape-text`'d before
 insertion, including title and canonical id -- both ultimately come from
-outside this process (a future editable title; the CLI's own session id),
-so they don't get a free pass just because nothing edits titles yet.
+outside this process (the CLI's own session id; a title, editable since
+the `set_session_title` catalog tool -- see
+docs/sm-harness.md#set_session_title -- was added), so they don't get a
+free pass just because this UI itself never edits either.
 Backend/model reuse `%backend-label`/`%model-label` from #106 (so "Default"
 still means "no explicit per-session model override", not blank); turn count
 goes through `%turn-count-label` (pluralizes: "1 turn" vs "3 turns"); elapsed

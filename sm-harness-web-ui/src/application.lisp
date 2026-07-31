@@ -65,6 +65,7 @@ true, additionally registers test-only E2E routes (#100) if the
 sm-harness-web-ui/e2e system providing them is loaded -- see
 %MAYBE-INSTALL-E2E-TEST-ROUTES."
   (setf *app-harness* harness
+        sm-harness:*tool-harness* harness
         *web-ui-config* (or config (make-web-ui-config)))
   (let ((cfg *web-ui-config*))
     ;; #122: durable connection-lifecycle logging (web/connection-log.jsonl,
@@ -98,6 +99,8 @@ sm-harness-web-ui/e2e system providing them is loaded -- see
 
 (defun stop-web-ui ()
   (when *app-harness*
+    (when (eq sm-harness:*tool-harness* *app-harness*)
+      (setf sm-harness:*tool-harness* nil))
     (ignore-errors (sm-harness:close-harness *app-harness*))
     (setf *app-harness* nil))
   (setf *clog-server* nil)
