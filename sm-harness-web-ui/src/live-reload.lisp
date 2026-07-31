@@ -58,17 +58,28 @@ already-configured value here is a harmless no-op on an ordinary reload
 that never touched CLOG; a log line only fires when this call actually
 had to repair something, so it doubles as a diagnostic for the scenario
 above."
-  (when *web-ui-config*
-    (let ((expected (namestring (web-ui-config-static-root *web-ui-config*))))
-      (unless (equal clog-connection:*static-root* expected)
-        (format t "~&sm-harness-web-ui: CLOG-CONNECTION:*STATIC-ROOT* was ~S ~
+  (let ((expected (namestring (web-ui-config-static-root *web-ui-config*))))
+    (unless (equal clog-connection:*static-root* expected)
+      (format *error-output*
+              "RELOAD_HARNESS repaired CLOG-CONNECTION:*STATIC-ROOT* to ~S ~
 after reload, re-asserting ~S -- see #105 (this reload likely re-evaluated ~
 CLOG itself; check its warning output for packages outside this repo)~%"
-                clog-connection:*static-root* expected))
+              clog-connection:*static-root* expected)
       (setf clog-connection:*static-root* expected))))
 
 (defun %refresh-after-reload ()
   "Installed as SM-HARNESS:*POST-RELOAD-HOOK* by START-WEB-UI (#78)."
   (%reassert-static-root)
   (%reinstall-clog-routes)
-  (%refresh-live-browser-windows))
+  (%refresh-live-browser-windows)
+  ;; #116 phase 2: flag every open session to reconnect (picking up
+  ;; *APP-HARNESS*'s current HARNESS-CATALOG-PROVIDER, itself already
+  ;; re-resolved per #116 phase 1) the next time a turn starts for it --
+  ;; never disrupts a turn actively in flight right now, see
+  ;; MARK-SESSIONS-FOR-CATALOG-REFRESH's docstring. Guarded the same way
+  ;; the calls above are: a reload with no harness constructed yet (should
+  ;; not happen once START-WEB-UI has run, but this hook has no other
+  ;; guarantee of ordering against a future caller) must not turn a
+  ;; successful reload into a tool-result error.
+  (when *app-harness*
+    (sm-harness:mark-sessions-for-catalog-refresh *app-harness*)))

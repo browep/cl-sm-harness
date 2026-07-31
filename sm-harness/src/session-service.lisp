@@ -23,6 +23,30 @@ including ones not yet created, for the rest of a process's life."
      :catalog-provider catalog-provider
      :policy (or policy (default-tool-policy)))))
 
+(defun mark-sessions-for-catalog-refresh (harness)
+  "Flag every currently-open session in HARNESS to reconnect on its next
+turn, so that turn's %ENSURE-CLIENT call re-resolves HARNESS-CATALOG-PROVIDER
+and reaches a tool the provider now returns that it did not when that
+session's client last connected (#116 phase 2). Intended to run once, right
+after a successful RELOAD_HARNESS -- sm-harness-web-ui's
+*POST-RELOAD-HOOK* (live-reload.lisp) calls this.
+
+Safe to call from any thread: this only ever sets a per-session boolean
+flag another thread (that session's own worker thread, inside %RUN-TURN)
+will consume -- it never touches SESSION-RUNTIME-CLIENT itself, so a turn
+actively in flight when this runs is never disrupted; the flagged session
+simply reconnects (disconnect, then the same :RESUME-based rebuild an
+error-recovery reconnect already performs) the next time a turn starts for
+it. A session with no further turns after this call simply never
+reconnects -- this is a lazy, next-message refresh, not an unsolicited
+push into a live conversation."
+  (sb-thread:with-mutex ((harness-lock harness))
+    (maphash (lambda (id rt)
+               (declare (ignore id))
+               (setf (session-runtime-pending-catalog-refresh-p rt) t))
+             (harness-sessions harness)))
+  harness)
+
 (defun close-harness (harness)
   (sb-thread:with-mutex ((harness-lock harness))
     (when (harness-closed-p harness)

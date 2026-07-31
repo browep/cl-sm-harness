@@ -247,6 +247,11 @@ is specifically tied to `reload_harness`, via a tool-use-id → tool-name
 correlation table on `session-runtime` (`:tool-completed`/`:tool-failed`
 payloads carry the id but not the name; `:tool-requested` carries both).
 
+**This follow-up alone does not make a *brand-new* tool callable** — see
+"Making a tool usable mid-session" below (#116) for why, and for what
+actually closes that gap. It reliably helps once a tool the model already
+has in its schema gets its underlying logic fixed via a reload.
+
 The follow-up is submitted through the exact same `submit-turn` path a
 human message would use, tagged with `:kind "synthetic"` so its transcript
 entry (and the live `:user-message` event's `:synthetic t` payload flag)
@@ -279,10 +284,13 @@ depending on it: `start-web-ui` installs a hook that
    `render-home`/`render-chat`/the presenter) via a reload rebinds the
    *symbol's* function cell but does not touch that already-captured
    function object, so a *new* browser connection would otherwise keep
-   hitting stale pre-reload code until the process restarts; and
+   hitting stale pre-reload code until the process restarts;
 2. pushes a page reload to every currently open browser tab (tracked in
    `*live-browser-windows*` as each one connects) via CLOG's own
-   `clog:reload`, pruning any tab that has since closed.
+   `clog:reload`, pruning any tab that has since closed; and
+3. calls `mark-sessions-for-catalog-refresh` (see below, #116) so every
+   currently open chat session picks up whatever the reload changed the
+   next time a turn starts for it.
 
 A misbehaving hook is folded into the tool result's warnings text, not
 escalated to `is-error t`: a successful reload stays reported as a
@@ -291,6 +299,80 @@ success even if, say, a tracked browser vanished mid-broadcast.
 Static assets (`app.css`, etc.) needed no such mechanism — the browser
 already refetches those fresh on every page load; only the *routing* and
 *already-open tabs* needed an explicit nudge.
+
+#### Making a tool usable mid-session, not just after a restart (#116)
+
+A `reload_harness` that adds a *brand-new* tool, or edits an *existing*
+tool handler's own top-level body, needs more than the mechanisms above to
+actually reach an already-open chat session. Three things had to be fixed
+together:
+
+1. **Handlers are late-bound by symbol, not captured as `#'name`.** Every
+   `make-*-tool-definition` in `tool-catalog.lisp` stores its `:handler` as
+   a symbol (e.g. `'%bash-tool-handler`), not `#'%bash-tool-handler`. A
+   captured function object is a snapshot, frozen at the moment
+   `(function name)` was evaluated — verified directly, with a genuinely
+   separate `compile-file`+`load` (the same mechanism `reload_harness`'s
+   `(asdf:load-system ... :force t)` uses): a captured reference keeps
+   calling the pre-redefinition body forever, even after the underlying
+   function is recompiled and reloaded. `funcall`ing a symbol instead
+   performs a fresh lookup every call, so a symbol handler's own body
+   hot-reloads correctly for the rest of an open session. (An anonymous
+   `lambda`, like `echo_text`'s, has no symbol to late-bind and stays
+   frozen the same way a captured `#'name` would — acceptable there since
+   nothing else in that handler needs a live edit.)
+2. **The harness-wide catalog is re-resolved per connection, not cached
+   once at startup.** `harness`'s `catalog` slot (`runtime.lisp`) used to
+   hold a `tool-catalog` value built once by `default-tool-catalog` in
+   `make-harness` and never re-read — and since `sm-harness-web-ui` keeps
+   one `harness` singleton (`*app-harness*`) for the whole process, even a
+   *brand-new* session created after a successful reload still got the
+   pre-reload tool list. The slot is now `catalog-provider`: a zero-argument
+   function `%ensure-client` calls fresh every time it builds a *new*
+   client connection. `make-harness`'s existing `:catalog` keyword (tests,
+   the web UI's E2E fixture catalog) keeps its exact current contract — a
+   fixed catalog for that harness's whole lifetime — via an internal
+   constant-returning wrapper; only the real production path (no explicit
+   `:catalog` argument at all) actually goes back to `default-tool-catalog`
+   on every new connection.
+3. **An already-open session deliberately reconnects after a reload.**
+   `mark-sessions-for-catalog-refresh` (called by `sm-harness-web-ui`'s
+   `*post-reload-hook*`, see above) sets a `pending-catalog-refresh-p` flag
+   on every open `session-runtime`. This is the *only* thing a foreign
+   thread (the reload's own caller) ever touches — never
+   `session-runtime-client` itself. `%ensure-client` consumes the flag at
+   the very start of its own next call, which only ever happens on that
+   session's own worker thread, at the start of a *new* turn (`%run-turn`)
+   — so a turn already in flight when the reload happens is never
+   disrupted. If the flag is set and a client already exists,
+   `%ensure-client` disconnects it and falls through to its ordinary
+   connect logic, which already passes `:resume (session-record-canonical-id
+   rec)` — the exact same rebuild an error-recovery reconnect already
+   performs — so the CLI-side conversation carries forward unchanged; only
+   the tool catalog offered on that reconnect is new. A session that never
+   sends another message after the reload simply never reconnects: this is
+   a lazy, next-message refresh, not an unsolicited push into a live
+   conversation.
+
+Net effect: editing a tool handler's own body reaches an open session
+immediately (no reconnect needed, per (1)); a brand-new tool reaches a
+*new* session immediately (per (2)) and reaches an *already-open* session
+on its next message, with a brief (sub-second in practice) reconnect and
+full context preserved (per (3)).
+
+**What this does not do.** A brand-new tool does not appear *mid-turn*, in
+an already-streaming response, with zero reconnect — that would require
+either the underlying `claude` CLI polling for tool-list changes on an
+already-open connection, or delivering this harness's tools through a real
+external MCP server (`"type": "stdio"`/`"http"` in `--mcp-config`, which
+supports the standard MCP `listChanged` notification) instead of the
+synthetic in-process `"type": "sdk"` mechanism this harness uses today.
+Both were prototyped and verified live against the real `claude` CLI while
+investigating #116, and the external-MCP-server path genuinely works —
+but it requires `claude-agent-sdk-cl` to gain a wholly new external
+MCP-server option type and this harness's tool execution to move out of
+this process's own synchronous control-request path, a separate, larger
+piece of future work, deliberately not part of #116.
 
 ### `web_search` (#112)
 

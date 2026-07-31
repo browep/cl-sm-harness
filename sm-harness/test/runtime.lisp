@@ -1322,3 +1322,141 @@ connection gets refreshed (a separate, later phase)."
                  "a brand-new session must see a tool added to the catalog after it started")))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+;;;; #116 phase 2: MARK-SESSIONS-FOR-CATALOG-REFRESH flags an open session
+;;;; to reconnect at the start of its *next* turn -- never by touching
+;;;; SESSION-RUNTIME-CLIENT itself from a foreign thread -- reusing exactly
+;;;; the :RESUME-based rebuild an error-recovery reconnect already performs.
+
+(defun %robust-delete-directory-tree (root)
+  "DELETE-DIRECTORY-TREE, tolerating one benign race: CLOSE-HARNESS returns
+once every session's worker thread has stopped, but a session's own
+listener dispatch thread (LISTENER-PUSH/%LISTENER-DISPATCH-LOOP) can still
+be mid-write to this ROOT for a moment after that -- observed directly as
+an intermittent \"directory not empty\" here for these two tests
+specifically, which (unlike most of this suite) deliberately leave a
+listener attached through a session's final :TERMINAL event. One retry
+after a short settle is enough in practice; a second genuine failure is
+reported normally rather than silently swallowed."
+  (handler-case
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)
+    (error ()
+      (sleep 0.2)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test open-session-reconnects-with-the-current-catalog-after-a-marked-refresh
+  "A session already connected, then flagged via
+MARK-SESSIONS-FOR-CATALOG-REFRESH, must reconnect on its next turn and see
+the harness's current catalog -- while the flagging call itself must never
+touch the live client synchronously, and the reconnect must carry prior
+CLI-side context forward via :RESUME exactly like the existing
+error-recovery reconnect path already does."
+  (let* ((root (temp-data-root))
+         (options-seen '())
+         (transports '())
+         (current-catalog (%fixture-tool-catalog "tool_a"))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (push options options-seen)
+                        (let ((transport (make-simple-turn-transport)))
+                          (push transport transports)
+                          transport)))))
+         (done (sb-thread:make-semaphore :name "catalog-refresh-done")))
+    (setf (sm-harness::harness-catalog-provider h) (lambda () current-catalog))
+    (unwind-protect
+         (let* ((snapshot (sm-harness:start-session h :title "catalog refresh"))
+                (session-id (sm-harness:session-snapshot-id snapshot))
+                (listener-id nil))
+           (multiple-value-bind (snap lid cursor)
+               (sm-harness:attach-session-listener
+                h session-id
+                :callback (lambda (ev)
+                            (when (eq :terminal (sm-harness:event-type ev))
+                              (sb-thread:signal-semaphore done))))
+             (declare (ignore snap cursor))
+             (setf listener-id lid))
+           (sm-harness:submit-turn h session-id "turn one")
+           (is (sb-thread:wait-on-semaphore done :timeout 5))
+           (is (= 1 (length options-seen)))
+           (is (member "tool_a" (%agent-options-tool-names (first options-seen)) :test #'string=))
+           (let ((rt (sm-harness::%get-runtime h session-id)))
+             (is (not (null (sm-harness::session-runtime-client rt)))
+                 "the first turn's client must still be connected before any refresh is requested"))
+           (sm-harness:mark-sessions-for-catalog-refresh h)
+           (let ((rt (sm-harness::%get-runtime h session-id)))
+             (is (sm-harness::session-runtime-pending-catalog-refresh-p rt)
+                 "the flag must be set immediately")
+             (is (not (null (sm-harness::session-runtime-client rt)))
+                 "marking for refresh must never itself touch the live client -- only the next turn's own worker thread may"))
+           (setf current-catalog (%fixture-tool-catalog "tool_a" "tool_b"))
+           (sm-harness:submit-turn h session-id "turn two")
+           (is (sb-thread:wait-on-semaphore done :timeout 5))
+           (is (= 2 (length options-seen)))
+           (is (member "tool_b" (%agent-options-tool-names (first options-seen)) :test #'string=)
+               "the reconnected client must see the catalog change")
+           (is (string= "canon-42"
+                        (claude-agent-sdk-cl:agent-options-resume (first options-seen)))
+               "the reconnect must resume the same CLI-side session, not start a fresh one")
+           (let ((first-transport (car (last transports))))
+             (is (eq :disconnect (fake-closed-reason first-transport))
+                 "the stale client must be cleanly disconnected, not abandoned"))
+           (let ((rt (sm-harness::%get-runtime h session-id)))
+             (is (not (sm-harness::session-runtime-pending-catalog-refresh-p rt))
+                 "the flag must be consumed, not left set forever")))
+      (sm-harness:close-harness h)
+      (%robust-delete-directory-tree root))))
+
+(test in-flight-turn-is-not-disrupted-by-a-catalog-refresh-mark
+  "MARK-SESSIONS-FOR-CATALOG-REFRESH must never interrupt a turn already in
+flight: the flag is only consumed at the *start* of %ENSURE-CLIENT's next
+call, which only happens at the beginning of a new turn -- never mid-turn,
+and never by touching SESSION-RUNTIME-CLIENT from the marking thread."
+  (let* ((root (temp-data-root))
+         (options-seen '())
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (push options options-seen)
+                        (make-instance 'harness-fake-transport
+                                       :chunks
+                                       (list (concatenate 'string +init-ok+ +nl+)
+                                             (lambda ()
+                                               (sleep 1.0)
+                                               (concatenate 'string +assistant+ +nl+ +result+ +nl+))))))))
+         (done (sb-thread:make-semaphore :name "in-flight-done")))
+    (unwind-protect
+         (let* ((snapshot (sm-harness:start-session h :title "in-flight refresh"))
+                (session-id (sm-harness:session-snapshot-id snapshot))
+                (listener-id nil)
+                (client-during-flight nil))
+           (multiple-value-bind (snap lid cursor)
+               (sm-harness:attach-session-listener
+                h session-id
+                :callback (lambda (ev)
+                            (when (eq :terminal (sm-harness:event-type ev))
+                              (sb-thread:signal-semaphore done))))
+             (declare (ignore snap cursor))
+             (setf listener-id lid))
+           (sm-harness:submit-turn h session-id "slow turn")
+           ;; Give %ENSURE-CLIENT a moment to connect and start waiting on
+           ;; the delayed chunk (the turn's own 1s sleep) before flagging.
+           (sleep 0.2)
+           (let ((rt (sm-harness::%get-runtime h session-id)))
+             (setf client-during-flight (sm-harness::session-runtime-client rt))
+             (is (not (null client-during-flight))))
+           (sm-harness:mark-sessions-for-catalog-refresh h)
+           (is (sb-thread:wait-on-semaphore done :timeout 5))
+           (is (= 1 (length options-seen))
+               "the in-flight turn's own connection must never be replaced mid-turn")
+           (let ((rt (sm-harness::%get-runtime h session-id)))
+             (is (eq client-during-flight (sm-harness::session-runtime-client rt))
+                 "the same client object must still be in place after the turn completed")
+             (is (sm-harness::session-runtime-pending-catalog-refresh-p rt)
+                 "the flag must survive untouched until the *next* turn's own %ensure-client call")))
+      (sm-harness:close-harness h)
+      (%robust-delete-directory-tree root))))

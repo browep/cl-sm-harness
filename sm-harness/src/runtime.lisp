@@ -37,7 +37,17 @@
   ;; is positive: a tool call owns its own timeout (the bash tool enforces
   ;; one), so the turn deadline measures model/CLI stall, not tool
   ;; runtime (#80).
-  (inflight-tool-calls 0 :type integer))
+  (inflight-tool-calls 0 :type integer)
+  ;; Set by MARK-SESSIONS-FOR-CATALOG-REFRESH (#116 phase 2) after a
+  ;; successful RELOAD_HARNESS, from a foreign thread -- so this flag, never
+  ;; SESSION-RUNTIME-CLIENT itself, is the only thing a foreign thread ever
+  ;; writes here. %ENSURE-CLIENT consumes it at the top of its own next call,
+  ;; always on this session's own worker thread (%RUN-TURN), so an
+  ;; in-flight turn is never disrupted: the flag is only checked when a *new*
+  ;; turn is about to start, and disconnecting+rebuilding the client there
+  ;; reuses the exact same code path an error-recovery reconnect already
+  ;; does (:RESUME (SESSION-RECORD-CANONICAL-ID REC)).
+  (pending-catalog-refresh-p nil))
 
 (defstruct (harness (:constructor %make-harness))
   config
@@ -224,6 +234,22 @@ Its transcript is persisted at ~A."
                   (harness-config-data-root cfg))))))))
 
 (defun %ensure-client (harness rt &key resume)
+  ;; #116 phase 2: MARK-SESSIONS-FOR-CATALOG-REFRESH (a foreign thread, the
+  ;; post-reload hook) may have flagged this session between turns. Consumed
+  ;; here, on this session's own worker thread (%ENSURE-CLIENT only ever
+  ;; runs from inside %RUN-TURN), strictly before the "already connected"
+  ;; early return below -- so a turn actively in flight is never touched;
+  ;; this only ever runs at the very start of the *next* turn. Disconnecting
+  ;; here and falling through to the ordinary connect logic below reuses
+  ;; exactly the :RESUME-based rebuild an error-recovery reconnect already
+  ;; performs (RESUME is always (session-record-canonical-id rec), passed
+  ;; in by %RUN-TURN, so this reconnect carries full prior context the same
+  ;; way that recovery path already does).
+  (when (session-runtime-pending-catalog-refresh-p rt)
+    (setf (session-runtime-pending-catalog-refresh-p rt) nil)
+    (when (session-runtime-client rt)
+      (ignore-errors (disconnect-client (session-runtime-client rt)))
+      (setf (session-runtime-client rt) nil)))
   (when (session-runtime-client rt)
     (return-from %ensure-client (session-runtime-client rt)))
   (let* ((cfg (harness-config harness))

@@ -4,7 +4,7 @@
    #:harness-config #:make-harness-config
    #:harness-config-data-root #:harness-config-project-key
    #:harness-config-idle-ttl-seconds #:harness-config-turn-deadline-seconds
-   #:make-harness #:close-harness
+   #:make-harness #:close-harness #:mark-sessions-for-catalog-refresh
    #:start-session #:list-sessions #:open-session
    #:submit-turn #:interrupt-turn #:evict-idle-sessions
    #:attach-session-listener #:detach-session-listener
