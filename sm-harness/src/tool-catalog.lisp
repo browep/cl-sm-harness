@@ -891,7 +891,12 @@ direction, at application startup, not via an import here.")
 
 (defun make-set-session-title-tool-definition ()
   "Renames a session's stored TITLE -- the label shown on the home screen's
-session chip and in a session's own Info panel. SESSION_ID is required: it
+session chip and in a session's own Info panel. The DESCRIPTION text tells
+the calling model to invoke this proactively -- once it knows what a
+session is about, and again whenever that subject changes -- rather than
+only on an explicit rename request; nothing on this side enforces that
+(there is no way to), it is entirely a model-behavior instruction carried
+in the tool metadata itself. SESSION_ID is required: it
 is not inferred from which session is making the call, so a call always
 says explicitly which session it is renaming (a session normally already
 knows its own id -- it is named in this very agent's system prompt -- but
@@ -906,19 +911,26 @@ SESSION_ID names no known session."
    :name "set_session_title"
    :description "Rename a session: update its stored title, which is what
 the home screen's session chip and a session's own Info panel display in
-place of the default \"New session\". SESSION_ID (required) is the id of
-the session to rename -- your own session id is given to you at the start
-of your system prompt; a call always names the session explicitly rather
-than assuming \"this one\", so pass it even when renaming yourself. TITLE
-(required) is the new title: a short, human-readable label, not a full
-description -- it renders as one line in the chip and the info panel.
-Whitespace at the ends is trimmed. An empty title or one over 200
-characters is rejected outright (nothing is changed) rather than silently
-truncated or blanked. The session need not be the one currently running
-this tool call, and it does not need an open connection -- an idle
-session already on disk is reopened automatically. This does not change
-the session's id, its transcript, or anything else about it -- only the
-display title."
+place of the default \"New session\". Call this proactively, not only
+when explicitly asked to rename something: as soon as the user's message
+makes clear what this session is actually about, call set_session_title
+with a short, descriptive title summarizing that -- don't wait to be
+asked, and don't ask permission first. If the subject of the session
+changes substantially later in the conversation, call it again with a
+new title reflecting the new subject; a title should describe what the
+session is currently about, not necessarily what it started as. SESSION_ID
+(required) is the id of the session to rename -- your own session id is
+given to you at the start of your system prompt; a call always names the
+session explicitly rather than assuming \"this one\", so pass it even when
+renaming yourself. TITLE (required) is the new title: a short,
+human-readable label, not a full description -- it renders as one line in
+the chip and the info panel. Whitespace at the ends is trimmed. An empty
+title or one over 200 characters is rejected outright (nothing is changed)
+rather than silently truncated or blanked. The session need not be the one
+currently running this tool call, and it does not need an open
+connection -- an idle session already on disk is reopened automatically.
+This does not change the session's id, its transcript, or anything else
+about it -- only the display title."
    :input-schema (%set-session-title-schema)
    :handler '%set-session-title-tool-handler))
 

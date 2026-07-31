@@ -565,6 +565,16 @@ corrupt another session's durable JSON record directly, so a validated,
 harness-level rename API is strictly *safer* than the status quo, not a
 new exposure.
 
+The DESCRIPTION itself instructs the calling model to invoke this
+proactively, not only on an explicit rename request: once the user's
+message makes clear what a session is about, call it with a short
+descriptive title, and call it again later if the session's subject
+changes substantially. This is pure model-behavior guidance carried in
+the tool metadata -- nothing server-side enforces or nudges it, the same
+way nothing enforces that a model actually reads read_file's pagination
+notice; the handler itself accepts any valid rename request regardless of
+why it was called.
+
 `title` is trimmed of leading/trailing whitespace and rejected outright —
 not silently truncated — if it is empty after trimming or exceeds
 `+session-title-max-chars+` (200): a short display label has no good
