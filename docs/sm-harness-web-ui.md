@@ -146,6 +146,83 @@ needed a new generic Playwright op, `select_option`
 (`e2e/bridge.mjs`/`+e2e-supported-ops+` in `contract.lisp`) -- `fill` does
 not work on `<select>` elements.
 
+## Live title updates in the chat header and info panel (#129)
+
+Before this, the header's `.chat-title` div and the Info panel's Title line
+(above) were both set once, from the `SESSION-SNAPSHOT` captured when
+`render-chat` ran, and never touched again. `set_session_title` (including
+the #128 first-turn nudge above) updated the durable record and the home
+screen's next load fine, but a chat tab already open on that session kept
+showing the old title until the page was reloaded -- reported directly
+against a real session's behavior.
+
+**Harness side: a new `:title` event.** `sm-harness:set-session-title`
+(session-service.lisp) now calls `%publish` with a `:title` event
+(`(list :title trimmed)`) once the rename is durably saved, through the
+exact same publish/listener plumbing every other live update (status,
+assistant text, tool activity, ...) already uses -- so no new delivery
+mechanism was needed, only the decision to publish at all.
+
+**`%publish` needed a real cross-thread lock for the first time (#129).**
+Every existing `%publish` call site runs on a session's own single worker
+thread inside `%run-turn`, so `session-record-sequence`'s `incf` and the
+listener-notifying `maphash` were implicitly single-writer-safe. `set_session_title`
+breaks that assumption: nothing sandboxes one session from renaming another
+(#61), so it can call `%publish` on a *different* session's runtime from
+that caller's own worker thread, concurrently with the target's own thread
+publishing something else. The fix is `*publish-lock*`
+(`sm-harness/src/runtime.lisp`) -- a single **global** mutex, deliberately
+not a new `session-runtime` slot: adding a slot to that `defstruct` while
+live instances already exist (any session already open in a running image)
+risks the incompatible-structure-redefinition failure documented above
+under "reload_harness" (a permanent, reload-proof failure for the rest of
+the process's life) -- a plain special variable carries none of that risk.
+A single lock is enough because `%publish` is a fast, non-blocking leaf call
+(listener callbacks run on their own dispatcher threads, never inline
+here); it also never nests with `session-runtime-lock` --
+`%request-cancellation` already calls `%set-status` (hence `%publish`)
+*while holding* that lock, so `%publish` acquiring `session-runtime-lock`
+itself would have deadlocked that existing path. `*publish-lock*` is a
+distinct object nothing else ever holds before calling into `%publish`, so
+there is no such nesting risk.
+
+**Presenter: `event-display`'s new `:title` case is deliberately
+unescaped.** Every other `event-display` case that feeds `add-line`'s
+`INNER-HTML` path runs its text through `escape-text` first. `:title`
+instead returns the raw title straight from the payload, because chat.lisp
+consumes it via `clog:text` (DOM `textContent`, exactly like `status-el`/
+`canon-el` already are) -- pre-escaping here would double-encode a title
+containing `&`/`<`/`>` into literal `&amp;`/`&lt;`/`&gt;` text shown to the
+user, since `textContent` never re-parses HTML entities.
+
+**Browser side.** `render-chat` (`src/ui/chat.lisp`) now keeps `title-el`
+live instead of ignoring it: an `on-event` branch for `:title` sets
+`(clog:text title-el)` to the new title in place. `install-session-info-panel`
+(`src/ui/session-info.lisp`) now takes `title-el` as an extra argument and
+reads the Title line from `(clog:text title-el)` fresh on every "Info"
+click, exactly mirroring how `canon-el`'s "Pending…" placeholder was
+already read fresh rather than captured once (#106 above) -- so a
+reopened Info panel can never show a title the session was renamed away
+from.
+
+**Coverage.** `sm-harness/tests` gained
+`set-session-title-publishes-a-live-title-event` (attaches a listener,
+renames, asserts a `:title` event with the trimmed title arrives).
+`sm-harness-web-ui/presenter-tests` gained
+`event-display-title-shows-the-new-title-unescaped`. A new `title-live-update`
+browser E2E scenario (`e2e/scenarios/title-live-update.lisp`) drives the
+real thing end to end: it needs a second, throwaway-tab test route
+(`e2e/test-hooks.lisp`, `%e2e-rename-session-window`, mirroring #100's
+`/e2e-drop-connection` route) rather than scripting a `set_session_title`
+tool_use through the fixture SDK transport, because that transport's
+canned JSON is written before the scenario ever creates a session and so
+cannot hardcode the runtime-generated session id `set_session_title`
+requires; the test route instead calls the real
+`sm-harness:set-session-title` API directly (the same call the catalog
+tool's own handler makes) against whichever session(s) are currently open.
+Run standalone per the "Running browser E2E without Docker" recipe below
+with `E2E_SCENARIO=title-live-update`.
+
 ## Richer home-screen session chips (#111)
 
 Each row in the home screen's session list (`render-home`, `src/ui/home.lisp`)

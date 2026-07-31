@@ -47,7 +47,8 @@
                              (:file "connection-lost-recovery")
                              (:file "connection-lost-fallback")
                              (:file "export-logs")
-                             (:file "session-info")))))
+                             (:file "session-info")
+                             (:file "title-live-update")))))
 
 (asdf:defsystem #:sm-harness-web-ui/e2e
   :description "Test-only deterministic SDK transport for browser E2E"

@@ -165,7 +165,18 @@ be attached in memory -- an idle session is transparently reopened first,
 the same way OPEN-SESSION would, so this works for any session this
 HARNESS's repository knows about, not just ones with a live client.
 Signals HARNESS-INPUT-ERROR for an empty/oversized title and
-HARNESS-NOT-FOUND-ERROR for an unknown SESSION-ID (via OPEN-SESSION)."
+HARNESS-NOT-FOUND-ERROR for an unknown SESSION-ID (via OPEN-SESSION).
+
+Publishes a :TITLE event (#129) after the rename is durably saved, so a
+browser tab already open on SESSION-ID (its own, or -- #61, no session is
+sandboxed from renaming another -- a different session's) can update its
+header/info-panel title live instead of only on its next reload. Published
+outside SESSION-RUNTIME-LOCK: %PUBLISH takes its own, separate lock
+(*PUBLISH-LOCK*, see runtime.lisp) rather than this one, so there is
+nothing to gain by holding this lock any longer than the mutation itself
+needs, and %PUBLISH must remain callable from a thread that does not
+already hold SESSION-RUNTIME-LOCK -- see *PUBLISH-LOCK*'s own docstring
+for why %PUBLISH cannot use SESSION-RUNTIME-LOCK internally instead."
   (let ((trimmed (and (stringp title)
                       (string-trim '(#\Space #\Tab #\Newline #\Return) title))))
     (unless (and trimmed (plusp (length trimmed)))
@@ -180,6 +191,7 @@ HARNESS-NOT-FOUND-ERROR for an unknown SESSION-ID (via OPEN-SESSION)."
         (setf (session-record-title (session-runtime-record rt)) trimmed)
         (repository-save-session (harness-repository harness)
                                  (session-runtime-record rt)))
+      (%publish rt :title (list :title trimmed))
       (session-record->summary (session-runtime-record rt)))))
 
 (defun submit-turn (harness session-id prompt &key (kind "message"))

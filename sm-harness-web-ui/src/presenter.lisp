@@ -294,6 +294,15 @@
        (cons "error" (escape-text (or (getf payload :message) "error"))))
       (:status
        (cons "status" (status-label (getf payload :status))))
+      (:title
+       ;; #129: SET-SESSION-TITLE's live rename notification. Deliberately
+       ;; NOT ESCAPE-TEXTd, unlike every case above whose result is consumed
+       ;; via ADD-LINE's INNER-HTML: chat.lisp handles :TITLE by assigning
+       ;; this straight to a CLOG:TEXT property (DOM textContent, same as
+       ;; STATUS-EL/CANON-EL above), which needs no pre-escaping and would
+       ;; double-encode (a literal "&amp;" shown to the user) if it got
+       ;; ESCAPE-TEXTd here first.
+       (cons "title" (getf payload :title)))
       (:system
        ;; #102: the CLI's own system messages (subtype "init" at
        ;; session/turn start, possibly "compact_boundary") and the

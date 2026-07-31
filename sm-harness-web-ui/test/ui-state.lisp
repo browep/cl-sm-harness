@@ -24,6 +24,17 @@
          (d (sm-harness-web-ui::event-display ev)))
     (is (string= "user" (car d)))))
 
+(test event-display-title-shows-the-new-title-unescaped
+  ;; #129: consumed via CLOG:TEXT (DOM textContent), not ADD-LINE's
+  ;; INNER-HTML, so this must come back raw -- ESCAPE-TEXTing it here would
+  ;; double-encode and show a user a literal "&amp;" instead of "&".
+  (let* ((ev (sm-harness:make-event :type :title :sequence 1
+                                    :session-id "s"
+                                    :payload (list :title "Fix & ship it")))
+         (d (sm-harness-web-ui::event-display ev)))
+    (is (string= "title" (car d)))
+    (is (string= "Fix & ship it" (cdr d)))))
+
 (test event-display-synthetic-user-message-is-harness-not-user
   ;; A harness-initiated follow-up (#76) must never render indistinguishably
   ;; from something the human actually typed.

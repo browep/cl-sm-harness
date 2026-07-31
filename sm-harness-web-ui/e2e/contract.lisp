@@ -32,7 +32,8 @@
         (e2e-connection-lost-recovery-scenario)
         (e2e-connection-lost-fallback-scenario)
         (e2e-export-logs-scenario)
-        (e2e-session-info-scenario)))
+        (e2e-session-info-scenario)
+        (e2e-title-live-update-scenario)))
 
 (defparameter +e2e-supported-ops+
   '("assert_text_count" "wait" "wait_text" "assert_text" "assert_title"

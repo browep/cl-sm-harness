@@ -72,6 +72,36 @@
 (defun %touch (rt)
   (setf (session-runtime-last-activity rt) (get-universal-time)))
 
+(defvar *publish-lock* (sb-thread:make-mutex :name "sm-harness-publish")
+  "Serializes %PUBLISH across every session and thread (#129).
+
+Deliberately a single *global* lock, not a new SESSION-RUNTIME slot: adding
+a slot to that DEFSTRUCT while live instances already exist (any session
+already open in a running image) risks the incompatible-structure-
+redefinition failure documented above (\"An incompatible structure/class
+redefinition can permanently disable further reloads...\") -- a global
+special variable carries no such risk on reload.
+
+%PUBLISH used to be safe as an implicit single-writer-per-session
+operation: only a session's own worker thread, inside %RUN-TURN, ever
+called it, so SESSION-RECORD-SEQUENCE's INCF and the listener-notifying
+MAPHASH never raced. #129 made SET-SESSION-TITLE call %PUBLISH too, and
+SET-SESSION-TITLE can run on any *other* session's own worker thread
+(nothing sandboxes one session from renaming another, see #61) --
+concurrently with this session's own worker thread publishing something
+else entirely. A single global lock is enough because %PUBLISH is a fast,
+non-blocking leaf call (listener callbacks run on their own dispatcher
+threads, never inline here -- see %LISTENER-DISPATCH-LOOP -- and %PUBLISH
+never calls anything that re-enters %PUBLISH), so serializing it across
+every session costs nothing worth avoiding via finer-grained locking.
+
+Never nests with SESSION-RUNTIME-LOCK: %REQUEST-CANCELLATION already calls
+%SET-STATUS (hence %PUBLISH) while holding that per-session lock, so
+%PUBLISH acquiring SESSION-RUNTIME-LOCK itself would deadlock that
+existing path. This lock is a distinct object nothing else ever holds
+before calling into %PUBLISH, so no such nesting/deadlock risk exists
+here.")
+
 (defvar *session-event-log-lock* (sb-thread:make-mutex :name "session-event-log")
   "Serializes SM-HARNESS-EVENT log lines so concurrent sessions' worker
 threads cannot interleave a single line.")
@@ -132,21 +162,27 @@ explain because the condition was redacted and then dropped)."
       (force-output *session-event-log-stream*))))
 
 (defun %publish (rt type payload)
-  (let* ((rec (session-runtime-record rt))
-         (seq (incf (session-record-sequence rec)))
-         (ev (%event type (session-record-id rec) seq payload)))
-    (%log-session-event (session-record-id rec) seq type payload)
-    ;; Enqueue only -- callbacks run on each listener's own dispatcher
-    ;; thread (%LISTENER-DISPATCH-LOOP). Publishing happens on the session
-    ;; worker, the same thread that answers the CLI's MCP control requests,
-    ;; so one browser connection whose peer silently died must not be able
-    ;; to stall it (2026-07-30: exactly that starved a tools/call answer
-    ;; until the CLI gave up and the turn died as \"internal error\").
-    (maphash (lambda (id lst)
-               (declare (ignore id))
-               (listener-push lst ev))
-             (session-runtime-listeners rt))
-    ev))
+  ;; #129: *PUBLISH-LOCK* (a single global mutex, see its own docstring for
+  ;; why not a per-session one) makes this safe against a second, concurrent
+  ;; caller for the same RT -- SET-SESSION-TITLE now calls %PUBLISH from
+  ;; whichever session's own worker thread happens to invoke it, which is
+  ;; not necessarily this RT's own worker thread.
+  (sb-thread:with-mutex (*publish-lock*)
+    (let* ((rec (session-runtime-record rt))
+           (seq (incf (session-record-sequence rec)))
+           (ev (%event type (session-record-id rec) seq payload)))
+      (%log-session-event (session-record-id rec) seq type payload)
+      ;; Enqueue only -- callbacks run on each listener's own dispatcher
+      ;; thread (%LISTENER-DISPATCH-LOOP). Publishing happens on the session
+      ;; worker, the same thread that answers the CLI's MCP control requests,
+      ;; so one browser connection whose peer silently died must not be able
+      ;; to stall it (2026-07-30: exactly that starved a tools/call answer
+      ;; until the CLI gave up and the turn died as \"internal error\").
+      (maphash (lambda (id lst)
+                 (declare (ignore id))
+                 (listener-push lst ev))
+               (session-runtime-listeners rt))
+      ev)))
 
 (defun %set-status (rt status)
   (setf (session-record-status (session-runtime-record rt)) status)

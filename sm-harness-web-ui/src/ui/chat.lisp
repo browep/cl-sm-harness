@@ -56,7 +56,7 @@ reliably there and not part of what the user meant to send."
          (log-panel (install-log-export-panel body header root))
          ;; #106: session backend/model + ids, shown on demand rather than
          ;; cluttering the header permanently.
-         (info-panel (install-session-info-panel header root snap session-id canon-el))
+         (info-panel (install-session-info-panel header root snap session-id canon-el title-el))
          (transcript (clog:create-div root :class "transcript" :html-id "transcript"))
          (composer-wrap (clog:create-div root :class "composer"))
          (input (clog:create-text-area composer-wrap :class "prompt" :html-id "prompt"))
@@ -75,7 +75,7 @@ reliably there and not part of what the user meant to send."
          ;; outstanding so the *real* event, once it does arrive, updates
          ;; state without rendering that same line a second time.
          (awaiting-user-echo nil))
-    (declare (ignore title-el log-panel info-panel %route))
+    (declare (ignore log-panel info-panel %route))
     (setf (clog:attribute id-el "title") "Copy session id"
           (clog:attribute id-el "aria-label")
           (format nil "Copy session id ~A to clipboard" session-id))
@@ -172,6 +172,15 @@ reliably there and not part of what the user meant to send."
                  (cond
                    ((eq (sm-harness:event-type ev) :status)
                     (setf (clog:text status-el) text))
+                   ((eq (sm-harness:event-type ev) :title)
+                    ;; #129: SET-SESSION-TITLE (the model itself, another
+                    ;; session, or a future admin UI) renamed this session
+                    ;; while this tab was already open on it -- update the
+                    ;; header in place instead of leaving it stale until a
+                    ;; reload. TEXT here is the raw (unescaped) new title,
+                    ;; per EVENT-DISPLAY's :TITLE case; CLOG:TEXT sets DOM
+                    ;; textContent, so no HTML-escaping step belongs here.
+                    (setf (clog:text title-el) text))
                    ((and (eq (sm-harness:event-type ev) :user-message)
                          (string= role "user")
                          awaiting-user-echo)

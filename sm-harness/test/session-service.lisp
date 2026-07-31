@@ -311,3 +311,37 @@ first."
              (is (string= "Revived title" (sm-harness:session-snapshot-title reopened)))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test set-session-title-publishes-a-live-title-event
+  "#129: a browser tab already attached to SESSION-ID must be able to react
+to a rename without reloading -- SET-SESSION-TITLE publishes a :TITLE event
+carrying the new (trimmed) title through the same %PUBLISH/listener path
+every other live update already uses."
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config :data-root root)))
+         (events '())
+         (lock (sb-thread:make-mutex)))
+    (unwind-protect
+         (let* ((snap (sm-harness:start-session h :title "Original"))
+                (sid (sm-harness:session-snapshot-id snap)))
+           (multiple-value-bind (snapshot listener-id cursor)
+               (sm-harness:attach-session-listener
+                h sid
+                :callback (lambda (ev)
+                            (sb-thread:with-mutex (lock)
+                              (push ev events))))
+             (declare (ignore snapshot cursor))
+             (is (stringp listener-id))
+             (sm-harness:set-session-title h sid "  Renamed live  ")
+             (is (wait-until
+                  (lambda ()
+                    (sb-thread:with-mutex (lock)
+                      (find :title events :key #'sm-harness:event-type)))
+                  :timeout 5))
+             (let ((ev (sb-thread:with-mutex (lock)
+                         (find :title events :key #'sm-harness:event-type))))
+               (is (string= "Renamed live"
+                            (getf (sm-harness:event-payload ev) :title))))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
