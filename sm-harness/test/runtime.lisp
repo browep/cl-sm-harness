@@ -1554,7 +1554,7 @@ and never by touching SESSION-RUNTIME-CLIENT from the marking thread."
 (test a-namespaced-non-reload-tool-completion-schedules-no-followup
   (let* ((root (temp-data-root))
          (transport (make-repeated-tool-turn-transport
-                     (list (list :tool-name "mcp__sm_harness__addition" :is-error nil))))
+                     (list (list :tool-name "mcp__sm_harness__echo_text" :is-error nil))))
          (h (sm-harness:make-harness
              :config (sm-harness:make-harness-config
                       :data-root root
@@ -1564,7 +1564,7 @@ and never by touching SESSION-RUNTIME-CLIENT from the marking thread."
          (session-id (sm-harness:session-snapshot-id snapshot)))
     (unwind-protect
          (progn
-           (sm-harness:submit-turn h session-id "add two numbers")
+           (sm-harness:submit-turn h session-id "echo something")
            (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))
                            :timeout 5))
            (sleep 0.3)

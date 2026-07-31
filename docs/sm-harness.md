@@ -472,30 +472,6 @@ itself is never baked into an image or visible to the offline test
 services, per the existing `.env`-related guardrails elsewhere in this
 project.
 
-### `addition`
-
-Adds two numbers and returns their sum. `a` and `b` are both required and
-may be integers or decimals; the result is rendered as readable text
-(`"2 + 3 = 5"`).
-
-The only catalog tool that is *pure computation* — no filesystem, process,
-or network reach at all — so, unlike every other tool here, there is no
-safety boundary for its handler to enforce beyond validating its own
-argument types. A non-numeric or missing argument is a normal
-`(is-error t)` tool result, not a Lisp condition, matching the contract the
-rest of the catalog follows.
-
-Sums are computed in whatever type YASON decoded the arguments into: JSON
-integers become CL integers (bignums, so there is no overflow to guard
-against), JSON fractions become `double-float`s. `%format-number` renders
-the result rather than `~A` printing it directly, because `~A` on a
-`double-float` emits the `d0` exponent marker (`3.5d0`) whenever
-`*read-default-float-format*` is `single-float`, which is noise in a tool
-result.
-
-Its handler is stored as the symbol `'%addition-tool-handler`, per the
-late-binding rule in "Making a tool usable mid-session" above (#116).
-
 ## Turn deadline
 
 `turn-deadline-seconds` (default 600, `make-harness-config`) bounds
