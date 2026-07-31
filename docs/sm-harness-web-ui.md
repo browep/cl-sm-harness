@@ -504,6 +504,69 @@ marker on `log-capture.js`).
 **Not yet done:** the actual reconnect-detection logic this instruments
 for is still #110, unchanged by this work.
 
+## Resume-triggered reconnect check (#110 experiment)
+
+An addition to `static/log-capture.js`'s existing `pagehide`/`pageshow`/
+`visibilitychange` handlers (#120), aimed squarely at #110's failure mode
+3 ("half-open" socket): the underlying TCP connection died silently while
+backgrounded, but neither `onclose` nor `onerror` ever fired, so
+`window.ws.readyState` can keep reporting `OPEN` indefinitely and CLOG's
+own reconnect logic (`Setup_ws()`'s `rc()`, a closure private to that
+function, not reachable from outside it) never even starts. Hiding/
+showing a tab was never itself wired to anything before this — confirmed
+by reading `boot.js`, which has zero listeners for visibility/focus/
+pagehide/pageshow/online. Whatever reconnect happens today is purely a
+side effect of the socket eventually delivering a real `close`/`error`
+event on its own, which the half-open case may simply never do.
+
+**What it does.** On `visibilitychange`-to-`visible` or `pageshow`, if
+this tab was hidden for at least `smHideResumeThresholdMs` (default
+15000ms, overridable via that query parameter same as
+`smSelfHealPollMs`) and `window.ws`'s `readyState` is `CONNECTING` or
+`OPEN`, it force-closes that socket itself: `rc()` can't be called
+directly, but forcing `ws.close()` triggers whichever `onclose` handler
+`boot.js` currently has attached, which is the same effect without
+touching CLOG internals.
+
+**The close code matters, and was wrong on the first attempt.** Testing
+this against a real server *before* shipping it (not just reading the
+source) found that a plain `ws.close()` with no arguments landed as close
+code 1000 on this tab's own `onclose` — which `Setup_ws`'s handler treats
+as a deliberate, final close, routing to `Shutdown_ws()` instead of
+`rc()`. Shipping that naive version would have forced every tab past the
+hidden-duration threshold into the #100 dead-tab fallback on its next
+resume, for a perfectly healthy connection — the opposite of the goal.
+Fixed by closing with an explicit code in the WebSocket spec's private-use
+range (`4001`, `SM_RESUME_CHECK_CLOSE_CODE`), which correctly routes
+through `rc()`'s reconnect attempt instead. Verified with a real Playwright
+connection: forcing the close produces `"onclose - trying reconnnect"`
+then `"reconnect successful"` (both already captured, since this script
+wraps `console.*`), and the page stays fully clickable afterward — proof
+the reconnect is real, not just silent.
+
+**Logged, start and result, every time**: `resume check (<trigger>):
+start, hidden_ms=<n>` followed by exactly one of `result=skipped (below
+threshold or no prior hide)`, `result=skipped (ws is null/undefined)`,
+`result=skipped (readyState=N, already closing/closed)`,
+`result=forced ws.close(4001) (readyState was N)`, or
+`result=error, <message>`. `visibilitychange` and `pageshow` commonly
+both fire for the same resume; the shared `smHiddenAt` timestamp is
+consumed (reset to `null`) by whichever runs first, so the second is
+always a clean `no prior hide` skip, not a repeat.
+
+**Explicitly an experiment, not a proven fix.** It cannot help if the
+tab's whole process was discarded rather than frozen (nothing left to
+hook). It does not recover any UI update the server tried to push during
+the gap (`clog-connection:execute` is fire-and-forget against whatever
+connection is live at send time — a separate, still-open question). And
+forcing a reconnect on a connection that was actually fine the whole time
+is a real, if normally invisible, cost (a fresh TCP+WS handshake) — the
+threshold exists specifically to keep that from firing on every brief
+app-switch glance. Whether this measurably helps in practice, versus just
+adding reconnect churn, is exactly what the durable connection log above
+(#122) exists to help answer.
+
+
 ## Contentless "SYSTEM" chips fixed (#102)
 
 The transcript used to show a wall of chips labeled just `SYSTEM` (or
