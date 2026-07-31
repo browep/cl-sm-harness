@@ -1,4 +1,5 @@
-// Tab-scoped browser log capture (#92, made more robust in #97).
+// Tab-scoped browser log capture (#92, made more robust in #97, persisted
+// to durable storage and shared across tabs in #120).
 //
 // Loaded once per browser tab (see on-new-window, src/application.lisp).
 // Home<->chat transitions in this app are in-place DOM rebuilds within the
@@ -12,18 +13,32 @@
 // "connecting"/"connection successful" pair happens slightly earlier,
 // before on-new-window gets a chance to load this script, and so is not
 // caught here), uncaught errors, unhandled promise rejections, every click
-// on an interactive control, window focus/blur and tab visibility changes,
-// and a "page load" marker recorded as the very first entry. Lisp-side
-// code can also append entries (e.g. navigation) via window.__smLog, and
-// tag entries with the active harness session id via
-// window.__smSetSession. No redaction is applied: this exports exactly
-// what the browser logged in this tab.
+// on an interactive control, window focus/blur, tab visibility changes,
+// and page hide/show (bfcache/mobile backgrounding, #120), and a
+// "page load" marker recorded as the very first entry. Lisp-side code can
+// also append entries (e.g. navigation) via window.__smLog, and tag
+// entries with the active harness session id via window.__smSetSession.
+// No redaction is applied: this exports exactly what the browser logged.
+//
+// Storage (#120): entries are written to window.localStorage, not just an
+// in-memory array, under STORAGE_KEY below. localStorage is per-origin,
+// not per-tab, so every tab open on this app reads and appends to the
+// *same* underlying log -- a reload no longer loses history, and a report
+// exported from one tab can include what happened in another tab of the
+// same session. Each push() does a read-modify-write of the whole stored
+// array; log volume here is low (user actions, not a hot loop), so the
+// lack of any cross-tab locking is an acceptable, occasionally-interleaved
+// tradeoff, not a correctness requirement. If localStorage is unavailable
+// or disabled (private browsing quirks, a sandboxed iframe throwing on
+// access, etc.) capture still works, just falls back to an in-memory
+// array scoped to this tab only, same as before #120.
 (function () {
   if (window.__smLogCaptureInstalled) { return; }
   window.__smLogCaptureInstalled = true;
 
-  var MAX_ENTRIES = 2000;
-  var buffer = [];
+  var STORAGE_KEY = 'smBrowserLog';
+  var MAX_STORED_ENTRIES = 2000;
+  var EXPORT_LIMIT = 500;
   var currentSession = null;
 
   function isoNow() {
@@ -43,12 +58,69 @@
     }
   }
 
+  // Probed once at load: some browsers/contexts (older Safari private
+  // browsing, a sandboxed iframe without storage access, etc.) throw on
+  // any localStorage access at all, not just when full. Capture must
+  // never let that take the whole tab down with it.
+  var storageAvailable = (function () {
+    try {
+      var probeKey = '__smLogCaptureProbe__';
+      window.localStorage.setItem(probeKey, '1');
+      window.localStorage.removeItem(probeKey);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  })();
+  var memoryFallback = [];
+
+  function readStored() {
+    if (!storageAvailable) { return memoryFallback.slice(); }
+    try {
+      var raw = window.localStorage.getItem(STORAGE_KEY);
+      if (!raw) { return []; }
+      var parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      // Corrupt/foreign value under this key -- start clean rather than
+      // ever throwing out of capture.
+      return [];
+    }
+  }
+
+  function writeStored(lines) {
+    if (!storageAvailable) {
+      memoryFallback = lines;
+      return;
+    }
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(lines));
+    } catch (e) {
+      // Most likely quota exceeded (e.g. another tab/site sharing the
+      // origin's storage budget). Drop older entries hard and retry once
+      // rather than silently losing this entry, and every entry after it,
+      // forever.
+      try {
+        var trimmed = lines.slice(Math.max(0, lines.length - Math.floor(MAX_STORED_ENTRIES / 4)));
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+      } catch (e2) {
+        // Give up quietly -- log capture must never throw into app code.
+      }
+    }
+  }
+
   function push(level, message) {
     var line = isoNow() + ' [' + String(level).toUpperCase() + '] ' +
       '[session:' + (currentSession || 'none') + '] ' + message;
-    buffer.push(line);
-    if (buffer.length > MAX_ENTRIES) {
-      buffer.shift();
+    try {
+      var lines = readStored();
+      lines.push(line);
+      if (lines.length > MAX_STORED_ENTRIES) {
+        lines = lines.slice(lines.length - MAX_STORED_ENTRIES);
+      }
+      writeStored(lines);
+    } catch (e) {
+      // Never let capture itself break the app.
     }
   }
 
@@ -101,7 +173,11 @@
   // Every click on an interactive control (#97) -- a capturing-phase
   // document listener, not per-button instrumentation, so newly added
   // buttons are covered automatically instead of silently falling outside
-  // capture until someone remembers to wire them up.
+  // capture until someone remembers to wire them up. This is entirely
+  // local (push() only ever touches localStorage/memory, never the
+  // network), so clicks are captured even while the websocket connection
+  // this tab's buttons round-trip through is closed (#120) -- there is
+  // nothing here that depends on it being open.
   document.addEventListener('click', function (event) {
     try {
       var el = event.target && event.target.closest
@@ -122,6 +198,31 @@
   window.addEventListener('blur', function () { push('info', 'window blur'); });
   document.addEventListener('visibilitychange', function () {
     push('info', 'visibility: ' + document.visibilityState);
+  });
+
+  // Mobile backgrounding (#120): visibilitychange above already fires when
+  // a tab is backgrounded on most modern mobile browsers, but it is not
+  // the event the Page Lifecycle API (web.dev) recommends relying on for
+  // "this page may be about to be frozen or discarded" -- that is
+  // `pagehide`, paired with `pageshow` on return. Unlike `unload`/
+  // `beforeunload` (unreliable on mobile: a backgrounded tab is often
+  // frozen or its process killed outright without ever firing them),
+  // `pagehide` is the one event mobile browsers are expected to fire
+  // before suspending a page, which is exactly why it is also the right
+  // place to make sure a pending write of the buffered log has already
+  // happened rather than racing an eviction -- push() here always writes
+  // synchronously, so there is nothing to flush, but the entry itself
+  // gives an exported log a clear "the tab was about to be
+  // backgrounded/evicted here" marker that focus/blur/visibilitychange
+  // alone do not: those can lag or be skipped entirely on some mobile
+  // WebViews when the OS suspends a tab abruptly. `event.persisted`
+  // distinguishes an actual teardown from a bfcache freeze likely to
+  // resume via `pageshow` with the same flag.
+  window.addEventListener('pagehide', function (event) {
+    push('info', 'pagehide' + (event && event.persisted ? ' (bfcache)' : ''));
+  });
+  window.addEventListener('pageshow', function (event) {
+    push('info', 'pageshow' + (event && event.persisted ? ' (from bfcache)' : ''));
   });
 
   // Self-heal (#100, fix B): boot.js's own reconnect logic can permanently
@@ -169,6 +270,13 @@
   window.__smLog = function (level, message) { push(level || 'info', String(message)); };
   window.__smSetSession = function (id) { currentSession = id || null; };
   window.__smExportLogs = function () {
-    return buffer.length ? buffer.join('\n') : '(no browser log entries captured yet)';
+    var lines = readStored();
+    if (!lines.length) { return '(no browser log entries captured yet)'; }
+    // Only the most recent EXPORT_LIMIT entries (#120) -- the stored
+    // buffer, shared across every tab on this origin, can hold up to
+    // MAX_STORED_ENTRIES, more than is useful (or comfortable to paste
+    // into a bug report) at export time.
+    var latest = lines.length > EXPORT_LIMIT ? lines.slice(lines.length - EXPORT_LIMIT) : lines;
+    return latest.join('\n');
   };
 })();

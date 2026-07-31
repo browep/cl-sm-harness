@@ -41,4 +41,32 @@
     (%e2e-step "assert_input_pattern" "selector" "#logs-textarea" "pattern" "click: #logs-close")
     (%e2e-step "click" "selector" "#logs-copy")
     (%e2e-step "click" "selector" "#logs-close")
+    (%e2e-step "wait" "selector" "#logs-panel" "state" "hidden")
+    ;; #120: captured entries live in localStorage, not just an in-memory
+    ;; buffer a reload would discard -- a real `reload` here also exercises
+    ;; the `pagehide` listener firing on the outgoing document (the event
+    ;; itself is the #120 "mobile backgrounding" signal, but a reload is a
+    ;; reliable, deterministic way to trigger it in a headless browser).
+    ;; direct-session-resume (e2e/scenarios/direct-session-resume.lisp)
+    ;; already covers that /sessions/<id> itself resumes correctly; this
+    ;; asserts the *log*, not the chat transcript, survives the same
+    ;; reload.
+    (%e2e-step "reload")
+    (%e2e-step "wait" "selector" "#chat-root" "state" "visible")
+    (%e2e-step "click" "selector" "#export-logs")
+    (%e2e-step "wait" "selector" "#logs-panel" "state" "visible")
+    (%e2e-step "assert_input_pattern" "selector" "#logs-textarea" "pattern" "send: hello e2e")
+    (%e2e-step "assert_input_pattern" "selector" "#logs-textarea" "pattern" "pagehide")
+    (%e2e-step "click" "selector" "#logs-close")
+    (%e2e-step "wait" "selector" "#logs-panel" "state" "hidden")
+    ;; #120: localStorage is per-origin, not per-tab, so a second tab's own
+    ;; "page load" entry (tagged with a marker query param unique to it)
+    ;; shows up in this tab's export too, without either tab's websocket
+    ;; connection or in-memory state being involved at all.
+    (%e2e-step "open_tab" "path" "/?smCrossTabMarker=1")
+    (%e2e-step "click" "selector" "#export-logs")
+    (%e2e-step "wait" "selector" "#logs-panel" "state" "visible")
+    (%e2e-step "assert_input_pattern" "selector" "#logs-textarea"
+               "pattern" "page load: /\\?smCrossTabMarker=1")
+    (%e2e-step "click" "selector" "#logs-close")
     (%e2e-step "wait" "selector" "#logs-panel" "state" "hidden"))))

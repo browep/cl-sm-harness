@@ -196,7 +196,7 @@ look, and a right-aligned `›` chevron (a `::after` pseudo-element, dimmed
 by default, brightening and nudging right on hover/focus) marking the
 whole row as "opens this session" before the first click.
 
-## Export browser logs (#92, made more robust in #97)
+## Export browser logs (#92, made more robust in #97, persisted in #120)
 
 Both the home and chat headers have an "Export logs" button
 (`#export-logs`) that opens a panel (`#logs-panel`) right below the header —
@@ -204,17 +204,33 @@ above the transcript/session list, not appended after everything — with a
 read-only textarea (`#logs-textarea`) holding this browser tab's captured
 log, plus "Copy" (`#logs-copy`, same secure-context/`execCommand`-fallback
 clipboard idiom as the session-id chip) and "Close" (`#logs-close`) buttons.
-No redaction is applied — it exports exactly what the tab logged.
+No redaction is applied — it exports exactly what was captured.
 
 - **Capture** (`static/log-capture.js`) wraps `console.log/info/warn/debug/error`
   (still forwarding to the original methods), and also listens for
-  `window.onerror` and `unhandledrejection`, into a ring buffer capped at
-  2000 entries. It is loaded once per tab from `on-new-window`
-  (`src/application.lisp`); home↔chat transitions are in-place DOM
-  rebuilds within that same JS realm (CLOG swaps `innerHTML` rather than
-  navigating), so one load covers the whole tab lifetime, including later
-  session switches. Each line is
+  `window.onerror` and `unhandledrejection`. It is loaded once per tab from
+  `on-new-window` (`src/application.lisp`); home↔chat transitions are
+  in-place DOM rebuilds within that same JS realm (CLOG swaps `innerHTML`
+  rather than navigating), so one load covers the whole tab lifetime,
+  including later session switches. Each line is
   `ISO8601Z [LEVEL] [session:<id-or-none>] message`.
+- **Durable, cross-tab storage (#120)**: entries are written to
+  `window.localStorage` (key `smBrowserLog`), not just an in-memory array —
+  localStorage is per-*origin*, not per-tab, so every open tab on this app
+  reads and appends to the same underlying log. A reload no longer loses
+  history, and an export from one tab can include what a different tab (or
+  an earlier page load in the same tab, before a crash/reload) logged.
+  Each `push()` does a read-modify-write of the whole stored array; there
+  is no cross-tab locking, so concurrent writes from two tabs can
+  occasionally interleave imperfectly, an accepted tradeoff for a
+  diagnostic feature over actual write-locking machinery. The store is
+  capped at 2000 entries (oldest dropped first); a probe at load time
+  falls back to an in-memory array, scoped to that tab only, if
+  localStorage throws (sandboxed iframe, disabled storage, etc.) — capture
+  never lets a storage failure propagate into app code. `__smExportLogs()`
+  (called by `export-browser-logs`, `src/browser-logs.lisp`) returns only
+  the most recent 500 of those entries, not the whole capped store, to
+  keep an export a reasonable size to paste into a bug report.
 - **Page load, clicks, and focus (#97)**, also in `log-capture.js`: a
   `page load: <path><search>` entry is recorded before anything else
   installs, so an exported log always shows when this tab's JS realm
@@ -222,18 +238,30 @@ No redaction is applied — it exports exactly what the tab logged.
   logs `click: <#id-or-description>` for every `button`/`a`/`role=button`
   click, generically rather than requiring each Lisp `set-on-click` call
   site to remember to annotate itself, so newly added controls are covered
-  automatically; and `window` `focus`/`blur` plus `document`
-  `visibilitychange` are logged too, for diagnosing turns that stalled
-  because a tab lost focus, went to sleep, or was backgrounded. Because
-  console wrapping is only installed once this script has loaded, CLOG's
-  own `/js/boot.js` reconnect/error status (it logs purely via
-  `console.log`/`console.error`) is captured for any reconnect that
-  happens afterward, but *not* the very first "connecting"/"connection
-  successful" pair, which happens slightly earlier, before
-  `on-new-window` gets a chance to load this script — that earliest-connect
-  gap is still open (a fix would mean this project owning its own
-  `boot.html` ahead of CLOG's stock one, deliberately deferred as more
-  surface than this pass wanted).
+  automatically — and this is entirely local (storage/memory only, never
+  the network), so a click is still logged even while this tab's websocket
+  is closed (#120), same as every other capture path here; and `window`
+  `focus`/`blur` plus `document` `visibilitychange` are logged too, for
+  diagnosing turns that stalled because a tab lost focus, went to sleep,
+  or was backgrounded. Because console wrapping is only installed once
+  this script has loaded, CLOG's own `/js/boot.js` reconnect/error status
+  (it logs purely via `console.log`/`console.error`) is captured for any
+  reconnect that happens afterward, but *not* the very first
+  "connecting"/"connection successful" pair, which happens slightly
+  earlier, before `on-new-window` gets a chance to load this script — that
+  earliest-connect gap is still open (a fix would mean this project owning
+  its own `boot.html` ahead of CLOG's stock one, deliberately deferred as
+  more surface than this pass wanted).
+- **`pagehide`/`pageshow` for mobile backgrounding (#120)**: in addition
+  to `visibilitychange` above, `window` `pagehide`/`pageshow` are logged
+  with an explicit `(bfcache)`/`(from bfcache)` suffix when
+  `event.persisted` is set. These are the events the Page Lifecycle API
+  (web.dev) recommends for detecting a page about to be frozen or evicted
+  — unlike `unload`/`beforeunload`, which mobile browsers are not
+  obligated to fire at all when backgrounding/killing a tab, `pagehide` is
+  expected to fire first, and gives an exported log an explicit marker for
+  "the tab was about to be backgrounded/evicted here" that `blur`/
+  `visibilitychange` alone can miss or lag on some mobile WebViews.
 - **Submitted prompt text (#97)**, from `src/browser-logs.lisp`'s
   `%log-send` and `src/ui/chat.lisp`'s Send-button and Enter-to-send
   handlers: a `send: <prompt text>` entry is recorded with the exact text
@@ -248,12 +276,15 @@ No redaction is applied — it exports exactly what the tab logged.
   transition and tag subsequent entries with the active session id, so an
   exported log can be matched against the per-session server-side event
   log documented above, the same way the session-id chip is meant to be
-  used.
+  used. The session tag itself is still an in-memory, per-tab variable
+  (reset by a reload until the Lisp side re-tags it) — only the log lines
+  it gets baked into at write time persist, same as everything else.
 - **UI** (`install-log-export-panel`, `src/ui/log-export.lisp`) is shared
   by `render-home` and `render-chat` so pre-session errors are exportable
   too, not just in-session ones.
 - No file-download option and no cap configurability for now — copy to
-  clipboard only, fixed 2000-entry cap.
+  clipboard only, fixed 2000-entry store capped to the most recent
+  500-entry export.
 - If a freshly deployed/reloaded container's exported panel just says
   `undefined`, see "`reload_harness` only reloads Lisp" above — the static
   script most likely never made it to `/opt/app-static`.
