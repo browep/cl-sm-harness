@@ -192,6 +192,48 @@ chain so a later, genuine attempt gets a fresh allowance."
        (%append-transcript rt "system" (%followup-cap-message) :kind "synthetic")
        (%publish rt :system (list :subtype "synthetic-followup-cap-reached"))))))
 
+(defun %title-nudge-text ()
+  "One-shot harness-authored follow-up (#128) nudging the model to call
+SET_SESSION_TITLE after its very first turn, reusing the #76 synthetic
+follow-up mechanism. Framed as conditional, not a command: a session's
+very first message sometimes genuinely does not yet reveal what it is
+about, and this fires exactly once regardless (see
+%MAYBE-QUEUE-TITLE-NUDGE), so it must not read as a demand to invent a
+title when there is nothing yet to summarize."
+  "[harness] This was your first turn in this session. If you now know what this session is about, call set_session_title with a short descriptive title now, if you have not already -- do not wait to be asked. If it is genuinely not yet clear what this session is about, no action is needed.")
+
+(defun %maybe-queue-title-nudge (rt rec kind)
+  "Queue a one-shot #128 title-nudge follow-up right after a session's very
+first completed turn, unless RT already has a pending follow-up queued
+this turn (e.g. #76's reload_harness follow-up, set earlier in the same
+turn by %HANDLE-MAPPED-EVENT) -- that one is more urgent (verifying a
+just-reloaded tool actually works) and is never clobbered by this lower-
+priority nudge; losing this nudge to that rare overlap is an acceptable
+trade, not a bug, since KIND is always \"message\" for a session's actual
+first turn in practice.
+
+One-shot without a new persistent flag: gated on SESSION-TURN-COUNT
+reading exactly 1 for REC's transcript (this turn's own \"user\" entry
+already appended by %RUN-TURN before this runs), which can never be true
+again for this session, so this can fire at most once in a session's
+lifetime. Also skipped once TITLE is anything other than the literal
+default \"New session\" -- whether set by the model already, this turn or
+a prior one, or via the harness/API directly -- so a session created with
+an explicit title is never nudged either.
+
+TITLE is read under SESSION-RUNTIME-LOCK: unlike fields %RUN-TURN owns
+exclusively for the duration of its own turn, SET-SESSION-TITLE can
+mutate this session's title from a *different* session's worker thread at
+any time (#61: no session is sandboxed from calling it on another), so
+this read has to take the same lock that writer does."
+  (when (and (equal kind "message")
+             (null (session-runtime-pending-synthetic-followup rt))
+             (= 1 (%session-turn-count (session-record-transcript rec)))
+             (string= (sb-thread:with-mutex ((session-runtime-lock rt))
+                        (session-record-title rec))
+                      "New session"))
+    (setf (session-runtime-pending-synthetic-followup rt) (%title-nudge-text))))
+
 (defun %append-transcript (rt role text &key (kind "message") meta)
   (let ((entry (make-transcript-entry :role role :text text :kind kind :meta meta)))
     (setf (session-record-transcript (session-runtime-record rt))
@@ -495,6 +537,7 @@ watchdog looks."
             (setf (session-record-active-turn-id rec) nil)
             (repository-save-session (harness-repository harness) rec)
             (%touch rt)
+            (%maybe-queue-title-nudge rt rec kind)
             (%maybe-run-synthetic-followup harness rt)))
       (error (c)
         ;; Operator-only raw condition first, before anything else here can

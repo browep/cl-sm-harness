@@ -852,6 +852,108 @@
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
+(test first-turn-with-default-title-schedules-a-one-shot-title-nudge
+  ;; #128: once a session's very first turn finishes and its title is still
+  ;; the literal default ("New session" -- START-SESSION was never given an
+  ;; explicit :TITLE here), a synthetic follow-up nudging SET_SESSION_TITLE
+  ;; should be auto-submitted through the exact #76 mechanism, indistinguishable
+  ;; in the transcript from a reload_harness follow-up except for its text.
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-n-simple-turns-transport 2)))))
+         (snapshot (sm-harness:start-session h))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "see issue 68, let's plan")
+           (is (wait-until
+                (lambda ()
+                  (find "synthetic"
+                        (sm-harness:session-snapshot-transcript
+                         (sm-harness:open-session h session-id))
+                        :key #'sm-harness:transcript-entry-kind :test #'string=))
+                :timeout 5))
+           (let* ((transcript (sm-harness:session-snapshot-transcript
+                               (sm-harness:open-session h session-id)))
+                  (entry (find "synthetic" transcript
+                              :key #'sm-harness:transcript-entry-kind :test #'string=)))
+             (is (string= "user" (sm-harness:transcript-entry-role entry)))
+             (is (search "call set_session_title" (sm-harness:transcript-entry-text entry)))
+             (is (search "first turn" (sm-harness:transcript-entry-text entry)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test title-nudge-does-not-fire-when-the-session-already-has-an-explicit-title
+  ;; A session created with a real :TITLE (never the literal default) must
+  ;; never be nudged -- there is nothing to prompt the model to do.
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-simple-turn-transport)))))
+         (snapshot (sm-harness:start-session h :title "already titled"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "hello")
+           (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
+           ;; Give an (incorrect) nudge a moment to fire if it were going to,
+           ;; before asserting its absence.
+           (sleep 0.3)
+           (is (null (find "synthetic"
+                           (sm-harness:session-snapshot-transcript
+                            (sm-harness:open-session h session-id))
+                           :key #'sm-harness:transcript-entry-kind :test #'string=))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test title-nudge-fires-at-most-once-even-if-the-title-stays-default
+  ;; The nudge is one-shot: even if the model never calls SET_SESSION_TITLE
+  ;; (title stays "New session" forever), a later, genuinely-independent
+  ;; human turn must not be nudged a second time. Gated on SESSION-TURN-
+  ;; COUNT reading exactly 1, which can only ever be true for the session's
+  ;; first turn, this needs no separate "already nudged" flag to prove.
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-n-simple-turns-transport 3)))))
+         (snapshot (sm-harness:start-session h))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "first")
+           (is (wait-until
+                (lambda ()
+                  (find "synthetic"
+                        (sm-harness:session-snapshot-transcript
+                         (sm-harness:open-session h session-id))
+                        :key #'sm-harness:transcript-entry-kind :test #'string=))
+                :timeout 5))
+           (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
+           (sm-harness:submit-turn h session-id "second, genuinely human")
+           (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))))
+           (sleep 0.3)
+           (let* ((transcript (sm-harness:session-snapshot-transcript
+                               (sm-harness:open-session h session-id)))
+                  (synthetic-count (count "synthetic" transcript
+                                         :key #'sm-harness:transcript-entry-kind
+                                         :test #'string=)))
+             (is (= 1 synthetic-count))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
 (test deadline-re-arms-while-a-tool-call-is-in-flight
   ;; 1s deadline; the tool_result only arrives after 1.6s.  The watchdog
   ;; wakes mid-call, must observe the in-flight tool call and re-arm

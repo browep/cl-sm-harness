@@ -602,6 +602,72 @@ no application wired up), and set to the live harness by
 which the CLOG-facing UI code reads instead — this file must not import
 that package, since `:sm-harness` has to load without CLOG).
 
+### One-shot title nudge after the first turn (#128)
+
+`set_session_title`'s own DESCRIPTION already instructs the model to call
+it proactively as soon as a session's topic is clear — but that guidance
+lives only in tool metadata, with nothing server-side enforcing or even
+reminding the model of it. In practice a session can read that guidance
+(even re-read the tool's own handler source while researching something
+else) and still never call it: observed directly in a real transcript, a
+single-topic planning session that learned its own topic within its first
+tool call and still never titled itself.
+
+To close that gap without turning it into hard enforcement (a title is
+model judgment, not something the harness can validly invent), the harness
+queues a **one-shot** synthetic follow-up — reusing #76's exact mechanism
+below — right after a session's very first completed turn, if the title is
+still the literal default (`"New session"`) at that point:
+
+> "[harness] This was your first turn in this session. If you now know
+> what this session is about, call set_session_title with a short
+> descriptive title now, if you have not already -- do not wait to be
+> asked. If it is genuinely not yet clear what this session is about, no
+> action is needed."
+
+`%maybe-queue-title-nudge` (`runtime.lisp`), called at the same
+end-of-turn point `%run-turn` already calls `%maybe-run-synthetic-followup`
+from, gates this on three things:
+
+- `kind` is `"message"` — a real human turn, not a synthetic follow-up
+  replying to itself (in practice a session's first turn is always
+  `"message"`, since nothing can queue a synthetic follow-up before a
+  first turn exists).
+- `session-record-title` is still exactly `"New session"` — read under
+  `session-runtime-lock`, unlike fields `%run-turn` otherwise owns
+  exclusively for its own turn's duration, because `set_session_title` can
+  rename this session from a *different* session's worker thread at any
+  time (#61: no session is sandboxed from calling it on another). A
+  session started with an explicit title, or one the model already titled
+  earlier in this same first turn, is never nudged.
+- `%session-turn-count` reads exactly `1` for the record's transcript —
+  true only for a session's first-ever turn, so this needs no separate
+  "already nudged" flag: it is structurally impossible to fire twice.
+
+**Never clobbers a same-turn reload follow-up.** `pending-synthetic-
+followup` is a single slot; if a session's first turn also happens to call
+`reload_harness` successfully, `%handle-mapped-event` will already have
+queued #76's own follow-up there first. `%maybe-queue-title-nudge` checks
+that slot is still `nil` before writing to it, so the (more urgent —
+verifying a just-reloaded tool actually works) reload follow-up always
+wins; losing the title nudge to that rare overlap is an accepted trade,
+not a bug, and since turn-count can never read `1` again, it is not
+retried on a later turn either.
+
+Renders through the exact same `kind "synthetic"` path #76 already built
+— distinct transcript rendering, `:synthetic t` on the live
+`:user-message` event, never mistaken for something a human typed — so
+this needed no new UI work, only the queueing decision itself.
+
+**This is still only a nudge, not enforcement.** An explicit harness-
+authored turn in the transcript is harder to ignore than a tool
+description skimmed once at session start, but a model can still do
+nothing in response, exactly as it could ignore the tool description
+before this — see `sm-harness-tests::first-turn-with-default-title-
+schedules-a-one-shot-title-nudge` and its neighboring tests in
+`test/runtime.lisp` for the one-shot/no-double-fire/no-clobber contract
+this relies on.
+
 ## Turn deadline
 
 `turn-deadline-seconds` (default 600, `make-harness-config`) bounds
