@@ -507,68 +507,89 @@ are still left for a future pass.
 **Not yet done:** the actual reconnect-detection logic this instruments
 for is still #110, unchanged by this work.
 
-## Resume-triggered reconnect check (#110 experiment)
+## Hide/unhide reload-on-resume (#110, after two reverted reconnect experiments)
 
-An addition to `static/log-capture.js`'s existing `pagehide`/`pageshow`/
-`visibilitychange` handlers (#120), aimed squarely at #110's failure mode
-3 ("half-open" socket): the underlying TCP connection died silently while
-backgrounded, but neither `onclose` nor `onerror` ever fired, so
-`window.ws.readyState` can keep reporting `OPEN` indefinitely and CLOG's
-own reconnect logic (`Setup_ws()`'s `rc()`, a closure private to that
-function, not reachable from outside it) never even starts. Hiding/
-showing a tab was never itself wired to anything before this — confirmed
-by reading `boot.js`, which has zero listeners for visibility/focus/
-pagehide/pageshow/online. Whatever reconnect happens today is purely a
-side effect of the socket eventually delivering a real `close`/`error`
-event on its own, which the half-open case may simply never do.
+`static/log-capture.js`'s `pagehide`/`pageshow`/`visibilitychange`
+handlers (#120) were purely diagnostic logging until two rounds of actual
+reconnect experiments here — both tried, both reverted, in favor of a
+much simpler approach informed by what they found. This section covers
+all three, in order, because the negative results are exactly what
+justify the current design; skipping straight to "just reload" without
+this trail would look like giving up rather than the evidence-driven
+conclusion it actually is.
 
-**What it does.** On `visibilitychange`-to-`visible` or `pageshow`, if
-this tab was hidden for at least `smHideResumeThresholdMs` (default
-15000ms, overridable via that query parameter same as
-`smSelfHealPollMs`) and `window.ws`'s `readyState` is `CONNECTING` or
-`OPEN`, it force-closes that socket itself: `rc()` can't be called
-directly, but forcing `ws.close()` triggers whichever `onclose` handler
-`boot.js` currently has attached, which is the same effect without
-touching CLOG internals.
+**v1 (forced close, uncommitted logic first, later shipped).** On resume
+past a hidden-duration threshold, if `window.ws.readyState` was
+`CONNECTING`/`OPEN`, force-close it — `rc()` (boot.js's private reconnect
+closure) can't be called directly, but forcing `ws.close()` triggers
+whichever `onclose` handler `boot.js` currently has attached, achieving
+the same effect without touching CLOG internals. Had to close with an
+explicit non-1000 code (confirmed by testing against a real server: a
+bare `ws.close()` landed as code 1000, which routes to `Shutdown_ws()`
+instead of `rc()` — the opposite of the goal). **Field result**: on a real
+phone, this correctly kicked `rc()` into an actual reconnect attempt, but
+that attempt then sat in `boot.js`'s own opaque, always-retry-every-500ms
+loop (it ignores the close code entirely once a reconnect is already in
+flight) for ~16 seconds, with every click throwing `InvalidStateError:
+Still in CONNECTING state` the whole time, before finally succeeding.
 
-**The close code matters, and was wrong on the first attempt.** Testing
-this against a real server *before* shipping it (not just reading the
-source) found that a plain `ws.close()` with no arguments landed as close
-code 1000 on this tab's own `onclose` — which `Setup_ws`'s handler treats
-as a deliberate, final close, routing to `Shutdown_ws()` instead of
-`rc()`. Shipping that naive version would have forced every tab past the
-hidden-duration threshold into the #100 dead-tab fallback on its next
-resume, for a perfectly healthy connection — the opposite of the goal.
-Fixed by closing with an explicit code in the WebSocket spec's private-use
-range (`4001`, `SM_RESUME_CHECK_CLOSE_CODE`), which correctly routes
-through `rc()`'s reconnect attempt instead. Verified with a real Playwright
-connection: forcing the close produces `"onclose - trying reconnnect"`
-then `"reconnect successful"` (both already captured, since this script
-wraps `console.*`), and the page stays fully clickable afterward — proof
-the reconnect is real, not just silent.
+**v2 (suppress + drive our own reconnect, reverted, never committed).**
+Took over the decision instead of nudging `boot.js`'s: on hide, replace
+`window.ws`'s `onclose`/`onerror` with a no-op logger, so CLOG's automatic
+reconnect-on-close never starts while backgrounded (nothing left to get
+stuck mid-`CONNECTING` for the whole hidden window). On resume, if not
+`OPEN`, drive one reconnect attempt directly via `window.adr` (the
+already-computed `wss://.../clog` base URL) and `window.Setup_ws` — both
+plain top-level globals in `boot.js`, no module wrapper, confirmed
+reachable without redefining or monkeypatching anything CLOG owns.
+**Field result**: the server had *already evicted* the session
+(`Reconnection id ... not found`, confirmed directly in
+`web/connection-log.jsonl`/`clog-stdout.log`, #122) by the time the
+resume-triggered attempt reached it, several minutes after backgrounding.
+Chased the root cause properly (read `websocket-driver`'s own
+`read-websocket-frame`, `src/ws/base.lisp`): no ping/pong, no configured
+timeout anywhere in this stack (checked this app's own config and
+`websocket-driver`'s server code directly) — eviction is driven purely by
+a blocking socket read returning EOF/error, which happens the moment the
+OS delivers a real TCP FIN/RST. Both real field traces captured so far
+show a mobile OS actively, promptly tearing the connection down on
+backgrounding (`code=1006`), detected by *both* client and server within
+seconds, symmetrically. **Reconnect fundamentally cannot help this specific
+case**: it only ever wins in the asymmetric window where the server
+hasn't noticed yet even though the client has (e.g. a real network
+handoff with no FIN ever reaching the server) — a case neither real trace
+has actually hit. Deferring the attempt to "on resume" (v2's whole
+premise) makes this worse than v1, not better, since it guarantees trying
+only after the longest possible delay.
 
-**Logged, start and result, every time**: `resume check (<trigger>):
-start, hidden_ms=<n>` followed by exactly one of `result=skipped (below
-threshold or no prior hide)`, `result=skipped (ws is null/undefined)`,
-`result=skipped (readyState=N, already closing/closed)`,
-`result=forced ws.close(4001) (readyState was N)`, or
-`result=error, <message>`. `visibilitychange` and `pageshow` commonly
-both fire for the same resume; the shared `smHiddenAt` timestamp is
-consumed (reset to `null`) by whichever runs first, so the second is
-always a clean `no prior hide` skip, not a repeat.
+**v3 (current): stop attempting reconnect at all.** Track hide/unhide
+timestamps only; on resume past `smHideResumeThresholdMs` (default
+15000ms, overridable via that query parameter, same idiom as
+`smSelfHealPollMs`), reload the page outright —
+`SM-RELOAD-IF-HIDDEN-LONG-ENOUGH`. No readyState inspection, no forced
+close, no attempted reconnect. This reaches the *same* recovery #100's
+fallback banner/self-heal poll already produce after a failed reconnect,
+just without first burning 15-20+ seconds on a doomed handshake with
+every click throwing in the meantime — the actual, measured cost of both
+v1 and v2 in the field. The durable session record (not anything
+CLOG-level) is what the reload resumes from, same as every other recovery
+path in this app; verified the reload lands back on the exact
+`/sessions/<id>` URL and the transcript is intact.
 
-**Explicitly an experiment, not a proven fix.** It cannot help if the
-tab's whole process was discarded rather than frozen (nothing left to
-hook). It does not recover any UI update the server tried to push during
-the gap (`clog-connection:execute` is fire-and-forget against whatever
-connection is live at send time — a separate, still-open question). And
-forcing a reconnect on a connection that was actually fine the whole time
-is a real, if normally invisible, cost (a fresh TCP+WS handshake) — the
-threshold exists specifically to keep that from firing on every brief
-app-switch glance. Whether this measurably helps in practice, versus just
-adding reconnect churn, is exactly what the durable connection log above
-(#122) exists to help answer.
+**Logged, start and result, every time**: `hide/unhide reload check
+(<trigger>): start, hidden_ms=<n>` followed by exactly one of
+`result=skipped (below threshold or no prior hide)` or
+`result=reloading`. `visibilitychange` and `pageshow` commonly both fire
+for the same resume; the shared `smHiddenAt` timestamp is consumed (reset
+to `null`) by whichever runs first, so the second is always a clean skip,
+not a repeat.
 
+**Known, deliberate trade-off**: gives up the (never-yet-observed in a
+real trace) asymmetric case where a reconnect could have been seamless,
+in favor of guaranteed-fast, predictable recovery for the case that
+actually keeps happening. Does not preserve any in-flight, unsent
+composer text across the reload — a pre-existing limitation shared with
+the self-heal poll's own forced reload, not something new here.
 
 ## Contentless "SYSTEM" chips fixed (#102)
 

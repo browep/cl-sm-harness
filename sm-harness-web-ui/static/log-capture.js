@@ -237,20 +237,63 @@
   window.addEventListener('focus', function () { push('info', 'window focus'); });
   window.addEventListener('blur', function () { push('info', 'window blur'); });
 
-  // #110 experiment: when this tab was last observed hidden, so the
-  // resume check below (SM-CHECK-CONNECTION-ON-RESUME) knows how long it
-  // was actually backgrounded for, not just that it was. Consumed (reset
-  // to null) by that check regardless of outcome, so visibilitychange and
-  // pageshow both firing for the same resume (common) does not
-  // re-evaluate or double-force the same hide.
+  // #110 v3 (replaces v1's "force a stuck socket closed, let rc() sort it
+  // out" and the reverted v2 "suppress + drive our own reconnect" -- see
+  // docs/sm-harness-web-ui.md and issue #110 for the full history). Field
+  // data from both prior attempts converged on the same conclusion: once
+  // this tab's connection is actually dead, CLOG evicts that connection
+  // id's session state on the *server* immediately on detecting the
+  // close -- no grace period -- so by the time a resume-triggered
+  // reconnect can even be attempted, the id is essentially always already
+  // gone for any backgrounding long enough to matter. No client-side
+  // reconnect strategy can out-run that, because it depends entirely on
+  // how fast the *server* notices, not on anything the client does.
+  //
+  // v3 stops pretending a reconnect might work. It just tracks how long
+  // this tab was hidden, and on resume past a threshold, reloads the page
+  // outright -- the fast path to the *same* recovery #100's fallback
+  // banner and self-heal poll already produce after a failed reconnect
+  // attempt, just without first burning 15-20+ seconds on a doomed
+  // handshake with every click throwing InvalidStateError in the
+  // meantime (the actual field-observed cost of both v1 and v2). The
+  // durable session record (not anything CLOG-level) is what the reload
+  // resumes from, same as every other recovery path in this app.
   var smHiddenAt = null;
+
+  // Overridable via a `smHideResumeThresholdMs` query parameter, same
+  // idiom as `smSelfHealPollMs` below, for deterministic E2E coverage.
+  // Chosen to avoid reloading for a brief app-switch glance that likely
+  // never touched the connection at all -- both real field traces so far
+  // showed the underlying close itself happening within ~5s of hiding,
+  // well under this.
+  var smHideResumeThresholdMs = (function () {
+    var params = new URLSearchParams(window.location.search);
+    var override = parseInt(params.get('smHideResumeThresholdMs'), 10);
+    return (isFinite(override) && override >= 0) ? override : 15000;
+  })();
+
+  function smReloadIfHiddenLongEnough(trigger) {
+    var hiddenMs = (smHiddenAt !== null) ? (Date.now() - smHiddenAt) : null;
+    push('info', 'hide/unhide reload check (' + trigger + '): start, hidden_ms=' +
+      (hiddenMs === null ? 'unknown' : hiddenMs));
+    // Consumed here regardless of outcome, so a second event firing for
+    // this same resume (visibilitychange and pageshow commonly fire
+    // together) does not re-evaluate the same hide twice.
+    smHiddenAt = null;
+    if (hiddenMs === null || hiddenMs < smHideResumeThresholdMs) {
+      push('info', 'hide/unhide reload check (' + trigger + '): result=skipped (below threshold or no prior hide)');
+      return;
+    }
+    push('info', 'hide/unhide reload check (' + trigger + '): result=reloading');
+    window.location.reload();
+  }
 
   document.addEventListener('visibilitychange', function () {
     push('info', 'visibility: ' + document.visibilityState);
     if (document.visibilityState === 'hidden') {
       smHiddenAt = Date.now();
     } else if (document.visibilityState === 'visible') {
-      smCheckConnectionOnResume('visibilitychange');
+      smReloadIfHiddenLongEnough('visibilitychange');
     }
   });
 
@@ -277,97 +320,8 @@
   });
   window.addEventListener('pageshow', function (event) {
     push('info', 'pageshow' + (event && event.persisted ? ' (from bfcache)' : ''));
-    smCheckConnectionOnResume('pageshow');
+    smReloadIfHiddenLongEnough('pageshow');
   });
-
-  // #110 experiment: proactively re-verify this tab's connection the
-  // moment it is foregrounded again, rather than only ever waiting on
-  // CLOG's own boot.js noticing a close/error event by itself -- see
-  // docs/sm-harness-web-ui.md for the full failure-mode writeup this is
-  // targeting. The specific gap: a "half-open" socket, where the
-  // underlying TCP connection died silently while backgrounded (OS/
-  // carrier network teardown) without either `onclose` or `onerror` ever
-  // firing, so `window.ws.readyState` can keep reporting OPEN
-  // indefinitely and boot.js's own reconnect logic (`rc()`, a closure
-  // private to Setup_ws(), not reachable from here) never even starts.
-  //
-  // `rc()` can't be called directly, but forcing this tab's own
-  // `ws.close()` triggers whichever `onclose` handler boot.js currently
-  // has attached -- the same effect without touching CLOG internals.
-  // Critically, this must close with an explicit *non*-1000 code
-  // (SM_RESUME_CHECK_CLOSE_CODE below, in the 3000-4999 range the
-  // WebSocket spec reserves for library/application use) -- confirmed by
-  // testing this against a real server before shipping it: calling plain
-  // `ws.close()` with no arguments was observed landing as code 1000 on
-  // this tab's own onclose, which Setup_ws's onclose treats as a
-  // deliberate, final close and routes to Shutdown_ws instead of `rc()`
-  // -- i.e. the naive version would have forced this tab into the #100
-  // dead-tab fallback on every resume past the threshold, even for a
-  // perfectly healthy connection, the opposite of what this exists to do.
-  // With a non-1000 code, Setup_ws's onclose instead takes the `rc()`
-  // branch, and the *outcome* of that reconnect attempt, not just this
-  // check's own start/result lines, ends up in this same captured log a
-  // moment later, via boot.js's own console.log calls ("reconnect
-  // successful"/"reconnect failure") that this script already wraps.
-  //
-  // Deliberately gated by a hidden-duration threshold, not fired on every
-  // resume: a brief app-switch glance does not need a forced reconnect,
-  // and forcing one needlessly just adds reconnect churn (a real, if
-  // normally invisible to the user, TCP+WS handshake) for no benefit.
-  // Overridable via a `smHideResumeThresholdMs` query parameter, same
-  // idiom as `smSelfHealPollMs` below, for deterministic E2E coverage.
-  //
-  // This is explicitly an experiment being evaluated against real usage,
-  // not a proven fix -- it cannot help if the tab's whole process was
-  // discarded rather than frozen (nothing left to hook), and even a
-  // successful forced reconnect does not recover any UI update the server
-  // tried to push during the gap (CLOG-CONNECTION:EXECUTE is fire-and-
-  // forget against whatever connection is live at send time).
-  var smHideResumeThresholdMs = (function () {
-    var params = new URLSearchParams(window.location.search);
-    var override = parseInt(params.get('smHideResumeThresholdMs'), 10);
-    return (isFinite(override) && override >= 0) ? override : 15000;
-  })();
-  // A code from the WebSocket spec's private-use range (4000-4999) --
-  // deliberately not the adjacent 3000-3999 sub-range, which is
-  // registerable with IANA for shared library/protocol meanings this
-  // code has none of; it means nothing to anything but this one call
-  // site.
-  var SM_RESUME_CHECK_CLOSE_CODE = 4001;
-
-  function smCheckConnectionOnResume(trigger) {
-    var hiddenMs = (smHiddenAt !== null) ? (Date.now() - smHiddenAt) : null;
-    push('info', 'resume check (' + trigger + '): start, hidden_ms=' +
-      (hiddenMs === null ? 'unknown' : hiddenMs));
-    // Consumed here, regardless of what happens below, so a second event
-    // firing for this same resume does not re-evaluate it a second time.
-    smHiddenAt = null;
-    try {
-      if (hiddenMs === null || hiddenMs < smHideResumeThresholdMs) {
-        push('info', 'resume check (' + trigger + '): result=skipped (below threshold or no prior hide)');
-        return;
-      }
-      if (typeof window.ws === 'undefined' || window.ws === null) {
-        push('info', 'resume check (' + trigger + '): result=skipped (ws is ' +
-          (typeof window.ws === 'undefined' ? 'undefined' : 'null') + ')');
-        return;
-      }
-      var state = window.ws.readyState;
-      if (state !== 0 && state !== 1) {
-        // CONNECTING (0) or OPEN (1) are the only states worth forcing --
-        // CLOSING (2)/CLOSED (3) already have (or will shortly have) a
-        // reconnect attempt under way via boot.js's own onclose handling,
-        // and closing an already-closing socket again is a no-op anyway.
-        push('info', 'resume check (' + trigger + '): result=skipped (readyState=' + state + ', already closing/closed)');
-        return;
-      }
-      window.ws.close(SM_RESUME_CHECK_CLOSE_CODE, 'sm-resume-check');
-      push('info', 'resume check (' + trigger + '): result=forced ws.close(' + SM_RESUME_CHECK_CLOSE_CODE + ') (readyState was ' + state + ')');
-    } catch (e) {
-      push('error', 'resume check (' + trigger + '): result=error, ' +
-        (e && e.message ? e.message : String(e)));
-    }
-  }
 
   // Self-heal (#100, fix B): boot.js's own reconnect logic can permanently
   // null out its global `ws` if a stale reconnect id (e.g. this
