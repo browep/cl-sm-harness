@@ -16,12 +16,45 @@ including ones not yet created, for the rest of a process's life."
                 :project-key (harness-config-project-key cfg)))
          (catalog-provider (if catalog
                                (lambda () catalog)
-                               #'default-tool-catalog)))
+                               'default-tool-catalog)))
     (%make-harness
      :config cfg
      :repository repo
      :catalog-provider catalog-provider
      :policy (or policy (default-tool-policy)))))
+
+(defun %captured-default-catalog-provider-p (provider)
+  "True for a HARNESS-CATALOG-PROVIDER holding a *captured function object*
+for DEFAULT-TOOL-CATALOG -- what MAKE-HARNESS stored before #117 -- rather
+than the symbol it stores now.
+
+Such a provider is called fresh on every new client connection (#116 phase
+1 works exactly as documented), but the function object it calls is a
+snapshot frozen when MAKE-HARNESS ran, for the same reason a tool
+handler's captured #'name is (see TOOL-DEFINITION's handler slot): a later
+RELOAD_HARNESS rebinds DEFAULT-TOOL-CATALOG's global function cell without
+mutating the already-captured object. The old body only ever calls the
+MAKE-*-TOOL-DEFINITION list it was compiled with, so a brand-new tool
+added by a reload stayed invisible to every session -- including brand-new
+ones -- for the rest of the process's life, which is precisely the failure
+#116 set out to fix.
+
+Distinguishes that case from MAKE-HARNESS's fixed-:CATALOG closure (whose
+FUNCTION-LAMBDA-EXPRESSION name is a (LAMBDA () :IN ...) form or NIL, never
+this symbol), so repairing one never silently swaps a test's or the E2E
+fixture's deliberately fixed catalog for the production default."
+  (and (functionp provider)
+       (eq 'default-tool-catalog (nth-value 2 (function-lambda-expression provider)))))
+
+(defun %repair-captured-catalog-provider (harness)
+  "In-place migration for a HARNESS built by pre-#117 code and still live in
+a long-running image (sm-harness-web-ui keeps one *APP-HARNESS* singleton
+for the whole process, so the stale provider would otherwise outlive every
+reload). Repointing the slot at the SYMBOL makes the next connection's
+FUNCALL look DEFAULT-TOOL-CATALOG up fresh. Caller must hold HARNESS-LOCK."
+  (when (%captured-default-catalog-provider-p (harness-catalog-provider harness))
+    (setf (harness-catalog-provider harness) 'default-tool-catalog)
+    t))
 
 (defun mark-sessions-for-catalog-refresh (harness)
   "Flag every currently-open session in HARNESS to reconnect on its next
@@ -39,8 +72,14 @@ simply reconnects (disconnect, then the same :RESUME-based rebuild an
 error-recovery reconnect already performs) the next time a turn starts for
 it. A session with no further turns after this call simply never
 reconnects -- this is a lazy, next-message refresh, not an unsolicited
-push into a live conversation."
+push into a live conversation.
+
+Also repairs a pre-#117 captured-#'DEFAULT-TOOL-CATALOG provider in place
+(%REPAIR-CAPTURED-CATALOG-PROVIDER) -- this is the one moment a harness is
+known to have just been reloaded, and flagging sessions to reconnect is
+useless if the provider they reconnect through is itself a frozen snapshot."
   (sb-thread:with-mutex ((harness-lock harness))
+    (%repair-captured-catalog-provider harness)
     (maphash (lambda (id rt)
                (declare (ignore id))
                (setf (session-runtime-pending-catalog-refresh-p rt) t))

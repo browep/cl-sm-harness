@@ -1460,3 +1460,45 @@ and never by touching SESSION-RUNTIME-CLIENT from the marking thread."
                  "the flag must survive untouched until the *next* turn's own %ensure-client call")))
       (sm-harness:close-harness h)
       (%robust-delete-directory-tree root))))
+
+;;;; #117: MAKE-HARNESS's default catalog provider must be a late-bound
+;;;; SYMBOL, not a captured #'DEFAULT-TOOL-CATALOG function object -- and a
+;;;; harness built before that fix, still live in a long-running image, must
+;;;; be repaired in place by the same post-reload call that flags sessions.
+
+(defmacro %with-provider-harness ((var &rest make-args) &body body)
+  `(let* ((root (temp-data-root))
+          (,var (sm-harness:make-harness
+                 :config (sm-harness:make-harness-config :data-root root)
+                 ,@make-args)))
+     (unwind-protect (progn ,@body)
+       (sm-harness:close-harness ,var)
+       (%robust-delete-directory-tree root))))
+
+(test default-catalog-provider-is-a-late-bound-symbol-not-a-captured-function
+  ;; A captured function object is re-called per connection but frozen at
+  ;; MAKE-HARNESS time, so a RELOAD_HARNESS-added tool never reaches it.
+  (%with-provider-harness (h)
+    (is (eq 'sm-harness::default-tool-catalog
+            (sm-harness::harness-catalog-provider h)))
+    (is (not (sm-harness::%captured-default-catalog-provider-p
+              (sm-harness::harness-catalog-provider h))))))
+
+(test an-explicit-catalog-argument-still-pins-that-exact-catalog
+  (let ((fixed (%fixture-tool-catalog "tool_a")))
+    (%with-provider-harness (h :catalog fixed)
+      (is (eq fixed (funcall (sm-harness::harness-catalog-provider h))))
+      ;; A refresh pass must never swap a deliberately fixed catalog
+      ;; (tests, the web UI's E2E fixture) for the production default.
+      (sm-harness:mark-sessions-for-catalog-refresh h)
+      (is (eq fixed (funcall (sm-harness::harness-catalog-provider h)))))))
+
+(test a-captured-default-catalog-provider-is-repaired-by-a-catalog-refresh
+  (%with-provider-harness (h)
+    ;; Exactly what pre-#117 MAKE-HARNESS left in the slot.
+    (setf (sm-harness::harness-catalog-provider h) #'sm-harness:default-tool-catalog)
+    (is (sm-harness::%captured-default-catalog-provider-p
+         (sm-harness::harness-catalog-provider h)))
+    (sm-harness:mark-sessions-for-catalog-refresh h)
+    (is (eq 'sm-harness::default-tool-catalog
+            (sm-harness::harness-catalog-provider h)))))
