@@ -292,6 +292,55 @@ Static assets (`app.css`, etc.) needed no such mechanism — the browser
 already refetches those fresh on every page load; only the *routing* and
 *already-open tabs* needed an explicit nudge.
 
+### `web_search` (#112)
+
+Searches the web via the [Tavily](https://docs.tavily.com) search API.
+`query` is required; `max_results` defaults to
+`+web-search-max-results-default+` (5) and is silently clamped to
+`+web-search-max-results-cap+` (10) rather than rejected — unlike
+`write_file`'s oversized-content guard, a smaller result set is still a
+fully honest answer to the same query, so there is nothing to refuse.
+
+Reads `TAVILY_API_KEY` from the process environment at *call* time (via
+the injectable `*tavily-api-key-fn*`, default `(uiop:getenv
+"TAVILY_API_KEY")`), not at catalog-build time, so a key configured
+before a session starts is always picked up. An unset/empty key, a
+non-200 HTTP response, an unparsable response body, or a transport
+failure (DNS, TLS, timeout, ...) all report as a normal `(is-error t)`
+tool result rather than a Lisp condition — same contract every other
+catalog tool follows. A successful call renders Tavily's `results` array
+as numbered `title` / `url` / `content` (truncated to 400 characters per
+result) entries; an empty array renders as an explicit `"no results"`
+line rather than blank output that could be mistaken for a failure.
+
+The actual HTTPS POST (`%tavily-search-request`, `drakma:http-request`)
+is reached only through `*web-search-request-fn*`, the tool's sole
+network seam — the same dependency-injection shape the bash tool's own
+`*bash-guard-command-line*` uses — so its own test suite runs fully
+offline and never depends on a real API key or live network access.
+
+Depends on `drakma`, available in this project's Debian-based images as
+the apt package `cl-drakma` (pulling `cl-ppcre`, `cl-flexi-streams`,
+`cl-puri`, `cl-base64`, `cl-chunga`, `cl-usocket`, `cl-plus-ssl`, and
+`cl-chipz` in as hard `Depends`, same as `cl-yason`/`cl-fiveam` already
+were) — not quicklisp, so the offline `sm-harness-test` Docker target
+(`network_mode: none`) can load and test this tool with zero network
+access. This also incidentally fixes #101's `cl-ppcre` dependency having
+been added to `sm-harness.asd` without ever being added to either
+Dockerfile's apt install list; it happened to work anyway in the
+`sm-harness-web-ui` image only because quicklisp (bootstrapped there for
+CLOG) pulled `cl-ppcre` in transitively and its runtime source-registry
+already includes `/usr/share/common-lisp/source//` alongside `/app//`
+(`sm-harness-web-ui/docker/entrypoint.sh`) — but the plain offline test
+image never had that transitive path at all.
+
+Requires `TAVILY_API_KEY` to reach the running container: the compose
+`web-ui` service passes it through from the host's `.env` the same way
+`GITHUB_TOKEN` already was (`compose.sm-harness-web-ui.yaml`) — `.env`
+itself is never baked into an image or visible to the offline test
+services, per the existing `.env`-related guardrails elsewhere in this
+project.
+
 ## Turn deadline
 
 `turn-deadline-seconds` (default 600, `make-harness-config`) bounds

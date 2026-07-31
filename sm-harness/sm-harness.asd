@@ -9,7 +9,10 @@
   ;; patterns the way those tools would, to reject only commands that
   ;; would hit the harness's own process -- same no-external-binary
   ;; reasoning as #79, an in-image pgrep is not assumed either.
-  :depends-on (#:claude-agent-sdk-cl #:yason #:cl-ppcre (:require #:sb-posix))
+  ;; drakma: the web_search tool's HTTPS client for the Tavily search API
+  ;; (#112) -- only production dependency this catalog needs an outbound
+  ;; network client for.
+  :depends-on (#:claude-agent-sdk-cl #:yason #:cl-ppcre #:drakma (:require #:sb-posix))
   :serial t
   :components ((:module "src"
                 :components
