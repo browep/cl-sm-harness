@@ -247,6 +247,21 @@ is specifically tied to `reload_harness`, via a tool-use-id → tool-name
 correlation table on `session-runtime` (`:tool-completed`/`:tool-failed`
 payloads carry the id but not the name; `:tool-requested` carries both).
 
+**The correlated name is MCP-namespaced (#118).** The CLI reports a
+catalog tool call as `mcp__<server>__<tool>` —
+`mcp__sm_harness__reload_harness`, not `reload_harness` — so the
+correlation compares `%tool-base-name` output, which strips that prefix at
+the *first* `__` after `mcp__` (a tool name may itself contain
+underscores: `read_file`, `reload_harness`). Before this, the check was an
+exact `string=` against `"reload_harness"`, which never matched anything a
+real session ever produced: #76's automatic follow-up silently never fired
+in production for its entire existence, and the human had to notice the
+reload and prompt again by hand. Its tests all drove a fake transport
+emitting the bare, unnamespaced name, so the whole suite passed while the
+feature did nothing — the regression test now drives the namespaced name
+the CLI actually sends. An unprefixed name still passes through unchanged,
+so builtins and fake-transport fixtures keep working.
+
 **This follow-up alone does not make a *brand-new* tool callable** — see
 "Making a tool usable mid-session" below (#116) for why, and for what
 actually closes that gap. It reliably helps once a tool the model already
@@ -374,6 +389,40 @@ MCP-server option type and this harness's tool execution to move out of
 this process's own synchronous control-request path, a separate, larger
 piece of future work, deliberately not part of #116.
 
+#### The provider itself had to be late-bound too (#117)
+
+Phase 1 above re-*calls* the provider on every new connection, but
+`make-harness` stored it as `#'default-tool-catalog` — a captured function
+object, frozen exactly the way phase 1's own rationale says a captured
+`#'name` handler is. So every call went to the body compiled at
+`make-harness` time, whose `(list (make-echo-tool-definition) ...)` names
+only the tools that existed then; a `reload_harness` that added a
+brand-new tool rebound the symbol's function cell without mutating that
+object, and the new tool stayed invisible to every session — including
+sessions created *after* the reload — for the rest of the process's life.
+That is the very failure #116 set out to fix, reintroduced one level up,
+and it is why it survived #116's tests: those swap in their own fixture
+provider closure and so never exercise the real captured one.
+
+`make-harness` now stores the **symbol** `'default-tool-catalog`, so each
+connection's `funcall` looks it up fresh. An explicit `:catalog` argument
+still becomes a constant-returning closure and keeps its exact prior
+contract.
+
+Fixing the source is not enough for an image that is already running:
+`sm-harness-web-ui` keeps one `*app-harness*` singleton for the whole
+process, and its `catalog-provider` slot still holds the stale captured
+object no reload can touch. `mark-sessions-for-catalog-refresh` therefore
+also repairs the slot in place (`%repair-captured-catalog-provider`) —
+that call is already the single "a reload just succeeded" moment, and
+flagging sessions to reconnect accomplishes nothing if the provider they
+reconnect through is itself a frozen snapshot. A captured provider is
+told apart from a fixed-`:catalog` closure by
+`function-lambda-expression`'s name value (`default-tool-catalog` vs. a
+`(lambda () :in ...)` form or `nil`), so a test's or the E2E fixture's
+deliberately fixed catalog is never silently swapped for the production
+default.
+
 ### `web_search` (#112)
 
 Searches the web via the [Tavily](https://docs.tavily.com) search API.
@@ -422,6 +471,30 @@ Requires `TAVILY_API_KEY` to reach the running container: the compose
 itself is never baked into an image or visible to the offline test
 services, per the existing `.env`-related guardrails elsewhere in this
 project.
+
+### `addition`
+
+Adds two numbers and returns their sum. `a` and `b` are both required and
+may be integers or decimals; the result is rendered as readable text
+(`"2 + 3 = 5"`).
+
+The only catalog tool that is *pure computation* — no filesystem, process,
+or network reach at all — so, unlike every other tool here, there is no
+safety boundary for its handler to enforce beyond validating its own
+argument types. A non-numeric or missing argument is a normal
+`(is-error t)` tool result, not a Lisp condition, matching the contract the
+rest of the catalog follows.
+
+Sums are computed in whatever type YASON decoded the arguments into: JSON
+integers become CL integers (bignums, so there is no overflow to guard
+against), JSON fractions become `double-float`s. `%format-number` renders
+the result rather than `~A` printing it directly, because `~A` on a
+`double-float` emits the `d0` exponent marker (`3.5d0`) whenever
+`*read-default-float-format*` is `single-float`, which is noise in a tool
+result.
+
+Its handler is stored as the symbol `'%addition-tool-handler`, per the
+late-binding rule in "Making a tool usable mid-session" above (#116).
 
 ## Turn deadline
 

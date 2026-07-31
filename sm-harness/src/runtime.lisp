@@ -277,6 +277,33 @@ Its transcript is persisted at ~A."
     (%set-status rt :ready)
     client))
 
+(defun %tool-base-name (name)
+  "Strip the MCP server namespace the CLI prefixes onto an SDK tool's name
+before reporting it back, so a catalog tool can be recognized by the name
+its TOOL-DEFINITION actually declares.
+
+The CLI reports a tool call as \"mcp__<server>__<tool>\" -- e.g.
+\"mcp__sm_harness__reload_harness\" for the tool this catalog registers as
+\"reload_harness\" (server name \"sm_harness\", see DEFAULT-TOOL-CATALOG).
+Comparing the reported name directly against \"reload_harness\" therefore
+never matched in production, and #76's automatic post-reload follow-up
+silently never fired for any real session (its tests drove a fake
+transport that emitted the bare, unnamespaced name, so they passed).
+
+Only the first \"__\" after the \"mcp__\" prefix is a separator: a tool
+name may itself contain underscores (\"reload_harness\", \"read_file\"),
+so this splits at that one boundary rather than at the last \"__\". A name
+with no \"mcp__\" prefix (a builtin, or a fake transport's bare name) is
+returned unchanged."
+  (let ((prefix "mcp__"))
+    (if (and (stringp name)
+             (> (length name) (length prefix))
+             (string= prefix name :end2 (length prefix)))
+        (let* ((rest (subseq name (length prefix)))
+               (sep (search "__" rest)))
+          (if sep (subseq rest (+ sep 2)) name))
+        name)))
+
 (defun %handle-mapped-event (rt rec mapped)
   (let ((etype (first mapped))
         (payload (rest mapped)))
@@ -302,7 +329,7 @@ Its transcript is persisted at ~A."
          ;; :tool-completed only ever fires for a non-error result (the
          ;; mapping layer already splits success/failure into distinct event
          ;; types -- see #58) -- so reaching here already means success.
-         (when (equal name "reload_harness")
+         (when (equal (%tool-base-name name) "reload_harness")
            (setf (session-runtime-pending-synthetic-followup rt) (%reload-followup-text))))
        (%append-transcript rt "assistant"
                            (format nil "Tool completed: ~A" (getf payload :content))

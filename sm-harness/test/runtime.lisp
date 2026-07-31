@@ -1502,3 +1502,76 @@ and never by touching SESSION-RUNTIME-CLIENT from the marking thread."
     (sm-harness:mark-sessions-for-catalog-refresh h)
     (is (eq 'sm-harness::default-tool-catalog
             (sm-harness::harness-catalog-provider h)))))
+
+;;;; #118: the CLI reports a catalog tool call under its MCP-namespaced name
+;;;; ("mcp__sm_harness__reload_harness"), so #76's follow-up correlation must
+;;;; compare base names -- an exact match against "reload_harness" meant the
+;;;; automatic follow-up never once fired in a real session.
+
+(test tool-base-name-strips-the-mcp-server-namespace
+  (is (string= "reload_harness" (sm-harness::%tool-base-name "mcp__sm_harness__reload_harness")))
+  ;; A tool name may itself contain underscores: split at the first "__"
+  ;; after the prefix, not the last.
+  (is (string= "read_file" (sm-harness::%tool-base-name "mcp__sm_harness__read_file")))
+  ;; Unprefixed names (builtins, fake transports) pass through untouched.
+  (is (string= "reload_harness" (sm-harness::%tool-base-name "reload_harness")))
+  (is (string= "Bash" (sm-harness::%tool-base-name "Bash")))
+  (is (string= "mcp__weird" (sm-harness::%tool-base-name "mcp__weird"))))
+
+(test a-namespaced-reload-harness-completion-still-schedules-a-followup
+  (let* ((root (temp-data-root))
+         (transport (make-repeated-tool-turn-transport
+                     (list (list :tool-name "mcp__sm_harness__reload_harness"
+                                 :is-error nil))))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "namespaced reload followup"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "please reload")
+           (is (wait-until
+                (lambda ()
+                  (find "synthetic"
+                        (sm-harness:session-snapshot-transcript
+                         (sm-harness:open-session h session-id))
+                        :key #'sm-harness:transcript-entry-kind :test #'string=))
+                :timeout 5)
+               "a reload reported under its MCP-namespaced name must still schedule the follow-up")
+           (let ((entry (find "synthetic"
+                              (sm-harness:session-snapshot-transcript
+                               (sm-harness:open-session h session-id))
+                              :key #'sm-harness:transcript-entry-kind :test #'string=)))
+             (is (string= "user" (sm-harness:transcript-entry-role entry)))
+             (is (search "[harness] reload_harness finished successfully"
+                         (sm-harness:transcript-entry-text entry)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test a-namespaced-non-reload-tool-completion-schedules-no-followup
+  (let* ((root (temp-data-root))
+         (transport (make-repeated-tool-turn-transport
+                     (list (list :tool-name "mcp__sm_harness__addition" :is-error nil))))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "no followup"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "add two numbers")
+           (is (wait-until (lambda () (eq :ready (sm-harness:session-status h session-id)))
+                           :timeout 5))
+           (sleep 0.3)
+           (is (null (find "synthetic"
+                           (sm-harness:session-snapshot-transcript
+                            (sm-harness:open-session h session-id))
+                           :key #'sm-harness:transcript-entry-kind :test #'string=))
+               "only reload_harness schedules a follow-up, namespaced or not"))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
