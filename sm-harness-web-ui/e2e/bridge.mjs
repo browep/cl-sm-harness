@@ -71,6 +71,7 @@ async function executeStep(page, base, step) {
     case 'assert_value': return assert.equal(await target().inputValue(), step.value);
     case 'assert_input_pattern': return assert.match(await target().inputValue(), new RegExp(step.pattern));
     case 'assert_count': return assert.equal(await target().count(), step.count);
+    case 'wait_count': return page.waitForFunction(({ selector, count }) => document.querySelectorAll(selector).length === count, { selector: step.selector, count: step.count }, { timeout: step.timeout_ms ?? timeout });
     case 'assert_text_count': return assert.equal(await target().filter({ hasText: step.text }).count(), step.count);
     case 'assert_text': return assert.equal(await target().innerText(), step.value);
     case 'assert_not_text': return assert.equal((await page.locator('body').innerText()).includes(step.value), false);

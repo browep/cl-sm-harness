@@ -3,6 +3,16 @@
 (defun clear-body (body)
   (setf (clog:inner-html body) ""))
 
+(defun %strip-trailing-send-newline (text)
+  "Strip exactly one trailing newline character from TEXT, the
+composer's value as read right after a plain-Enter send keypress. See
+the CLOG:SET-ON-KEY-DOWN handler in RENDER-CHAT (#113) for why one is
+reliably there and not part of what the user meant to send."
+  (if (and (plusp (length text))
+           (char= (char text (1- (length text))) #\Newline))
+      (subseq text 0 (1- (length text)))
+      text))
+
 (defun render-chat (body session-id)
   (clear-body body)
   (setf (clog:title (clog:html-document body)) "Chat — sm-harness")
@@ -257,7 +267,24 @@
           (when (and (equal (getf data :key) "Enter")
                      (not (getf data :shift-key))
                      (not busy))
-            (submit-prompt (clog:text-value input)))))
+            ;; #113: CLOG:TEXT-VALUE fetches the browser's live DOM value via
+            ;; its own round trip, run from *this* keydown handler -- i.e.
+            ;; strictly after the browser already dispatched "keydown" to
+            ;; it. A <textarea>'s own default action for a plain Enter
+            ;; (insert a newline) applies synchronously in that same
+            ;; browser tick, before any network round trip can return, so
+            ;; that query always observes the character this very
+            ;; keystroke's own default action just added, not only the
+            ;; text the user meant to send. Nothing here prevents that
+            ;; default action outright: CLOG:SET-ON-KEY-DOWN's
+            ;; :DISABLE-DEFAULT would apply to every keydown on this
+            ;; element, and Shift+Enter's own newline (the multi-line
+            ;; composing path just above) relies on that same default
+            ;; action firing. Stripping exactly one trailing newline here
+            ;; removes only the character this send keystroke's own
+            ;; default action contributed, leaving an intentional trailing
+            ;; blank line built with Shift+Enter beforehand untouched.
+            (submit-prompt (%strip-trailing-send-newline (clog:text-value input))))))
       ;; #103: historical replay used to call ADD-LINE's default
       ;; scroll-to-bottom for every single transcript entry, and that scroll
       ;; blocks on a real browser round trip (see ADD-LINE above) -- on a

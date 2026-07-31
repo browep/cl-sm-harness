@@ -37,7 +37,7 @@
 (defparameter +e2e-supported-ops+
   '("assert_text_count" "wait" "wait_text" "assert_text" "assert_title"
     "focus" "assert_active_id" "press" "assert_disabled" "fill" "click"
-    "wait_pattern" "assert_value" "assert_input_pattern" "assert_count"
+    "wait_pattern" "assert_value" "assert_input_pattern" "assert_count" "wait_count"
     "wait_disabled" "assert_text_order" "assert_overflow_fits" "assert_scrolled_to_bottom"
     "assert_attribute" "goto" "reload" "sleep" "assert_url_pattern" "assert_not_text"
     "open_tab" "select_option" "go_back"))
