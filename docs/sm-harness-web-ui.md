@@ -494,12 +494,15 @@ container can read them directly, unlike the per-session event log
 (`docs/sm-harness.md`, "Operator diagnostics"), which only ever goes to
 PID 1's stdout, a pipe to Docker this container has no socket to read
 (#61). Correlate a specific tab's trouble by `connection_id` across both
-files; `boot.js` also assigns that same id to the client-side
-`clog['connection_id']`, though nothing yet logs it into the browser's own
-captured log (`static/log-capture.js`, #120) — that pairing is left for a
-future pass, along with the two other deliverables #122 originally scoped
-(a client log recoverable without a live socket, and a build/version
-marker on `log-capture.js`).
+files, and now the browser's own captured log too: `static/log-capture.js`
+logs a `connection_id: <id>` line (handling both possible orderings —
+already set by the time this script's own, separately-fetched `<script
+src>` finishes loading, versus not yet — via an accessor on
+`clog.connection_id` that catches either), verified to actually match
+the id this same connection produced in `connection-log.jsonl`. The two
+other deliverables #122 originally scoped (a client log recoverable
+without a live socket, and a build/version marker on `log-capture.js`)
+are still left for a future pass.
 
 **Not yet done:** the actual reconnect-detection logic this instruments
 for is still #110, unchanged by this work.

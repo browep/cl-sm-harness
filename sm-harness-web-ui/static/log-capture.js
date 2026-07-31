@@ -144,6 +144,45 @@
   // everything after this line somehow failed to install.
   push('info', 'page load: ' + window.location.pathname + window.location.search);
 
+  // Correlate this tab's captured log with the server-side connection log
+  // (#122, docs/sm-harness-web-ui.md "Durable connection-lifecycle
+  // logging") by connection id. `clog['connection_id']` is assigned by
+  // the server (HANDLE-NEW-CONNECTION, clog-connection-websockets.lisp)
+  // via a message evaluated on this tab's very first connection -- sent
+  // immediately, before ON-NEW-WINDOW even starts the separate, slower
+  // HTTP request that loads *this* script, so by the time we get here it
+  // is very likely already a plain string, not something an
+  // assignment-time hook installed just now could have caught. Handle
+  // both orderings: log it immediately if it is already there, and also
+  // install an accessor on the same property so any later (re)assignment
+  // -- CLOG's own reconnect logic never actually reassigns it in
+  // practice, id stability across a reconnect is the whole point of
+  // `?r=<id>`, but nothing rules out a future CLOG version doing so --
+  // gets logged too, without ever losing whatever value was already
+  // present.
+  (function () {
+    if (!window.clog) { return; }
+    var currentId = window.clog.connection_id;
+    if (currentId) {
+      push('info', 'connection_id: ' + currentId);
+    }
+    try {
+      Object.defineProperty(window.clog, 'connection_id', {
+        configurable: true,
+        enumerable: true,
+        get: function () { return currentId; },
+        set: function (value) {
+          currentId = value;
+          push('info', 'connection_id: ' + value);
+        }
+      });
+    } catch (e) {
+      // Never let capture itself break the app -- if clog.connection_id
+      // is already non-configurable for some reason, just skip the hook;
+      // whatever value was already logged above (if any) still stands.
+    }
+  })();
+
   ['log', 'info', 'warn', 'debug', 'error'].forEach(function (level) {
     var original = (typeof console[level] === 'function')
       ? console[level].bind(console)
