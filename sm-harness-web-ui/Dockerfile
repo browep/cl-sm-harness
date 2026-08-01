@@ -24,9 +24,12 @@ RUN apt-get update \
       cl-trivial-gray-streams \
       cl-ppcre \
       cl-drakma \
+      file \
       ca-certificates \
       curl \
       git \
+      jq \
+      python3 \
       build-essential \
       libsqlite3-dev \
       procps \
