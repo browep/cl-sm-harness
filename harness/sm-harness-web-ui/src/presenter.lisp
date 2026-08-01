@@ -470,13 +470,32 @@ harmless, just not maximally cache-friendly."
 ;;; reason as EVENT-DISPLAY/%SESSION-CHIP-HTML above -- so it gets
 ;;; PRESENTER-TESTS coverage without a live CLOG server.
 
-(defparameter +file-browser-root+ #P"/app/"
-  "The file browser is rooted here (#138) -- the live bind-mounted app
-repository (docs/sm-harness-web-ui.md, \"Container privileges and the
-live repo mount\"), not the whole container filesystem. This is also
-exactly the directory CLOG-CONNECTION:ADD-PLUGIN-PATH is pointed at in
-APPLICATION.LISP for serving a clicked file's raw content, so a listing
-built from this root and a URL built from %FS-HREF below always agree.")
+(defparameter +file-browser-root+ #P"/"
+  "The file browser is rooted here (#138): the whole container
+filesystem, not just the live bind-mounted app repository under /app
+-- a deliberate widening from this feature's first version, matching
+this project's already-stated no-sandbox posture (docs/sm-harness-web-ui.md,
+\"Container privileges and the live repo mount\": the container/tailnet
+boundary is the isolation layer, nothing inside it is). This is also the
+root %SERVE-FS-REQUEST-APP (ui/file-browser.lisp) serves a clicked file's
+raw content from, so a listing built from this root and a URL built from
+%FS-HREF below always agree.")
+
+(defparameter +file-browser-url-prefix+ "/fs/"
+  "The URL namespace a file's browser href (%FS-HREF below) lives under,
+and the prefix %SERVE-FS-REQUEST-APP (ui/file-browser.lisp) strips before
+resolving a request against +FILE-BROWSER-ROOT+. Needed -- and not just
+\"a file's URL is its own absolute path\", this feature's first version's
+simpler approach when +FILE-BROWSER-ROOT+ was /app -- specifically
+*because* +FILE-BROWSER-ROOT+ is now /: reserved single-path-segment
+names this app itself already serves at the true filesystem root
+(/app.css, /log-capture.js, /e2e-contract.json, CLOG's own /js/boot.js,
+...) would otherwise collide with a real absolute path of the same name,
+and, more importantly, CLOG's own registered routes (/, /sessions,
+/upload) take dispatch priority over any plugin/middleware match
+regardless, but nothing already reserves a distinct \"/fs/\" segment, so
+prefixing here is what keeps every real file -- including one that
+happens to be named exactly like a reserved asset -- reachable.")
 
 (defparameter +file-browser-max-entries+ 2000
   "Cap (#138) on how many entries a single %LIST-DIRECTORY call will ever
@@ -487,11 +506,15 @@ the CLOG glue surfaces a \"truncated\" row instead of pretending the
 directory just happens to have exactly this many entries.")
 
 (defun %path-under-root-p (path root)
-  "Defense in depth (#138), independent of ADD-PLUGIN-PATH's own
-\"^/app/\" regex scoping on the serving side and LACK/APP/FILE's own
-'..'-component rejection. Never trusts a caller-supplied PATH on its own,
-the same posture as upload.lisp's %SANITIZE-PATH-COMPONENT comment about
-not relying on a single layer.
+  "Defense in depth (#138), independent of %SERVE-FS-REQUEST-APP's own
++FILE-BROWSER-URL-PREFIX+ scoping on the serving side (ui/file-browser.lisp)
+and LACK/APP/FILE's own '..'-component rejection. Never trusts a
+caller-supplied PATH on its own, the same posture as upload.lisp's
+%SANITIZE-PATH-COMPONENT comment about not relying on a single layer.
+Effectively a no-op now that +FILE-BROWSER-ROOT+ is / (every absolute
+path is \"under\" /) -- kept anyway as the same defense-in-depth layer,
+and it still does real work for any caller passing a narrower ROOT
+(PRESENTER-TESTS, e.g., always does).
 
 Two checks, not one: PATH's plain (unresolved) namestring must start
 with ROOT's own TRUENAME textually -- this is the check that still works
@@ -610,9 +633,12 @@ first so a symlink component can't produce a mismatched URL."
 
 (defun %fs-href (path)
   "The browser URL for PATH (a file or directory under
-+FILE-BROWSER-ROOT+), matching exactly what APPLICATION.LISP's
-(CLOG-CONNECTION:ADD-PLUGIN-PATH \"^/app/\" \"/\") resolves back to the real
-filesystem path -- see that call site's comment for why a file's browser
-URL is simply its own absolute path with each component percent-encoded,
-no separate rewriting layer."
-  (format nil "/~{~A~^/~}" (mapcar #'%fs-url-encode-component (%fs-rel-components path))))
++FILE-BROWSER-ROOT+ -- the whole filesystem), built as
++FILE-BROWSER-URL-PREFIX+ followed by PATH's own absolute path with each
+component percent-encoded. %SERVE-FS-REQUEST-APP (ui/file-browser.lisp)
+strips that exact prefix back off before resolving the rest against
++FILE-BROWSER-ROOT+, so the two always agree -- see +FILE-BROWSER-URL-PREFIX+'s
+own docstring above for why a prefix is needed at all now that the root
+is / rather than the narrower /app this feature originally shipped with."
+  (format nil "~A~{~A~^/~}" +file-browser-url-prefix+
+          (mapcar #'%fs-url-encode-component (%fs-rel-components path))))

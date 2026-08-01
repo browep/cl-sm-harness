@@ -417,19 +417,19 @@ afterwards regardless of outcome. Layout:
     (is (sm-harness-web-ui::%path-under-root-p (merge-pathnames "b-dir/" root) root))
     (is (not (sm-harness-web-ui::%path-under-root-p (uiop:temporary-directory) root)))))
 
-(test file-browser-href-matches-the-add-plugin-path-mapping
-  ;; The whole point of %FS-HREF (see APPLICATION.LISP's ADD-PLUGIN-PATH
-  ;; call site comment): a file's browser URL is its own absolute path,
-  ;; percent-encoded component by component. %FS-HREF doesn't special-case
-  ;; any particular root -- it just reflects PATH's real absolute
-  ;; location -- so this exercises it against a real file that genuinely
-  ;; is under /app (this project's own docs, always present in this
-  ;; container -- consistent with the project's stated posture that /app
-  ;; is real, not sandboxed/fixture data, see docs/sm-harness-web-ui.md
-  ;; "Running browser E2E without Docker").
+(test file-browser-href-matches-the-serve-fs-request-app-mapping
+  ;; The whole point of %FS-HREF (see %SERVE-FS-REQUEST-APP,
+  ;; ui/file-browser.lisp): +FILE-BROWSER-URL-PREFIX+ followed by a
+  ;; file's own absolute path, percent-encoded component by component --
+  ;; exactly what that middleware strips back off before resolving
+  ;; against +FILE-BROWSER-ROOT+. Exercised against a real file that
+  ;; genuinely exists in this container (this project's own docs --
+  ;; consistent with the project's stated posture that /app is real, not
+  ;; sandboxed/fixture data, see docs/sm-harness-web-ui.md "Running
+  ;; browser E2E without Docker").
   (let* ((file #P"/app/harness/docs/sm-harness-web-ui.md")
          (href (sm-harness-web-ui::%fs-href file)))
-    (is (string= "/app/harness/docs/sm-harness-web-ui.md" href))))
+    (is (string= "/fs/app/harness/docs/sm-harness-web-ui.md" href))))
 
 (test file-browser-url-encode-component-escapes-non-ascii-and-reserved-bytes
   (is (string= "a%20b" (sm-harness-web-ui::%fs-url-encode-component "a b")))

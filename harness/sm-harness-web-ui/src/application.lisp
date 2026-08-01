@@ -86,52 +86,31 @@ sm-harness-web-ui/e2e system providing them is loaded -- see
                            :port (web-ui-config-port cfg)
                            :static-root (namestring (web-ui-config-static-root cfg))
                            :boot-file "/boot.html"
-                           :extended-routing t))
+                           :extended-routing t
+                           ;; #138: the file browser's raw-file-serving
+                           ;; middleware (%SERVE-FS-REQUEST-APP,
+                           ;; ui/file-browser.lisp). CLOG:INITIALIZE folds
+                           ;; :LACK-MIDDLEWARE-LIST into its app chain once,
+                           ;; permanently, right here -- this is the *one*
+                           ;; part of #138 a bare RELOAD_HARNESS on an
+                           ;; already-running process cannot pick up; it
+                           ;; needs a fresh container boot, same category of
+                           ;; gotcha as docs/sm-harness-web-ui.md's
+                           ;; /opt/app-static static-asset note, just for a
+                           ;; middleware entry instead of a file. The lambda
+                           ;; here is intentionally a thin, never-changing
+                           ;; shim around a *named* function precisely so
+                           ;; that limitation stops at "this one entry gets
+                           ;; wired in", not "this one entry's *behavior* is
+                           ;; also frozen forever" -- see
+                           ;; %SERVE-FS-REQUEST-APP's own docstring.
+                           :lack-middleware-list (list #'%serve-fs-request-app)))
     (clog:set-on-new-window #'on-new-window :path "/sessions" :boot-file "/boot.html")
     ;; #127: the hidden-iframe upload target ui/upload.lisp posts into --
     ;; its own tiny CLOG route, separate from ON-NEW-WINDOW's home/chat
     ;; dispatch, since an iframe navigation here is never a home or chat
     ;; screen render.
     (clog:set-on-new-window #'on-upload-window :path "/upload" :boot-file "/boot.html")
-    ;; #138: the file browser's "open in a new tab" action is a plain
-    ;; target="_blank" anchor, not a CLOG round trip, so it needs a real
-    ;; HTTP GET route serving raw file bytes -- CLOG:ADD-PLUGIN-PATH
-    ;; already exists for exactly this (a regex-matched URL prefix ->
-    ;; a root directory, served through LACK/APP/FILE, the same static
-    ;; file library CLOG's own STATIC-ROOT uses for app.css/boot.js) and
-    ;; wasn't used anywhere in this project before this. Because CLOG
-    ;; resolves a plugin-path match using the request's *full, unstripped*
-    ;; path-info against root "/", a URL of "/app/harness/docs/foo.md"
-    ;; resolves to the real absolute path "/app/harness/docs/foo.md" --
-    ;; i.e. a file's browser URL *is* its own absolute path, no rewriting
-    ;; layer (see presenter.lisp's %FS-HREF, which builds exactly that).
-    ;; The "^/app/" regex is the actual scope guard restricting this to
-    ;; the +FILE-BROWSER-ROOT+ subtree (presenter.lisp) the file browser
-    ;; itself only ever lists from -- root "/" here is not "serve the
-    ;; whole container", it only ever matches URLs already starting with
-    ;; "/app/". LACK/APP/FILE's own LOCATE-FILE additionally rejects any
-    ;; ".." path component, so a crafted URL can't escape upward either.
-    ;; Unlike ON-NEW-WINDOW/ON-UPLOAD-WINDOW, this doesn't close over any
-    ;; of our own Lisp functions -- it just populates a hash table CLOG's
-    ;; already-installed dispatch lambda consults at request time, so a
-    ;; later RELOAD_HARNESS can't leave it pointing at stale code the way
-    ;; a captured function object could. It still needs re-asserting on
-    ;; reload for a *different* reason, though: START-WEB-UI itself only
-    ;; ever runs once, at real process boot, so a process that picks up
-    ;; #138 via RELOAD_HARNESS rather than a fresh container start would
-    ;; otherwise never register it at all -- see live-reload.lisp's
-    ;; %REINSTALL-CLOG-ROUTES, which repeats this same call on every
-    ;; reload for exactly that reason (harmless: re-registering the same
-    ;; regex/root pair is just an idempotent hash-table overwrite).
-    ;; (ADD-PLUGIN-PATH lives in the CLOG-CONNECTION package, not CLOG
-    ;; itself -- found the hard way: CLOG:INITIALIZE/CLOG::CONNECTION-ID
-    ;; are genuine CLOG-package wrappers, but nothing wraps this one, so
-    ;; CLOG::ADD-PLUGIN-PATH silently interns a fresh, never-fbound
-    ;; symbol instead of erroring at read time. CLOG-CONNECTION:VALIDP
-    ;; -- live-reload.lisp, %REFRESH-LIVE-BROWSER-WINDOWS -- is the
-    ;; existing precedent for reaching into this same package, and it's
-    ;; actually exported there, so no :: is needed at all.)
-    (clog-connection:add-plugin-path "^/app/" "/")
     (%maybe-install-e2e-test-routes fixture-p)
     ;; Once this system's own source reloads, re-point CLOG's routing at
     ;; fresh code and push open tabs a refresh (#78).

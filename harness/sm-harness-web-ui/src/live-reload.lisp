@@ -42,21 +42,19 @@ long-running process's lifetime."
 same call is about to refresh) gets current code, not the stale closure
 CLOG:INITIALIZE originally captured.
 
-Also re-registers the #138 file-browser plugin path. Unlike the routes
-above, ADD-PLUGIN-PATH's own hash table isn't a stale-closure problem --
-see APPLICATION.LISP's ADD-PLUGIN-PATH call site comment, it closes over
-nothing reload-sensitive -- but START-WEB-UI itself only ever runs once,
-at real process boot, so a process that picks up #138 via RELOAD_HARNESS
-rather than a fresh container start (exactly this project's own dev loop,
-see docs/sm-harness-web-ui.md's RELOAD_HARNESS notes) would otherwise
-never register it at all. Calling it again here is a harmless no-op
-overwrite of the same regex/root pair on every ordinary reload.
-(ADD-PLUGIN-PATH is CLOG-CONNECTION:ADD-PLUGIN-PATH, not a CLOG-package
-symbol -- see APPLICATION.LISP's call site comment.)"
+Nothing to do here for #138's file-serving middleware
+(%SERVE-FS-REQUEST-APP, ui/file-browser.lisp): unlike these two routes,
+it isn't installed via a mutable table this function can just
+re-populate -- CLOG:INITIALIZE folds :LACK-MIDDLEWARE-LIST into its app
+chain once, permanently, at that one call in START-WEB-UI, and there is
+no equivalent of CLOG:SET-ON-NEW-WINDOW to call again here. See that call
+site's comment for the consequence (a fresh container boot, not a bare
+RELOAD_HARNESS, is what's needed to pick up a *new* middleware entry) and
+%SERVE-FS-REQUEST-APP's own docstring for why its *behavior* still stays
+RELOAD_HARNESS-editable regardless."
   (clog:set-on-new-window #'on-new-window :path "/" :boot-file "/boot.html")
   (clog:set-on-new-window #'on-new-window :path "/sessions" :boot-file "/boot.html")
-  (clog:set-on-new-window #'on-upload-window :path "/upload" :boot-file "/boot.html")
-  (clog-connection:add-plugin-path "^/app/" "/"))
+  (clog:set-on-new-window #'on-upload-window :path "/upload" :boot-file "/boot.html"))
 
 (defun %reassert-static-root ()
   "Re-point CLOG-CONNECTION:*STATIC-ROOT* at the configured static root

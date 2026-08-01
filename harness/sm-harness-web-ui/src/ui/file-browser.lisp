@@ -3,26 +3,61 @@
 ;;;; File browser (#138): a "Browse files" button next to "Upload file" in
 ;;;; the header, on both the home and chat screens, opening a lazily
 ;;;; expandable directory tree rooted at +FILE-BROWSER-ROOT+ (presenter.lisp,
-;;;; "/app/" -- the live bind-mounted app repo, see
-;;;; docs/sm-harness-web-ui.md's "Container privileges and the live repo
-;;;; mount"). Clicking a file opens it in a new tab via a plain
-;;;; target="_blank" anchor -- unlike the upload button's native
+;;;; "/" -- the whole container filesystem, widened from this feature's
+;;;; first version's narrower /app; see +FILE-BROWSER-ROOT+'s own
+;;;; docstring for why that's consistent with this project's stated
+;;;; no-sandbox posture). Clicking a file opens it in a new tab via a
+;;;; plain target="_blank" anchor -- unlike the upload button's native
 ;;;; file-chooser (ui/upload.lisp), a new tab needs no synchronous-gesture
 ;;;; JS trick, so the whole panel (unlike upload.lisp) is built with
 ;;;; ordinary CLOG:SET-ON-CLICK round trips.
 ;;;;
-;;;; Raw file content itself is served by a plain (CLOG:ADD-PLUGIN-PATH
-;;;; "^/app/" "/") registered once in APPLICATION.LISP's START-WEB-UI --
-;;;; see that call site's comment for why a file's browser URL is simply
-;;;; its own absolute path (%FS-HREF, presenter.lisp) with no separate
-;;;; rewriting layer, and why that sidesteps the "RELOAD_HARNESS only
-;;;; reloads Lisp" route-reinstall gotcha the /upload route needs
-;;;; (docs/sm-harness-web-ui.md).
+;;;; Raw file content itself is served by %SERVE-FS-REQUEST-APP below, a
+;;;; LACK middleware wrapped around CLOG's own app chain via
+;;;; :LACK-MIDDLEWARE-LIST in APPLICATION.LISP's START-WEB-UI (one CLOG:INITIALIZE
+;;;; call, at real process boot only -- see that call site's comment for
+;;;; the one-time-only consequence: unlike this project's other CLOG
+;;;; routes, this specific piece cannot be picked up by a bare
+;;;; RELOAD_HARNESS on an already-running process, only a fresh container
+;;;; boot). %SERVE-FS-REQUEST-APP itself, as an ordinary named DEFUN
+;;;; rather than a lambda baked directly into that one-time call, stays
+;;;; RELOAD_HARNESS-editable even though the middleware chain wrapping it
+;;;; is fixed forever -- see its own docstring.
 ;;;;
 ;;;; The panel itself is a fixed-position drawer sliding in from the left
 ;;;; (app.css's .file-browser-panel/.open), not the show/hide-in-place
 ;;;; pattern .logs-panel/.info-panel use -- see app.css for why: a slide
 ;;;; transition needs a class toggle, not CLOG:HIDDENP's display:none.
+
+(defun %serve-fs-request-app (app)
+  "The #138 file-browser's raw-file-serving middleware, wrapping the rest
+of CLOG's own APP chain: any request whose path starts with
++FILE-BROWSER-URL-PREFIX+ (presenter.lisp, \"/fs/\") is served straight
+from +FILE-BROWSER-ROOT+ (\"/\") via LACK/MIDDLEWARE/STATIC's own,
+already-hardened static-file middleware (mime-typing via TRIVIAL-MIMES,
+Last-Modified/304 support, and -- importantly -- LACK/APP/FILE's own
+rejection of any '..' path component); anything else falls through to
+APP unchanged.
+
+Registered once, in APPLICATION.LISP's START-WEB-UI, via CLOG:INITIALIZE's
+:LACK-MIDDLEWARE-LIST -- and *only* there: unlike CLOG-CONNECTION:ADD-PLUGIN-PATH
+(this feature's first version's mechanism, back when +FILE-BROWSER-ROOT+
+was the narrower /app and a file's URL could just be its own absolute
+path with no prefix-stripping needed), a LACK middleware chain is folded
+together once, permanently, at that one CLOG:INITIALIZE call -- there is
+no mutable table a later RELOAD_HARNESS can re-populate the way
+%REINSTALL-CLOG-ROUTES (live-reload.lisp) does for ON-NEW-WINDOW/
+ON-UPLOAD-WINDOW/the old ADD-PLUGIN-PATH call. Defining the actual
+prefix-check-and-serve logic here, as a named function the middleware
+wrapper merely calls by symbol rather than a lambda baked directly into
+that one-time :LACK-MIDDLEWARE-LIST argument, keeps *this* function's
+body RELOAD_HARNESS-editable regardless -- an ordinary call to a named
+global function always re-consults its current definition; only a
+directly captured function OBJECT (like CLOG:SET-ON-NEW-WINDOW's
+argument) goes stale across a reload."
+  (funcall lack/middleware/static:*lack-middleware-static* app
+           :path +file-browser-url-prefix+
+           :root +file-browser-root+))
 
 (defun %file-browser-glyph (kind expanded-p)
   (case kind
@@ -107,7 +142,7 @@ subdirectory only lists its own children the first time it is expanded."
          (panel (clog:create-div root :class "file-browser-panel"
                                  :html-id "file-browser-panel"))
          (panel-header (clog:create-div panel :class "file-browser-panel-header"))
-         (title-el (clog:create-section panel-header :h2 :content "/app"))
+         (title-el (clog:create-section panel-header :h2 :content "/"))
          (close-btn (clog:create-button panel-header :content "Close"
                                         :class "btn" :html-id "file-browser-close"))
          (tree (clog:create-div panel :class "file-tree" :html-id "file-tree"))
