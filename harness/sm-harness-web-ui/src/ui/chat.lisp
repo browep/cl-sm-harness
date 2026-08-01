@@ -63,6 +63,10 @@ reliably there and not part of what the user meant to send."
          ;; server-side path to the composer below (never sends it). See
          ;; ui/upload.lisp for the whole mechanism.
          (upload-panel (install-upload-panel body header root session-id))
+         ;; #138: "Browse files" -- shares the same panel installer as the
+         ;; home screen (install-file-browser-panel takes no session-id;
+         ;; the tree it shows is rooted at /app, not scoped per-session).
+         (file-browser-panel (install-file-browser-panel body header root))
          (transcript (clog:create-div root :class "transcript" :html-id "transcript"))
          (composer-wrap (clog:create-div root :class "composer"))
          (input (clog:create-text-area composer-wrap :class "prompt" :html-id "prompt"))
@@ -81,7 +85,7 @@ reliably there and not part of what the user meant to send."
          ;; outstanding so the *real* event, once it does arrive, updates
          ;; state without rendering that same line a second time.
          (awaiting-user-echo nil))
-    (declare (ignore log-panel info-panel upload-panel %route))
+    (declare (ignore log-panel info-panel upload-panel file-browser-panel %route))
     (setf (clog:attribute id-el "title") "Copy session id"
           (clog:attribute id-el "aria-label")
           (format nil "Copy session id ~A to clipboard" session-id))

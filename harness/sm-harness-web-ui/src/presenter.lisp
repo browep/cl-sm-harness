@@ -463,3 +463,156 @@ harmless, just not maximally cache-friendly."
     (if write-date
         (format nil "/app.css?v=~A" write-date)
         "/app.css")))
+
+;;; ---------------------------------------------------------------------
+;;; File browser (#138): pure directory-listing/path logic, kept here
+;;; (not in ui/file-browser.lisp, which is CLOG glue only) for the same
+;;; reason as EVENT-DISPLAY/%SESSION-CHIP-HTML above -- so it gets
+;;; PRESENTER-TESTS coverage without a live CLOG server.
+
+(defparameter +file-browser-root+ #P"/app/"
+  "The file browser is rooted here (#138) -- the live bind-mounted app
+repository (docs/sm-harness-web-ui.md, \"Container privileges and the
+live repo mount\"), not the whole container filesystem. This is also
+exactly the directory CLOG-CONNECTION:ADD-PLUGIN-PATH is pointed at in
+APPLICATION.LISP for serving a clicked file's raw content, so a listing
+built from this root and a URL built from %FS-HREF below always agree.")
+
+(defparameter +file-browser-max-entries+ 2000
+  "Cap (#138) on how many entries a single %LIST-DIRECTORY call will ever
+return, so an enormous directory under /app (checked-in node_modules,
+build output, ...) can't stall the browser tab building thousands of DOM
+rows in one lazy-expand click. Entries beyond this are silently dropped;
+the CLOG glue surfaces a \"truncated\" row instead of pretending the
+directory just happens to have exactly this many entries.")
+
+(defun %path-under-root-p (path root)
+  "Defense in depth (#138), independent of ADD-PLUGIN-PATH's own
+\"^/app/\" regex scoping on the serving side and LACK/APP/FILE's own
+'..'-component rejection. Never trusts a caller-supplied PATH on its own,
+the same posture as upload.lisp's %SANITIZE-PATH-COMPONENT comment about
+not relying on a single layer.
+
+Two checks, not one: PATH's plain (unresolved) namestring must start
+with ROOT's own TRUENAME textually -- this is the check that still works
+for a PATH that doesn't exist yet/anymore (e.g. %LIST-DIRECTORY called
+on a directory that vanished between being listed and being expanded;
+%LIST-DIRECTORY-SURFACES-A-MISSING-DIRECTORY-AS-ERROR below depends on
+this staying a :FORBIDDEN-vs-:ERROR distinction, not both collapsing to
+the same outcome) -- and, only when PATH does exist, its TRUENAME must
+*also* start with ROOT's TRUENAME, so a symlink actually pointing outside
+ROOT is caught even though it textually appeared to be inside it."
+  (handler-case
+      (let* ((true-root (namestring (truename root)))
+             (text-path (namestring path)))
+        (and (>= (length text-path) (length true-root))
+             (string= true-root text-path :end2 (length true-root))
+             (or (not (probe-file path))
+                 (let ((true-path (namestring (truename path))))
+                   (and (>= (length true-path) (length true-root))
+                        (string= true-root true-path :end2 (length true-root)))))))
+    (error () nil)))
+
+(defun %fs-entry-kind (path)
+  (if (uiop:directory-pathname-p path) :directory :file))
+
+(defun %fs-sort-key (path)
+  "Display name for PATH -- the last directory component for a directory
+pathname, or NAME(.TYPE) for a file -- also used directly as the sort
+key: CL's STRING-LESSP is already case-insensitive, so no separate
+downcasing is needed (and downcasing here would have leaked into the
+displayed name if it had been applied)."
+  (if (uiop:directory-pathname-p path)
+      (or (car (last (pathname-directory path))) "")
+      (let ((name (or (pathname-name path) ""))
+            (type (pathname-type path)))
+        (if type (format nil "~A.~A" name type) name))))
+
+(defun %list-directory (dir &key (root +file-browser-root+) (limit +file-browser-max-entries+))
+  "List DIR's immediate children (#138), directories before files,
+case-insensitive alphabetical within each group, dotfiles/dotdirs
+included with no filtering (#138 review comment: this project's stated
+no-sandbox posture -- docs/sm-harness-web-ui.md, \"Container privileges
+and the live repo mount\" -- already treats /app as fully visible to the
+agent; this is that same visibility, just browsable).
+
+Returns (VALUES ENTRIES TRUNCATED-P) on success, where each entry is a
+plist (:NAME :KIND (:DIRECTORY or :FILE) :PATH). Returns (VALUES NIL
+:FORBIDDEN) if DIR does not resolve under ROOT (%PATH-UNDER-ROOT-P) and
+(VALUES NIL :ERROR) if DIR can't be read (permission error, or it
+vanished between being listed and being expanded) -- callers must not
+let a directory-listing failure take down the rest of an already-open
+tree."
+  (cond
+    ((not (%path-under-root-p dir root))
+     (values nil :forbidden))
+    ((not (uiop:directory-exists-p dir))
+     ;; DIRECTORY/UIOP:SUBDIRECTORIES silently returns an empty list for a
+     ;; nonexistent directory in SBCL rather than signaling -- found
+     ;; writing this function's own test coverage -- so a vanished/never-
+     ;; existed DIR must be checked explicitly, or it would be
+     ;; indistinguishable from a directory that genuinely has zero
+     ;; entries.
+     (values nil :error))
+    (t
+     (handler-case
+          (let* ((dirs (uiop:subdirectories dir))
+                 (files (uiop:directory-files dir))
+                 (sorted-dirs (sort (copy-list dirs) #'string-lessp :key #'%fs-sort-key))
+                 (sorted-files (sort (copy-list files) #'string-lessp :key #'%fs-sort-key))
+                 (all (append sorted-dirs sorted-files))
+                 (truncated (> (length all) limit))
+                 (kept (if truncated (subseq all 0 limit) all)))
+            (values (mapcar (lambda (p)
+                              (list :name (%fs-sort-key p) :kind (%fs-entry-kind p) :path p))
+                            kept)
+                    truncated))
+        (error () (values nil :error))))))
+
+(defun %fs-unreserved-byte-p (byte)
+  "True for an octet in RFC 3986's unreserved set (ALPHA / DIGIT / '-'
+'.' '_' '~'), checked as raw byte *ranges* rather than via a CL character
+predicate on (CODE-CHAR BYTE) -- deliberately, since a UTF-8 continuation
+byte (128-255) run through CODE-CHAR lands on Latin-1 code points, and
+ALPHANUMERICP is true for several of those (e.g. accented letters),
+which would have let a multi-byte UTF-8 sequence's continuation bytes
+escape percent-encoding and corrupt the resulting URL."
+  (or (<= 48 byte 57)   ; 0-9
+      (<= 65 byte 90)   ; A-Z
+      (<= 97 byte 122)  ; a-z
+      (member byte '(45 46 95 126)))) ; - . _ ~
+
+(defun %fs-url-encode-component (name)
+  "Percent-encode NAME (a single path component -- never containing '/')
+for safe use in an href, by hand rather than pulling in a new dependency
+(same preference already stated for Markdown rendering above): every
+octet outside RFC 3986's unreserved set becomes %XX, operating on NAME's
+UTF-8 encoding so non-ASCII names survive too -- see
+%FS-UNRESERVED-BYTE-P for why this checks raw bytes, not characters."
+  (with-output-to-string (out)
+    (loop for byte across (sb-ext:string-to-octets name :external-format :utf-8) do
+      (if (%fs-unreserved-byte-p byte)
+          (write-char (code-char byte) out)
+          (format out "%~2,'0X" byte)))))
+
+(defun %fs-rel-components (path)
+  "PATH's path components below the filesystem root -- e.g.
+#P\"/app/harness/docs/sm-harness.md\" -> (\"app\" \"harness\" \"docs\"
+\"sm-harness.md\") -- used by %FS-HREF below. Resolves PATH's TRUENAME
+first so a symlink component can't produce a mismatched URL."
+  (let* ((true-path (truename path))
+         (dirs (rest (pathname-directory true-path)))
+         (name (pathname-name true-path))
+         (type (pathname-type true-path)))
+    (if (and name (not (uiop:directory-pathname-p true-path)))
+        (append dirs (list (if type (format nil "~A.~A" name type) name)))
+        dirs)))
+
+(defun %fs-href (path)
+  "The browser URL for PATH (a file or directory under
++FILE-BROWSER-ROOT+), matching exactly what APPLICATION.LISP's
+(CLOG-CONNECTION:ADD-PLUGIN-PATH \"^/app/\" \"/\") resolves back to the real
+filesystem path -- see that call site's comment for why a file's browser
+URL is simply its own absolute path with each component percent-encoded,
+no separate rewriting layer."
+  (format nil "/~{~A~^/~}" (mapcar #'%fs-url-encode-component (%fs-rel-components path))))

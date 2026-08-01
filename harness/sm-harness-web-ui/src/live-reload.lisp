@@ -40,10 +40,23 @@ long-running process's lifetime."
   "Re-point CLOG's routing table at the just-reloaded #'ON-NEW-WINDOW (and
 #'ON-UPLOAD-WINDOW, #127) so any *new* connection (including a tab this
 same call is about to refresh) gets current code, not the stale closure
-CLOG:INITIALIZE originally captured."
+CLOG:INITIALIZE originally captured.
+
+Also re-registers the #138 file-browser plugin path. Unlike the routes
+above, ADD-PLUGIN-PATH's own hash table isn't a stale-closure problem --
+see APPLICATION.LISP's ADD-PLUGIN-PATH call site comment, it closes over
+nothing reload-sensitive -- but START-WEB-UI itself only ever runs once,
+at real process boot, so a process that picks up #138 via RELOAD_HARNESS
+rather than a fresh container start (exactly this project's own dev loop,
+see docs/sm-harness-web-ui.md's RELOAD_HARNESS notes) would otherwise
+never register it at all. Calling it again here is a harmless no-op
+overwrite of the same regex/root pair on every ordinary reload.
+(ADD-PLUGIN-PATH is CLOG-CONNECTION:ADD-PLUGIN-PATH, not a CLOG-package
+symbol -- see APPLICATION.LISP's call site comment.)"
   (clog:set-on-new-window #'on-new-window :path "/" :boot-file "/boot.html")
   (clog:set-on-new-window #'on-new-window :path "/sessions" :boot-file "/boot.html")
-  (clog:set-on-new-window #'on-upload-window :path "/upload" :boot-file "/boot.html"))
+  (clog:set-on-new-window #'on-upload-window :path "/upload" :boot-file "/boot.html")
+  (clog-connection:add-plugin-path "^/app/" "/"))
 
 (defun %reassert-static-root ()
   "Re-point CLOG-CONNECTION:*STATIC-ROOT* at the configured static root

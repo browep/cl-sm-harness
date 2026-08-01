@@ -232,3 +232,66 @@ body {
 @keyframes sm-spin {
   to { transform: rotate(360deg); }
 }
+
+/* #138: file browser -- a left-sliding drawer, unlike .logs-panel/
+   .info-panel above which just toggle display:none in place. A
+   transform transition needs an always-in-the-DOM element with a class
+   toggle, not CLOG:HIDDENP (the "hidden" attribute/display:none) -- see
+   ui/file-browser.lisp's top comment. */
+.file-browser-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+  z-index: 40;
+}
+.file-browser-backdrop.open { opacity: 1; pointer-events: auto; }
+.file-browser-panel {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  width: min(360px, 85vw);
+  background: #121821;
+  border-right: 1px solid #2a3441;
+  box-shadow: 2px 0 12px rgba(0, 0, 0, 0.4);
+  transform: translateX(-100%);
+  transition: transform 0.18s ease;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  padding: 0.75rem;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+.file-browser-panel.open { transform: translateX(0); }
+.file-browser-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.file-browser-panel-header h2 { font-size: 1rem; margin: 0; color: #9aa7b8; }
+.file-tree { font-size: 0.9rem; }
+.file-tree-node { margin: 0.1rem 0; }
+.file-tree-children { padding-left: 1rem; }
+.file-tree-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: #e7ecf3;
+  padding: 0.2rem 0.3rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: none;
+}
+.file-tree-row:hover, .file-tree-row:focus-visible { background: #1c2430; }
+a.file-tree-file { color: #e7ecf3; }
+.file-tree-message { color: #9aa7b8; padding: 0.2rem 0.3rem; font-size: 0.85rem; }
+.file-tree-error { color: #ffb4b4; padding: 0.2rem 0.3rem; font-size: 0.85rem; }

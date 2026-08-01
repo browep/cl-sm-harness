@@ -88,6 +88,11 @@ generically correct rather than assuming that never changes."
          ;; and list, instead of appearing after everything at the bottom
          ;; of the page.
          (log-panel (install-log-export-panel body header root))
+         ;; #138: "Browse files" -- next to "Export logs" on this screen too
+         ;; (the #127 "Upload file" button, by contrast, only ever existed
+         ;; on the chat header, since uploads are per-session; the file
+         ;; browser isn't scoped to any session, so it belongs on both).
+         (file-browser-panel (install-file-browser-panel body header root))
          (actions (clog:create-div root :class "actions"))
          ;; #106: an explicit, static backend/model choice at session
          ;; creation. Both selects are populated from
@@ -109,7 +114,7 @@ generically correct rather than assuming that never changes."
                                        :html-id "session-list"))
          (status (clog:create-div root :class "status" :html-id "home-status"
                                   :content "Loading…")))
-    (declare (ignore _title log-panel))
+    (declare (ignore _title log-panel file-browser-panel))
     (setf (clog:attribute root "role") "main"
           (clog:attribute list-region "role") "region"
           (clog:attribute list-region "aria-label") "Sessions"
