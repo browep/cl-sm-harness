@@ -1,6 +1,9 @@
 #!/bin/sh
 # Host-only retained-volume restart proof. Browser E2E never receives Docker access.
 set -eu
+# Self-locate the harness root so invocation cwd does not matter.
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$root"
 compose_file=compose.sm-harness-web-ui.yaml
 artifact_dir="${E2E_ARTIFACTS_DIR:-$HOME/evidence/sm-harness-web-ui-e2e/latest}"
 export E2E_ARTIFACTS_DIR="$artifact_dir"

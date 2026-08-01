@@ -2,8 +2,14 @@
 # Host-side E2E orchestration. The Playwright container itself receives no
 # Docker socket and cannot reset/restart the application.
 set -eu
+# Self-locate the harness root so invocation cwd does not matter; compose
+# volume names derive from basename "$PWD", which must match the compose
+# file's own project directory.
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+cd "$root"
 compose_file=compose.sm-harness-web-ui.yaml
-project="${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}"
+# Must match the `name:` pinned in the compose file, not basename "$PWD".
+project="${COMPOSE_PROJECT_NAME:-claude-agent-sdk-cl}"
 artifact_dir="${E2E_ARTIFACTS_DIR:-$HOME/evidence/sm-harness-web-ui-e2e/latest}"
 scenario_dir=sm-harness-web-ui/e2e/tests
 export E2E_ARTIFACTS_DIR="$artifact_dir"

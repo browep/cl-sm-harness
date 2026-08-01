@@ -252,10 +252,11 @@ the greps run, and a self-`pkill` written alongside one is still rejected.
 Recompiles and reloads changed Lisp source into the *running* image via
 ASDF (see #65), so an edit made with `write_file` to this project's own
 source takes effect without a container restart. `CL_SOURCE_REGISTRY=/app//`
-covers everything under `/app`, and since #90 the compose `web-ui` service
-bind-mounts the host repo at `/app` (container user uid-matched to the
-repo owner), so those edits also **persist on the host across container
-restarts** instead of dying with the container. The image still bakes a
+is a recursive registry covering everything under `/app` — including the
+harness source now nested at `/app/harness` (#130) — and since #90 the
+compose `web-ui` service bind-mounts the host app repo at `/app` (container
+user uid-matched to the repo owner), so those edits also **persist on the
+host across container restarts** instead of dying with the container. The image still bakes a
 source copy at build time for the bind-mount-free e2e services.
 
 Calling `(asdf:load-system *reload-harness-system* :force force)` *is* the
@@ -541,7 +542,7 @@ already includes `/usr/share/common-lisp/source//` alongside `/app//`
 image never had that transitive path at all.
 
 Requires `TAVILY_API_KEY` to reach the running container: the compose
-`web-ui` service passes it through from the host's `.env` the same way
+`web-ui` service passes it through from the host's `harness/.env` the same way
 `GITHUB_TOKEN` already was (`compose.sm-harness-web-ui.yaml`) — `.env`
 itself is never baked into an image or visible to the offline test
 services, per the existing `.env`-related guardrails elsewhere in this

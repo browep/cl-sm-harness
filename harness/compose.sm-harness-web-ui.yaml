@@ -1,3 +1,9 @@
+# Pinned project name (#130): the compose file moved from the repo root into
+# harness/, and without this the derived project name would change from
+# claude-agent-sdk-cl to harness -- relaunching would silently create fresh
+# (empty) sm-harness-data volumes and rename the running containers.
+name: claude-agent-sdk-cl
+
 services:
   web-ui:
     build:
@@ -20,10 +26,13 @@ services:
       # tool-result error instead of crashing.
       TAVILY_API_KEY: ${TAVILY_API_KEY:-}
     volumes:
-      # Live repo at /app (#90): write_file/reload_harness edits persist on
-      # the host instead of dying with the container. CLOG static assets are
-      # baked at /opt/app-static so this mount cannot shadow them.
-      - .:/app
+      # Live app repo at /app (#90, #130): the whole app repository (one
+      # level above this compose file) is mounted read-write, with this
+      # harness's own source nested at /app/harness. write_file/reload_harness
+      # edits persist on the host instead of dying with the container. CLOG
+      # static assets are baked at /opt/app-static so this mount cannot
+      # shadow them.
+      - ..:/app
       - sm-harness-data:/data
       - sm-harness-cache:/cache
     ports:
@@ -52,10 +61,10 @@ services:
     volumes:
       - sm-harness-e2e-data:/data
       - sm-harness-cache:/cache
-      - ./claude-agent-sdk-cl.asd:/app/claude-agent-sdk-cl.asd:ro
-      - ./src:/app/src:ro
-      - ./sm-harness:/app/sm-harness:ro
-      - ./sm-harness-web-ui:/app/sm-harness-web-ui:ro
+      - ./claude-agent-sdk-cl.asd:/app/harness/claude-agent-sdk-cl.asd:ro
+      - ./src:/app/harness/src:ro
+      - ./sm-harness:/app/harness/sm-harness:ro
+      - ./sm-harness-web-ui:/app/harness/sm-harness-web-ui:ro
     networks:
       - e2e
     expose:

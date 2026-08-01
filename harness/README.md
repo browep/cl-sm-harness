@@ -69,7 +69,8 @@ test/
 
 All development, fixture generation, tests, and live CLI runs are planned to execute in Docker. The host should need only Docker/Compose—not SBCL, Python, Quicklisp, or Claude Code.
 
-The planned command surface is:
+The planned command surface is (run from this `harness/` directory, where
+`compose.yaml` lives — or add `-f harness/compose.yaml` from the repo root):
 
 ```bash
 # Offline unit/fixture suite
@@ -93,11 +94,11 @@ CLAUDE_SDK_LIVE_TEST=1 docker compose run --rm live live-mcp
 
 Phase 1 implements the offline `unit` command. Phase 2 adds `parity`: it compares the checked-in classification manifest with a catalog generated from the pinned upstream Python source in a separate credential-free Docker stage. It builds a pinned Node base image with SBCL, FiveAM, and Claude Code CLI `2.1.219`; exact resolved runtime versions are retained in `/usr/local/share/claude-agent-sdk-cl/runtime-versions.txt` in the image. The `test` service has network disabled, mounts source read-only, and uses a named `/cache` volume for compiled artifacts.
 
-The `test` service intentionally mounts only its ASDF/source/test/script inputs. It cannot see the root `.env`, and the test wrapper fails closed if an `.env` mount is added. The `reference` service is also credential-free and network-isolated at runtime; it can export the pinned source catalog for later vector generation. The `live` service is separate: it is the only network-enabled service, mounts source/scripts but never `.env`, receives only `CLAUDE_CODE_OAUTH_TOKEN`, and refuses to run unless `CLAUDE_SDK_LIVE_TEST=1` is set.
+The `test` service intentionally mounts only its ASDF/source/test/script inputs. It cannot see `harness/.env`, and the test wrapper fails closed if an `.env` mount is added. The `reference` service is also credential-free and network-isolated at runtime; it can export the pinned source catalog for later vector generation. The `live` service is separate: it is the only network-enabled service, mounts source/scripts but never `.env`, receives only `CLAUDE_CODE_OAUTH_TOKEN`, and refuses to run unless `CLAUDE_SDK_LIVE_TEST=1` is set.
 
 ## Authentication boundary
 
-The eventual live Docker service accepts one credential only, supplied from the root `.env`:
+The eventual live Docker service accepts one credential only, supplied from `harness/.env` (kept beside the compose files so Docker Compose's default env-file loading finds it):
 
 ```dotenv
 CLAUDE_CODE_OAUTH_TOKEN=...

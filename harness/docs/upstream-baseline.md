@@ -11,7 +11,7 @@
 
 ## Reference-oracle boundary
 
-The Python SDK is a test-only behavioral oracle. The Docker `reference` target contains its pinned source but receives no credentials, root `.env`, provider environment, or network at container runtime. The Common Lisp SDK must never import, invoke, or fall back to Python in production.
+The Python SDK is a test-only behavioral oracle. The Docker `reference` target contains its pinned source but receives no credentials, `harness/.env`, provider environment, or network at container runtime. The Common Lisp SDK must never import, invoke, or fall back to Python in production.
 
 The Python SDK bundles a Claude Code executable where available and otherwise supports a configured/system path. This port currently pins the same CLI version in its test image as an intentional development choice, not as a claim of Python-wheel packaging parity. Phase 4 must document target binary discovery and override behavior against this baseline.
 

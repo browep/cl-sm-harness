@@ -96,10 +96,13 @@ RUN curl -fsSL https://beta.quicklisp.org/quicklisp.lisp -o /tmp/quicklisp.lisp 
 RUN gh auth setup-git --hostname github.com --force
 
 USER root
-COPY --chown=app:app claude-agent-sdk-cl.asd /app/claude-agent-sdk-cl.asd
-COPY --chown=app:app src /app/src
-COPY --chown=app:app sm-harness /app/sm-harness
-COPY --chown=app:app sm-harness-web-ui /app/sm-harness-web-ui
+# Baked under /app/harness to mirror the host repo layout (#130): the compose
+# web-ui service bind-mounts the whole app repo at /app, with the harness's
+# own source nested at /app/harness.
+COPY --chown=app:app claude-agent-sdk-cl.asd /app/harness/claude-agent-sdk-cl.asd
+COPY --chown=app:app src /app/harness/src
+COPY --chown=app:app sm-harness /app/harness/sm-harness
+COPY --chown=app:app sm-harness-web-ui /app/harness/sm-harness-web-ui
 COPY docker/claude-agent-sdk-cl-supervisor.c /tmp/claude-agent-sdk-cl-supervisor.c
 COPY sm-harness-web-ui/docker/entrypoint.sh /usr/local/bin/sm-harness-web-ui-entrypoint
 RUN mkdir -p /usr/local/libexec \
@@ -110,7 +113,7 @@ RUN mkdir -p /usr/local/libexec \
  # the host repo over /app (#90), which would shadow anything baked there.
  && mkdir -p /opt/app-static \
  && cp -a /opt/quicklisp/dists/quicklisp/software/clog-*/static-files/. /opt/app-static/ \
- && cp -a /app/sm-harness-web-ui/static/. /opt/app-static/ \
+ && cp -a /app/harness/sm-harness-web-ui/static/. /opt/app-static/ \
  # The Playwright *browser* (above) lives outside /app and survives the
  # bind mount; its npm driver package does not, since node_modules must
  # sit alongside e2e/package.json to resolve (i.e. inside /app). Baking it
@@ -119,7 +122,7 @@ RUN mkdir -p /usr/local/libexec \
  # live-mounted web-ui/web-ui-e2e-app services (#90), this reflects host
  # state instead, same as every other file under /app -- run `npm ci`
  # there once if the host checkout lacks it.
- && (cd /app/sm-harness-web-ui/e2e && npm ci --no-audit --no-fund) \
+ && (cd /app/harness/sm-harness-web-ui/e2e && npm ci --no-audit --no-fund) \
  && chown -R app:app /app /home/app /opt/app-static
 
 USER app

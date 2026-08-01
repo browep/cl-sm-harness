@@ -6,9 +6,9 @@
 .hermes/
 
 # Generated browser E2E artifacts
-/evidence/
+/harness/evidence/
 
-# E2E contract written by a container missing SM_HARNESS_STATIC_ROOT:
-# the code default is /app/static/, and /app is the bind-mounted repo.
-# Anchored so sm-harness-web-ui/static/ (real, tracked assets) stays visible.
-/static/
+# E2E contract written by a run missing SM_HARNESS_STATIC_ROOT: the code
+# default static root is the tracked harness/sm-harness-web-ui/static/, so
+# only the generated contract file itself is ignored there.
+/harness/sm-harness-web-ui/static/e2e-contract.json

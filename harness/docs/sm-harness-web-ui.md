@@ -23,8 +23,9 @@ inside it is:
 - **Passwordless sudo (#89)**: the `app` user has `NOPASSWD:ALL` via
   `/etc/sudoers.d/app`, so `bash`-tool commands can install packages and
   act as root inside the container.
-- **Live repo at `/app` (#90)**: the compose `web-ui` service bind-mounts
-  the host repo over `/app`. `write_file`/`reload_harness` edits therefore
+- **Live repo at `/app` (#90, #130)**: the compose `web-ui` service
+  bind-mounts the whole host app repo over `/app`, with this harness's own
+  source nested at `/app/harness`. `write_file`/`reload_harness` edits therefore
   persist on the host across container restarts, and are ordinary git
   changes there. To make the mount writable, the image's `app` user is
   built with uid 1000 (`APP_UID` build arg) matching the host repo owner —
@@ -84,7 +85,8 @@ beside it).
 
 `main` configures the harness with a chat-agent system prompt
 (`%chat-agent-system-prompt`, `src/application.lisp`): the agent is told
-the repo is mounted at `/app` and docs live in `/app/docs/`, and that when
+the app repo is mounted at `/app` with the harness source nested at
+`/app/harness` (#130) and docs live in `/app/harness/docs/`, and that when
 given a session id and asked to debug it, it must read the docs that
 currently exist there first, then that session's transcript under
 `/data/web/sessions/`. The harness appends the agent's own session id and
@@ -1026,11 +1028,11 @@ isolated `web-ui-e2e`/`web-ui-e2e-app` compose pair:
 ```bash
 env WEB_UI_E2E=1 E2E_SCENARIO=<name> \
     SM_HARNESS_DATA=/tmp/e2e-data SM_HARNESS_HOST=127.0.0.1 SM_HARNESS_PORT=18080 \
-    SM_HARNESS_STATIC_ROOT=/app/sm-harness-web-ui/static/ \
+    SM_HARNESS_STATIC_ROOT=/app/harness/sm-harness-web-ui/static/ \
     sbcl --non-interactive --eval '(asdf:load-system :sm-harness-web-ui/e2e)' \
          --eval '(sm-harness-web-ui:main)' &
 
-cd sm-harness-web-ui/e2e
+cd /app/harness/sm-harness-web-ui/e2e
 BASE_URL=http://127.0.0.1:18080 ARTIFACTS=/tmp/e2e-artifacts E2E_SCENARIO=<name> \
   node run-e2e.mjs
 ```

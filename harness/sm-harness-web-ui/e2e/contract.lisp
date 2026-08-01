@@ -62,7 +62,7 @@
                        steps)
           (return-from validate-e2e-contract nil))))))
 
-(defun write-e2e-contract (&optional (path #P"/app/static/e2e-contract.json"))
+(defun write-e2e-contract (&optional (path #P"/app/harness/sm-harness-web-ui/static/e2e-contract.json"))
   (unless (validate-e2e-contract (e2e-scenario-contract))
     (error "invalid E2E browser contract"))
   (ensure-directories-exist path)

@@ -151,16 +151,18 @@ keep working without this route existing."
 (defun %chat-agent-system-prompt (data-root)
   "System prompt for the chat agent this UI fronts.
 DATA-ROOT is the harness data directory as the agent's container sees it;
-the repository itself is bind-mounted at /app (compose.sm-harness-web-ui.yaml)."
+the app repository is bind-mounted at /app with the harness source nested
+at /app/harness (compose.sm-harness-web-ui.yaml, #130)."
   (format nil
           "You are the chat agent of the sm-harness web UI, running inside ~
-its app container. The project repository (claude-agent-sdk-cl, sm-harness, ~
-sm-harness-web-ui — Common Lisp) is mounted read-write at /app, and durable ~
+its app container. The app repository is mounted read-write at /app, with ~
+this harness's own source (claude-agent-sdk-cl, sm-harness, ~
+sm-harness-web-ui — Common Lisp) nested under /app/harness, and durable ~
 harness state lives under ~A.~2%~
-Project documentation lives in /app/docs/. When the user gives you a ~
+Project documentation lives in /app/harness/docs/. When the user gives you a ~
 session id (they look like sess-<digits>-<digits>, and the chat header ~
 shows a copyable one) and asks you to debug or investigate it, do not ~
-guess: first list /app/docs/ and read the docs that currently exist there ~
+guess: first list /app/harness/docs/ and read the docs that currently exist there ~
 that bear on the question — start with sm-harness.md and ~
 sm-harness-web-ui.md — then read that session's transcript file at ~
 ~:*~Aweb/sessions/<session-id>.json. Session ids map one-to-one onto those ~
@@ -202,7 +204,7 @@ process's own command line."
          ;; where no route serves it (#90 moved the default off /app/static).
          (static-root (uiop:ensure-directory-pathname
                        (or (uiop:getenv "SM_HARNESS_STATIC_ROOT")
-                           "/app/static/")))
+                           "/app/harness/sm-harness-web-ui/static/")))
          (hcfg (sm-harness:make-harness-config
                 :data-root data
                 :project-key "web"
