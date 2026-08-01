@@ -26,13 +26,20 @@ wait_for_app() {
 
 docker compose -f "$compose_file" down -v --remove-orphans
 docker compose -f "$compose_file" build web-ui web-ui-e2e
-docker compose -f "$compose_file" up -d web-ui-e2e-app
+# The scenario env must be set at `up` time and match the later `run`:
+# compose recreates a dependency container whose config drifted, so a
+# mismatched E2E_SCENARIO would silently restart the app mid-phase and the
+# runner would race its boot (connect ECONNREFUSED). `run --no-deps` keeps
+# the app lifecycle entirely in this script's hands.
+E2E_SCENARIO=new-chat-composer docker compose -f "$compose_file" up -d web-ui-e2e-app
 wait_for_app
 # Produce a durable completed session through the real browser/UI/fixture stack.
-E2E_SCENARIO=new-chat-composer docker compose -f "$compose_file" run --rm web-ui-e2e
-# Restart only the application container; preserve the named data volume.
+E2E_SCENARIO=new-chat-composer docker compose -f "$compose_file" run --rm --no-deps web-ui-e2e
+# Replace only the application container; preserve the named data volume
+# (the recreate is forced by the scenario-env change, and durable state
+# surviving container replacement is exactly what this script proves).
 docker compose -f "$compose_file" stop web-ui-e2e-app
-docker compose -f "$compose_file" up -d web-ui-e2e-app
+E2E_SCENARIO=turn-identity docker compose -f "$compose_file" up -d web-ui-e2e-app
 wait_for_app
 # Reopen persisted history and verify its canonical transcript after restart.
-E2E_SCENARIO=turn-identity docker compose -f "$compose_file" run --rm web-ui-e2e
+E2E_SCENARIO=turn-identity docker compose -f "$compose_file" run --rm --no-deps web-ui-e2e
