@@ -3,11 +3,14 @@
   :author "Paul Brower"
   :license "MIT"
   :version "0.1.0"
-  :depends-on (#:sm-harness #:clog)
+  ;; ironclad is already in clog's transitive closure; named explicitly
+  ;; because src/clog-patches.lisp calls it directly (#121).
+  :depends-on (#:sm-harness #:clog #:ironclad)
   :serial t
   :components ((:module "src"
                 :components
                 ((:file "packages")
+                 (:file "clog-patches")
                  (:file "config")
                  (:file "presenter")
                  (:file "shutdown")
@@ -58,6 +61,18 @@
   :serial t
   :components ((:file "e2e/fixture-transport")
                (:file "e2e/test-hooks")))
+
+(asdf:defsystem #:sm-harness-web-ui/clog-patch-tests
+  :description "Tests for the CLOG connection-id generator replacement (#121)"
+  :depends-on (#:sm-harness-web-ui #:fiveam)
+  :serial t
+  :components ((:file "test/packages")
+               (:file "test/clog-patches"))
+  :perform (asdf:test-op (op c)
+             (declare (ignore op c))
+             (unless (uiop:symbol-call '#:fiveam '#:run!
+                                       :sm-harness-web-ui/clog-patch-tests)
+               (error "clog patch tests failed"))))
 
 (asdf:defsystem #:sm-harness-web-ui/presenter-tests
   :description "Presenter-only tests (no CLOG runtime required)"
