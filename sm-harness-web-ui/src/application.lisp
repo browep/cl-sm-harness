@@ -88,6 +88,11 @@ sm-harness-web-ui/e2e system providing them is loaded -- see
                            :boot-file "/boot.html"
                            :extended-routing t))
     (clog:set-on-new-window #'on-new-window :path "/sessions" :boot-file "/boot.html")
+    ;; #127: the hidden-iframe upload target ui/upload.lisp posts into --
+    ;; its own tiny CLOG route, separate from ON-NEW-WINDOW's home/chat
+    ;; dispatch, since an iframe navigation here is never a home or chat
+    ;; screen render.
+    (clog:set-on-new-window #'on-upload-window :path "/upload" :boot-file "/boot.html")
     (%maybe-install-e2e-test-routes fixture-p)
     ;; Once this system's own source reloads, re-point CLOG's routing at
     ;; fresh code and push open tabs a refresh (#78).

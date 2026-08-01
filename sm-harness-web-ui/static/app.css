@@ -199,3 +199,36 @@ body {
 .status-chip.status-stopping { background: #3a3320; color: #e3c98b; }
 .status-chip.status-error { background: #3a1d1d; color: #ffb4b4; }
 .status-chip.status-disconnected { background: #2a3441; color: #9aa7b8; }
+
+/* File upload (#127): the visible "Upload file" control's hidden
+   multipart-form/iframe machinery (ui/upload.lisp) must occupy no layout
+   space at all -- .visibility:hidden (CLOG's HIDDENP default) still
+   reserves a box, which would otherwise leave a stray gap in the header. */
+.upload-hidden { display: none; }
+/* Small inline spinner shown next to "Upload file" while a POST to
+   /upload is in flight; toggled directly by the inline JS
+   INSTALL-UPLOAD-PANEL installs, not through a CLOG round trip (see that
+   function's docstring for why). */
+.spinner {
+  display: inline-block;
+  width: 0.9rem;
+  height: 0.9rem;
+  border: 2px solid #3a4656;
+  border-top-color: #9aa7b8;
+  border-radius: 50%;
+  animation: sm-spin 0.7s linear infinite;
+  vertical-align: middle;
+}
+/* The [hidden] boolean attribute (toggled directly by the inline JS
+   above) normally gets display:none for free from the UA stylesheet, but
+   the plain .spinner rule above -- same (0,1,0) specificity -- can lose
+   that fight depending on sheet/rule order, leaving a "hidden" spinner
+   still visible (confirmed: the #127 upload E2E scenario caught exactly
+   this on first pass). This selector's extra attribute clause outranks
+   it explicitly rather than relying on ordering. */
+.spinner[hidden] {
+  display: none;
+}
+@keyframes sm-spin {
+  to { transform: rotate(360deg); }
+}

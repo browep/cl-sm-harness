@@ -39,6 +39,22 @@ async function executeStep(page, base, step) {
     // this is what actually caught the tab-closing bug, which only shows
     // up on genuine browser back/forward, never on an app-level link.
     case 'go_back': return page.goBack({ waitUntil: 'domcontentloaded', timeout });
+    // #127: Playwright can set an <input type=file>'s selected files
+    // directly, without a real OS file-chooser dialog -- CONTENT/SIZE_BYTES
+    // let the Lisp contract describe the fixture file inline (SIZE_BYTES
+    // for a large-file test, without transporting megabytes through the
+    // JSON contract itself) rather than needing a checked-in fixture file
+    // on disk.
+    case 'set_input_files': {
+      const buffer = step.size_bytes !== undefined
+        ? Buffer.alloc(step.size_bytes, 'a')
+        : Buffer.from(step.content ?? '', 'utf-8');
+      return target().setInputFiles({
+        name: step.name ?? 'upload.txt',
+        mimeType: step.mime_type ?? 'text/plain',
+        buffer,
+      });
+    }
     case 'sleep': return new Promise((resolve) => setTimeout(resolve, step.milliseconds));
     // Generic Playwright operation, not app-specific: open a second tab in
     // this same browser context at the given path, then close it. Used

@@ -33,7 +33,8 @@
         (e2e-connection-lost-fallback-scenario)
         (e2e-export-logs-scenario)
         (e2e-session-info-scenario)
-        (e2e-title-live-update-scenario)))
+        (e2e-title-live-update-scenario)
+        (e2e-upload-scenario)))
 
 (defparameter +e2e-supported-ops+
   '("assert_text_count" "wait" "wait_text" "assert_text" "assert_title"
@@ -41,7 +42,7 @@
     "wait_pattern" "assert_value" "assert_input_pattern" "assert_count" "wait_count"
     "wait_disabled" "assert_text_order" "assert_overflow_fits" "assert_scrolled_to_bottom"
     "assert_attribute" "goto" "reload" "sleep" "assert_url_pattern" "assert_not_text"
-    "open_tab" "select_option" "go_back"))
+    "open_tab" "select_option" "go_back" "set_input_files"))
 
 (defun validate-e2e-contract (contract)
   (let ((names (make-hash-table :test #'equal)))

@@ -57,6 +57,12 @@ reliably there and not part of what the user meant to send."
          ;; #106: session backend/model + ids, shown on demand rather than
          ;; cluttering the header permanently.
          (info-panel (install-session-info-panel header root snap session-id canon-el title-el))
+         ;; #127: "Upload file" button above the transcript -- opens the
+         ;; browser file chooser, uploads to durable disk under this
+         ;; session's own upload directory, and appends the resulting
+         ;; server-side path to the composer below (never sends it). See
+         ;; ui/upload.lisp for the whole mechanism.
+         (upload-panel (install-upload-panel body header root session-id))
          (transcript (clog:create-div root :class "transcript" :html-id "transcript"))
          (composer-wrap (clog:create-div root :class "composer"))
          (input (clog:create-text-area composer-wrap :class "prompt" :html-id "prompt"))
@@ -75,7 +81,7 @@ reliably there and not part of what the user meant to send."
          ;; outstanding so the *real* event, once it does arrive, updates
          ;; state without rendering that same line a second time.
          (awaiting-user-echo nil))
-    (declare (ignore log-panel info-panel %route))
+    (declare (ignore log-panel info-panel upload-panel %route))
     (setf (clog:attribute id-el "title") "Copy session id"
           (clog:attribute id-el "aria-label")
           (format nil "Copy session id ~A to clipboard" session-id))

@@ -383,6 +383,95 @@ No redaction is applied — it exports exactly what was captured.
   `undefined`, see "`reload_harness` only reloads Lisp" above — the static
   script most likely never made it to `/opt/app-static`.
 
+## File upload (#127)
+
+The chat header has an "Upload file" button (`#upload-file`) that opens
+the browser's native file chooser, saves the chosen file to durable disk
+under this harness's own data root, and appends the resulting *server-side*
+path to the composer (`#prompt`) — it never invokes Send, and there is no
+visible "submit" step of its own; choosing a file is the only action.
+
+- **Storage location**: `<data-root>/<project-key>/uploads/<session-id>/` —
+  e.g. `/data/web/uploads/sess-1234-5678/` — the same `PROJECT-KEY`
+  subdirectory of `data-root` that `SM-HARNESS::SESSION-REPOSITORY` already
+  writes `index.json`/`sessions/*.json` into (`%CONNECTION-LOG-PROJECT-DIR`,
+  `connection-log.lisp`), reused here as `%UPLOADS-PROJECT-DIR`
+  (`src/ui/upload.lisp`) rather than inventing a parallel layout. Saved
+  filenames are the uploaded file's own claimed basename, sanitized (see
+  below) and prefixed with a universal-time-plus-random suffix so two
+  uploads in the same second never collide.
+- **20MB per-file cap** (`+upload-max-bytes+`), enforced twice: client-side,
+  immediately and with no round trip (the `change` handler checks
+  `file.size` before ever submitting the hidden form), and again
+  server-side in `%copy-upload-stream` as defence in depth. The
+  server-side check cannot avoid the memory cost of an oversized upload —
+  by the time `on-upload-window` runs at all, CLOG/lack's own multipart
+  parser (`http-body`'s `multipart-parse`) has already read the whole
+  request body into memory regardless — it only stops the oversized file
+  from being *written to disk*.
+- **Mechanism**: CLOG has its own multipart-form support
+  (`clog:form-multipart-data`, used previously only in CLOG's own
+  tutorial, not elsewhere in this project) which this project combines with
+  the classic hidden-iframe upload trick so the visible tab never
+  navigates. `install-upload-panel` (`src/ui/upload.lisp`) builds a hidden
+  `<form target="upload-target-iframe" enctype="multipart/form-data">`
+  holding the session id and a `:file` input, posting into a same-origin,
+  hidden, named `<iframe>`. That iframe navigation is its own ordinary CLOG
+  connection — `on-upload-window`, registered at a dedicated `/upload` CLOG
+  route (`clog:set-on-new-window`, alongside `/sessions` in
+  `application.lisp`/`live-reload.lisp`'s `%reinstall-clog-routes`) — which
+  saves the file and messages the parent window the outcome via
+  `window.postMessage`. The composer's own `message` listener (installed
+  once, inline, by `install-upload-panel`) turns that into a spinner toggle
+  (`#upload-spinner`) and either an appended path or an inline error in
+  `#chat-error`.
+- **All browser-side glue is generated via `clog:js-execute`**, not a new
+  file under `static/` — see "`reload_harness` only reloads Lisp" above: a
+  new `static/*.js` file needs re-copying into `/opt/app-static` (or an
+  image rebuild) before a running container actually serves it, where
+  inline JS strings compiled into `upload.lisp` are live the instant
+  `reload_harness` reloads it, same as the session-id-copy and log-export
+  "Copy" buttons already do.
+- **Why the button's click handler is plain JS, not a CLOG round trip**: a
+  native file-chooser dialog only opens when `input.click()` runs
+  *synchronously* inside the browser's own handler for a real user gesture.
+  A CLOG click round trip's response arrives asynchronously, outside that
+  gesture, and every mainstream browser silently no-ops `input.click()`
+  called from there — so the "Upload file" button's click listener (and the
+  file input's `change`/`window`'s `message` listeners) are wired directly
+  in the one inline script `install-upload-panel` emits, not via
+  `clog:set-on-click`.
+- **A found-and-fixed timing bug worth knowing about**: `install-upload-panel`
+  is called before `render-chat` creates `#prompt`/`#chat-error` (it sits
+  next to the log-export/session-info panel installs in the header, ahead
+  of the transcript/composer in that function's `let*`). An early version
+  cached `document.getElementById('prompt')`/`('chat-error')` once at wiring
+  time, which silently captured `null` — the elements didn't exist in the
+  DOM yet — and every result (success or error) after that was a silent
+  no-op. The fix looks both up fresh inside each event handler instead of
+  caching them at install time; the `upload` E2E scenario below is what
+  caught it.
+- **Path sanitizing** (`%sanitize-path-component`): both the session id and
+  the uploaded file's claimed name arrive as ordinary client-controlled
+  multipart form fields. Only alphanumerics, `-`, `_`, `.` survive — notably
+  no `/` or `\`, so nothing in either field can escape the directory it is
+  placed in — and a leading-dot strip blocks both dotfiles and an
+  all-dots-shaped `..` component.
+- **E2E coverage** (`e2e/scenarios/upload.lisp`, scenario name `upload`)
+  exercises both the client-side size rejection (a 20MB+1KB fixture file,
+  generated in-memory by the Playwright driver from a `size_bytes` step
+  field rather than checked into the repo, asserting the spinner never
+  shows and the composer stays untouched) and a real small upload (content
+  supplied inline in the Lisp contract via a `content` step field),
+  asserting the composer ends up holding a path matching
+  `uploads/.../<name>` and that `.msg-user` stays at count 0 — the
+  send-was-never-invoked assertion the whole feature exists for. This
+  needed one new Playwright bridge op, `set_input_files`
+  (`e2e/bridge.mjs`), since none of the existing ops could populate a real
+  `<input type=file>` — Playwright can set one directly without a real OS
+  file-chooser dialog, which is what makes this testable headlessly at
+  all.
+
 ## Dead browser tabs and listener delivery
 
 A tab whose websocket silently died (laptop sleep, network drop) leaves a

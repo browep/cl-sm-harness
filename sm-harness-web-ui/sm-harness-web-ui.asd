@@ -16,6 +16,7 @@
                  (:file "browser-logs")
                  (:file "ui/log-export")
                  (:file "ui/session-info")
+                 (:file "ui/upload")
                  (:file "ui/home")
                  (:file "ui/chat")
                  (:file "live-reload")
@@ -48,7 +49,8 @@
                              (:file "connection-lost-fallback")
                              (:file "export-logs")
                              (:file "session-info")
-                             (:file "title-live-update")))))
+                             (:file "title-live-update")
+                             (:file "upload")))))
 
 (asdf:defsystem #:sm-harness-web-ui/e2e
   :description "Test-only deterministic SDK transport for browser E2E"

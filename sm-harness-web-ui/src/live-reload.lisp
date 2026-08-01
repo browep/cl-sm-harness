@@ -37,11 +37,13 @@ long-running process's lifetime."
          *live-browser-windows*)))
 
 (defun %reinstall-clog-routes ()
-  "Re-point CLOG's routing table at the just-reloaded #'ON-NEW-WINDOW so any
-*new* connection (including a tab this same call is about to refresh) gets
-current code, not the stale closure CLOG:INITIALIZE originally captured."
+  "Re-point CLOG's routing table at the just-reloaded #'ON-NEW-WINDOW (and
+#'ON-UPLOAD-WINDOW, #127) so any *new* connection (including a tab this
+same call is about to refresh) gets current code, not the stale closure
+CLOG:INITIALIZE originally captured."
   (clog:set-on-new-window #'on-new-window :path "/" :boot-file "/boot.html")
-  (clog:set-on-new-window #'on-new-window :path "/sessions" :boot-file "/boot.html"))
+  (clog:set-on-new-window #'on-new-window :path "/sessions" :boot-file "/boot.html")
+  (clog:set-on-new-window #'on-upload-window :path "/upload" :boot-file "/boot.html"))
 
 (defun %reassert-static-root ()
   "Re-point CLOG-CONNECTION:*STATIC-ROOT* at the configured static root
