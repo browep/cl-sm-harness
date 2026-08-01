@@ -666,3 +666,47 @@ persisted."
              (is (search "session not found" text))))
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+;;;; #123: every catalog tool declares explicit MCP-style annotations, no
+;;;; tool silently defaults to unannotated. read_file/web_search/echo_text
+;;;; are the only ones marked read-only-safe today; bash/write_file/
+;;;; reload_harness/set_session_title stay deliberately conservative.
+
+(test default-catalog-tools-all-declare-explicit-annotations
+  (let* ((catalog (sm-harness:default-tool-catalog))
+         (tools (sm-harness:tool-server-definition-tools
+                 (first (sm-harness:tool-catalog-servers catalog)))))
+    (is (plusp (length tools)))
+    (dolist (tool tools)
+      (is (not (null (sm-harness::tool-definition-annotations tool)))
+          "~A must declare explicit #123 annotations, not default to unannotated"
+          (sm-harness:tool-definition-name tool)))))
+
+(test default-catalog-read-only-tools-match-the-123-table
+  (let* ((catalog (sm-harness:default-tool-catalog))
+         (tools (sm-harness:tool-server-definition-tools
+                 (first (sm-harness:tool-catalog-servers catalog)))))
+    (flet ((read-only-p (name)
+             (let ((tool (find name tools :key #'sm-harness:tool-definition-name :test #'string=)))
+               (is (not (null tool)) "~A must be registered in the default catalog" name)
+               (eq t (getf (sm-harness::tool-definition-annotations tool) :read-only-p)))))
+      (is (eq t (read-only-p "read_file")))
+      (is (eq t (read-only-p "web_search")))
+      (is (eq t (read-only-p "echo_text")))
+      (is (eq nil (read-only-p "bash")))
+      (is (eq nil (read-only-p "write_file")))
+      (is (eq nil (read-only-p "reload_harness")))
+      (is (eq nil (read-only-p "set_session_title"))))))
+
+(test sdk-tool-from-definition-passes-annotations-through-to-the-sdk
+  (let* ((definition (sm-harness::make-tool-definition
+                       :name "annotated" :description "d"
+                       :input-schema (sm-harness::%echo-schema)
+                       :annotations '(:read-only-p t :destructive-p nil
+                                      :idempotent-p t :open-world-p nil)
+                       :handler (lambda (arguments context)
+                                  (declare (ignore arguments context))
+                                  "ok")))
+         (sdk-tool (sm-harness::%sdk-tool-from-definition definition)))
+    (is (equal '(:read-only-p t :destructive-p nil :idempotent-p t :open-world-p nil)
+               (claude-agent-sdk-cl:sdk-tool-annotations sdk-tool)))))

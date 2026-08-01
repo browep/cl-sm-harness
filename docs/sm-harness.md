@@ -668,6 +668,79 @@ schedules-a-one-shot-title-nudge` and its neighboring tests in
 `test/runtime.lisp` for the one-shot/no-double-fire/no-clobber contract
 this relies on.
 
+### Tool annotations and concurrent execution (#123)
+
+Every `tool-definition` in `tool-catalog.lisp` carries an `annotations`
+plist -- `:read-only-p`/`:destructive-p`/`:idempotent-p`/`:open-world-p`,
+the standard MCP `ToolAnnotations` set (`readOnlyHint` et al. on the wire).
+`%sdk-tool-from-definition` (`sdk-adapter.lisp`) passes it straight through
+to `claude-agent-sdk-cl:make-sdk-tool`, which serves it in this catalog's
+`tools/list` response. No tool defaults to silently unannotated: every
+`make-*-tool-definition` constructor sets all four keys explicitly, even
+when every one of them is `nil`.
+
+| tool | read-only | destructive | idempotent | open-world |
+| --- | --- | --- | --- | --- |
+| `read_file` | T | NIL | T | NIL |
+| `web_search` | T | NIL | NIL | T |
+| `echo_text` | T | NIL | T | NIL |
+| `bash` | NIL | T | NIL | T |
+| `write_file` | NIL | T | NIL | NIL |
+| `reload_harness` | NIL | NIL | T | NIL |
+| `set_session_title` | NIL | NIL | T | NIL |
+
+`:read-only-p t` is what a conforming MCP client -- including the real
+`claude` CLI (`isConcurrencySafe`/`isReadOnly`, both gated on
+`annotations.readOnlyHint`) -- uses to decide a tool call is safe to run
+concurrently with any other in-flight call. Only `read_file`, `web_search`,
+and `echo_text` claim that today; `bash` stays conservatively unmarked for
+the same reason the CLI's own built-in `Bash` tool is: a `grep` and a `git
+push` both run through it, and nothing here can tell them apart from the
+command string alone (a narrower, command-pattern-based classifier is
+deliberately out of scope, see #123's own "open questions").
+
+**Advertising the annotation is necessary but not sufficient.**
+`claude-agent-sdk-cl` does not trust the CLI (or any other MCP client, or a
+future CLI version) to actually honor `readOnlyHint`: its own
+`claude-sdk-client` holds a `tool-execution-lock` mutex, and every inbound
+`mcp_message` `tools/call` acquires it for the call's duration *unless* the
+resolved tool's own annotations say `:read-only-p t`
+(`%invoke-sdk-tool-serialized`, `mcp.lisp`). So a non-read-only tool call
+physically cannot overlap another non-read-only call through this client
+regardless of what the CLI schedules, and a `read_file`/`web_search`/
+`echo_text` call can now run wall-clock-concurrently with another one, or
+even with an in-flight `bash` call.
+
+**The client's control-request read loop no longer blocks on any tool
+call's execution**, not just read-only ones. Before #123, one single
+reader thread read every CLI control request *and* ran that request's
+handler fully synchronously before reading the next one, which meant every
+tool call -- however concurrency-safe -- was serialized purely by that read
+loop's own structure, independent of the CLI's own scheduling or any
+annotation. `%client-handle-control-request` now spawns a fresh thread per
+`mcp_message` request (`%client-spawn-tool-thread`, `client.lisp`) and
+returns immediately; every other control subtype (`hook_callback`,
+`can_use_tool`, `initialize`/`interrupt` acks, ...) is untouched and still
+handled fully in-line on the reader thread, exactly as before. The
+concurrency-safety policy itself still lives entirely in the
+`tool-execution-lock` described above -- this only removes the transport
+layer as an *additional*, tool-identity-blind bottleneck on top of it.
+`disconnect` joins any still-running tool threads with a bounded grace
+period (`+client-tool-thread-disconnect-grace-seconds+`, 5s) and abandons
+(logging, never blocking on) any straggler, mirroring the bash tool's own
+timeout-watchdog philosophy (#79/#80): a wedge, not a leaked thread, is the
+catastrophic outcome.
+
+**A visible consequence for anything downstream of `map-sdk-message`:**
+tool-requested/-completed/-failed events for two calls in the same model
+turn can now interleave in wall-clock time (though the event *stream*
+itself stays strictly ordered -- only handler *execution* runs
+concurrently, `runtime.lisp`'s `inflight-tool-calls` bookkeeping already
+correlates purely by `tool-use-id`, never delivery order, so no runtime
+change was needed there). Nothing here has been observed to assume at most
+one open "tool requested" card in `sm-harness-web-ui`; if that surfaces a
+real rendering problem it is a follow-up issue, not a #123 regression.
+
 ## Turn deadline
 
 `turn-deadline-seconds` (default 600, `make-harness-config`) bounds

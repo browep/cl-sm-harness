@@ -24,7 +24,17 @@
   ;; (nothing else in this file needs one) has no symbol to late-bind and is
   ;; frozen the same way a captured #'name would be -- fine for a handler
   ;; that will never need a live edit, not otherwise.
-  handler)
+  handler
+  ;; NIL, or a plist of :READ-ONLY-P/:DESTRUCTIVE-P/:IDEMPOTENT-P/:OPEN-WORLD-P
+  ;; booleans -- claude-agent-sdk-cl:make-sdk-tool's own MCP ToolAnnotations
+  ;; shape (see mcp.lisp there), passed through verbatim by
+  ;; %SDK-TOOL-FROM-DEFINITION (sdk-adapter.lisp). Every constructor below
+  ;; sets this explicitly (see #123's table): no tool here defaults to
+  ;; silently unannotated, since an absent :READ-ONLY-P T is what both the
+  ;; real `claude` CLI and this SDK's own TOOL-EXECUTION-LOCK read as "not
+  ;; safe to run concurrently" -- the conservative, always-correct default,
+  ;; but one this file states on purpose per tool rather than leaves implicit.
+  annotations)
 
 (defstruct (tool-server-definition (:constructor make-tool-server-definition))
   (name "" :type string)
@@ -54,6 +64,8 @@
    :name "echo_text"
    :description "Echo the provided text argument."
    :input-schema (%echo-schema)
+   ;; #123: no side effects at all -- read-only and idempotent.
+   :annotations '(:read-only-p t :destructive-p nil :idempotent-p t :open-world-p nil)
    :handler (lambda (arguments context)
               (declare (ignore context))
               (format nil "echo: ~A" (or (gethash "text" arguments) "")))))
@@ -198,6 +210,8 @@ cap ends with a notice naming the offset to continue from, and reading a
 large file whole therefore takes several calls. Binary/non-UTF-8 files
 return a size summary instead of their content."
    :input-schema (%read-schema)
+   ;; #123: a pure filesystem read, no mutation -- read-only and idempotent.
+   :annotations '(:read-only-p t :destructive-p nil :idempotent-p t :open-world-p nil)
    :handler '%read-file-tool-handler))
 
 (defparameter +write-tool-max-chars+ (* 5 1024 1024)
@@ -277,6 +291,10 @@ file without confirmation. PATH and CONTENT are both required. Creates
 parent directories as needed. Content over 5MB is rejected outright (the
 write does not happen) rather than truncated."
    :input-schema (%write-schema)
+   ;; #123: overwrites existing files with no confirmation -- two concurrent
+   ;; writers to the same path is exactly the hazard to avoid, so this is
+   ;; deliberately NOT read-only.
+   :annotations '(:read-only-p nil :destructive-p t :idempotent-p nil :open-world-p nil)
    :handler '%write-file-tool-handler))
 
 (defparameter +bash-tool-default-timeout-seconds+ 120)
@@ -590,6 +608,11 @@ rejected outright. Kills aimed at any other process, including scratch
 sbcl servers started to test changes, run normally; call reload_harness
 when the goal is picking up Lisp source edits in this harness itself."
    :input-schema (%bash-schema)
+   ;; #123: arbitrary shell -- deliberately NOT marked read-only-safe. Matches
+   ;; the real `claude` CLI's own stated reason its built-in Bash tool isn't
+   ;; parallel-safe either: a read-only `grep` and a destructive `git push`
+   ;; both run through this one tool, and nothing here can tell them apart.
+   :annotations '(:read-only-p nil :destructive-p t :idempotent-p nil :open-world-p t)
    :handler '%bash-tool-handler))
 
 (defvar *reload-harness-system* :sm-harness
@@ -699,6 +722,10 @@ unable to reload that type again, even after reverting the source: if an
 error mentions instance length or layout, only a container restart will
 fix it, not another reload_harness call."
    :input-schema (%reload-schema)
+   ;; #123: mutates the running process/loaded code -- not read-only. Reloading
+   ;; already-current source is a safe (ASDF timestamp-based) no-op, so this
+   ;; is idempotent.
+   :annotations '(:read-only-p nil :destructive-p nil :idempotent-p t :open-world-p nil)
    :handler '%reload-harness-tool-handler))
 
 (defparameter +web-search-max-results-default+ 5
@@ -840,6 +867,10 @@ requested. Requires TAVILY_API_KEY to be configured in the environment;
 if it is not, this returns a tool-result error rather than crashing.
 Each result includes a title, URL, and a short content excerpt."
    :input-schema (%web-search-schema)
+   ;; #123: never mutates local state, so read-only; hits an external network
+   ;; API whose results can legitimately change between identical calls, so
+   ;; not idempotent, and open-world.
+   :annotations '(:read-only-p t :destructive-p nil :idempotent-p nil :open-world-p t)
    :handler '%web-search-tool-handler))
 
 (defvar *tool-harness* nil
@@ -932,6 +963,11 @@ connection -- an idle session already on disk is reopened automatically.
 This does not change the session's id, its transcript, or anything else
 about it -- only the display title."
    :input-schema (%set-session-title-schema)
+   ;; #123: mutates a session's stored title -- not read-only. Setting the
+   ;; same title twice leaves the same end state, so idempotent; no external
+   ;; network/service involved. (Added after #123's own table was written;
+   ;; classified here the same way, not left silently unannotated.)
+   :annotations '(:read-only-p nil :destructive-p nil :idempotent-p t :open-world-p nil)
    :handler '%set-session-title-tool-handler))
 
 (defun default-tool-catalog ()
