@@ -1,3 +1,4 @@
-# Playwright install artifacts; the exact version is pinned in package.json.
+# Playwright install artifacts. The lockfile is tracked (issue #137): the
+# image build's `npm ci` hard-fails without one, so ignoring it made the
+# web-ui image unbuildable from a fresh clone.
 node_modules/
-package-lock.json
