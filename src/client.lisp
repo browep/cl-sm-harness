@@ -43,7 +43,26 @@
    ;; All control and user JSONL writes share this lock; an interactive child
    ;; must never receive interleaved frames from concurrent callers.
    (write-lock :initform (sb-thread:make-mutex :name "claude-client-write")
-               :reader client-write-lock))
+               :reader client-write-lock)
+   ;; Defense-in-depth serialization for any SDK tool call whose own
+   ;; annotations do not declare it read-only-safe (see mcp.lisp's
+   ;; %SDK-TOOL-READ-ONLY-P / MAKE-SDK-MCP-HANDLER :SERIALIZATION-LOCK). A
+   ;; non-read-only tool call physically cannot overlap another one through
+   ;; this client no matter what the CLI itself schedules or honors.
+   (tool-execution-lock :initform (sb-thread:make-mutex :name "claude-client-tool-execution")
+                        :reader client-tool-execution-lock)
+   ;; Bookkeeping only -- an alist of (request-id . thread) for every
+   ;; currently-running spawned mcp_message tool thread (see
+   ;; %CLIENT-SPAWN-TOOL-THREAD), purely so DISCONNECT can join them with a
+   ;; bounded grace period instead of abandoning them silently. Keyed by
+   ;; request-id, not the thread object itself: a thread's own closure can
+   ;; safely close over its own request-id at creation time, whereas the
+   ;; SB-THREAD:MAKE-THREAD return value is not yet bound to anything when
+   ;; that thread's body may already be running.
+   (active-tool-threads :initform nil :accessor client-active-tool-threads)
+   (active-tool-threads-lock
+    :initform (sb-thread:make-mutex :name "claude-client-active-tool-threads")
+    :reader client-active-tool-threads-lock))
   (:documentation "Stateful interactive Claude Code client.
 
 State transitions are :NEW -> :CONNECTED -> :CLOSING -> :CLOSED. A result
@@ -140,7 +159,9 @@ subprocess using explicit CLI-PATH first and PATH discovery second."
       (dolist (server (agent-options-sdk-mcp-servers effective-options))
         (%register-named-control-handler client #'client-mcp-handlers
                                          (sdk-mcp-server-name server)
-                                         (make-sdk-mcp-handler server)
+                                         (make-sdk-mcp-handler
+                                          server
+                                          :serialization-lock (client-tool-execution-lock client))
                                          :register-sdk-mcp-handler))
       (setf (client-configured-sdk-mcp-server-names client)
             (mapcar #'sdk-mcp-server-name
@@ -277,11 +298,70 @@ applies only after a valid object has been framed and routed as an ordinary even
                      result
                      (make-mcp-control-result :response result))))))))))
 
-(defun %client-handle-control-request (client record)
-  "Synchronously service one inbound CLI control request.
+(defun %client-add-active-tool-thread (client request-id thread)
+  (sb-thread:with-mutex ((client-active-tool-threads-lock client))
+    (push (cons request-id thread) (client-active-tool-threads client))))
 
-All outcomes are terminal on the wire: a missing/failed/cancelled handler emits
-an error response, while a handler returning a JSON object emits success."
+(defun %client-remove-active-tool-thread (client request-id)
+  (sb-thread:with-mutex ((client-active-tool-threads-lock client))
+    (setf (client-active-tool-threads client)
+          (remove request-id (client-active-tool-threads client)
+                  :key #'car :test #'equal))))
+
+(defun %client-service-control-handler (client request-id handler request)
+  "Invoke HANDLER for REQUEST and write its terminal control_response.
+
+Fully self-contained: an uncaught condition from HANDLER never escapes this
+function, whether it runs inline on the reader thread (every subtype except
+mcp_message) or on a thread %CLIENT-SPAWN-TOOL-THREAD span for it."
+  (handler-case
+      (let* ((response (funcall handler request))
+             (wire-response (%client-normalize-control-result request response)))
+        (if (eq response :cancel)
+            (%client-control-response client request-id "error" :error "control request cancelled")
+            (if wire-response
+                (%client-control-response client request-id "success" :response wire-response)
+                (%client-control-response client request-id "error"
+                                          :error "control handler must return a permission result, hash table, or :cancel"))))
+    (error (condition)
+      (%client-control-response client request-id "error" :error (princ-to-string condition)))))
+
+(defun %client-spawn-tool-thread (client request-id handler request)
+  "Run an mcp_message HANDLER on its own thread so this client's single
+reader thread can move straight on to the next control request or event
+instead of blocking until the tool call returns (see #123: previously every
+tool call -- however concurrency-safe -- was serialized purely by this read
+loop, regardless of the CLI's own scheduling or any MCP readOnlyHint
+annotation). Concurrency-safety policy itself is enforced elsewhere
+(MAKE-SDK-MCP-HANDLER's :SERIALIZATION-LOCK, held here inside HANDLER for
+any non-read-only tool) -- this function only stops the transport-level
+bottleneck.
+
+Registers the new thread in ACTIVE-TOOL-THREADS, keyed by REQUEST-ID rather
+than the thread object itself, purely so DISCONNECT can join outstanding
+tool calls with a bounded grace period. Returns immediately; the caller must
+not wait on the returned thread."
+  (let ((thread
+          (sb-thread:make-thread
+           (lambda ()
+             (unwind-protect
+                  (%client-service-control-handler client request-id handler request)
+               (%client-remove-active-tool-thread client request-id)))
+           :name (format nil "sdk-tool-call-~A" request-id))))
+    (%client-add-active-tool-thread client request-id thread)
+    thread))
+
+(defun %client-handle-control-request (client record)
+  "Service one inbound CLI control request.
+
+All outcomes are terminal on the wire: a missing/failed/cancelled handler
+emits an error response, while a handler returning a JSON object emits
+success. Every subtype except mcp_message is still handled fully
+synchronously and in-line, exactly as before #123. An mcp_message tools/call
+runs on its own thread (%CLIENT-SPAWN-TOOL-THREAD) so a slow or blocking
+tool handler cannot stall this reader loop from seeing subsequent control
+requests or events; the duplicate-request bookkeeping below still happens
+synchronously, before any thread is spawned, so it remains race-free."
   (let* ((request-id (control-request-request-id record))
          (request (gethash "request" record))
          (subtype (and (hash-table-p request) (gethash "subtype" request)))
@@ -302,18 +382,10 @@ an error response, while a handler returning a JSON object emits success."
       ((not (functionp handler))
        (%client-control-response client request-id "error"
                                  :error (format nil "No control handler for subtype: ~A" subtype)))
+      ((equal subtype "mcp_message")
+       (%client-spawn-tool-thread client request-id handler request))
       (t
-       (handler-case
-           (let* ((response (funcall handler request))
-                  (wire-response (%client-normalize-control-result request response)))
-             (if (eq response :cancel)
-                 (%client-control-response client request-id "error" :error "control request cancelled")
-                 (if wire-response
-                     (%client-control-response client request-id "success" :response wire-response)
-                     (%client-control-response client request-id "error"
-                                               :error "control handler must return a permission result, hash table, or :cancel"))))
-         (error (condition)
-           (%client-control-response client request-id "error" :error (princ-to-string condition))))))))
+       (%client-service-control-handler client request-id handler request)))))
 
 (defun %client-handle-control-cancel (record)
   "Consume a late control cancellation in the synchronous client model."
@@ -439,6 +511,30 @@ Use this from a cancellation path while another owner is blocked in
   (%client-send-control client "interrupt")
   client)
 
+(defparameter +client-tool-thread-disconnect-grace-seconds+ 5
+  "Bounded join grace period per still-running spawned mcp_message tool
+thread during DISCONNECT. Mirrors the sm-harness bash tool's own
+timeout-watchdog/reader-thread-abandonment precedent (#79/#80): a wedge, not
+a leaked thread, is the catastrophic outcome. A tool handler with its own
+longer internal timeout (e.g. sm-harness's bash tool) may still be
+abandoned here if it outlives this grace period -- DISCONNECT logs that
+case (:CLIENT.TOOL-THREAD.ABANDONED) rather than blocking on it.")
+
+(defun %client-join-active-tool-threads (client)
+  "Join every still-running spawned tool thread (see
+%CLIENT-SPAWN-TOOL-THREAD) with a bounded grace period each; log and move on
+for any straggler rather than block DISCONNECT indefinitely."
+  (let ((pending (sb-thread:with-mutex ((client-active-tool-threads-lock client))
+                   (copy-list (client-active-tool-threads client)))))
+    (dolist (entry pending)
+      (let ((request-id (car entry))
+            (thread (cdr entry)))
+        (when (eq :sm-tool-thread-timeout
+                  (sb-thread:join-thread thread
+                                         :timeout +client-tool-thread-disconnect-grace-seconds+
+                                         :default :sm-tool-thread-timeout))
+          (emit-transport-log :client.tool-thread.abandoned :request-id request-id))))))
+
 (defun disconnect (client)
   "Idempotently transition CLIENT to :CLOSED and close its transport once."
   (case (client-state client)
@@ -447,7 +543,9 @@ Use this from a cancellation path while another owner is blocked in
     (otherwise
      (setf (client-state client) :closing)
      (unwind-protect
-          (close-client-transport (client-transport-instance client) :reason :disconnect)
+          (progn
+            (%client-join-active-tool-threads client)
+            (close-client-transport (client-transport-instance client) :reason :disconnect))
        (clear-protocol-router (client-router client) :reason :disconnect)
        (setf (client-state client) :closed))
      client)))

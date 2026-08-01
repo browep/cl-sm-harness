@@ -12,7 +12,7 @@
            #:agent-options-builtin-tools #:agent-options-sdk-mcp-servers
            #:agent-options-strict-mcp-config #:agent-options->mcp-config
            #:sdk-tool #:make-sdk-tool #:sdk-tool-name #:sdk-tool-description
-           #:sdk-tool-input-schema #:sdk-tool-handler
+           #:sdk-tool-input-schema #:sdk-tool-handler #:sdk-tool-annotations
            #:sdk-mcp-server #:make-sdk-mcp-server #:sdk-mcp-server-name
            #:sdk-mcp-server-version #:sdk-mcp-server-tools
            #:sdk-tool-result #:make-sdk-tool-result #:sdk-tool-result-text

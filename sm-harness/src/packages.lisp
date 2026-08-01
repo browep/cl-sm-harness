@@ -30,7 +30,7 @@
    #:tool-server-definition #:tool-server-definition-name #:tool-server-definition-version
    #:tool-server-definition-tools
    #:tool-definition #:tool-definition-name #:tool-definition-description
-   #:tool-definition-input-schema #:tool-definition-handler
+   #:tool-definition-input-schema #:tool-definition-handler #:tool-definition-annotations
    #:harness-error #:harness-error-message
    #:harness-input-error #:harness-state-error #:harness-not-found-error
    ;; #106: static backend/model catalog for session creation + viewing.

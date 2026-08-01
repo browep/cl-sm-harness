@@ -32,6 +32,23 @@
     (sb-thread:with-mutex ((overlap-counter-lock transport))
       (decf (overlap-active-writes transport)))))
 
+(defun wait-until (predicate &key (timeout 2.0) (interval 0.005))
+  "Poll PREDICATE (a zero-argument function) until it returns true or
+TIMEOUT seconds elapse; returns the predicate's own truthy value, or NIL on
+timeout. Spawned mcp_message tool threads (#123) write their
+control_response -- and run their handler's own side effects -- on their
+own thread rather than inline on the reader loop, so a test asserting on
+those side effects right after RECEIVE-RESPONSE returns is racing the
+spawned thread rather than observing a guaranteed-complete call; this
+bounded poll is the synchronization point instead."
+  (let ((deadline (+ (get-internal-real-time)
+                      (round (* timeout internal-time-units-per-second)))))
+    (loop
+      (let ((result (funcall predicate)))
+        (when result (return result)))
+      (when (>= (get-internal-real-time) deadline) (return nil))
+      (sleep interval))))
+
 (defparameter +client-nl+ (string #\Newline))
 (defparameter +initialize-response+
   "{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"request-1\"}}")
@@ -210,6 +227,9 @@
          (progn
            (claude-agent-sdk-cl:connect client)
            (claude-agent-sdk-cl:receive-response client)
+           ;; mcp_message runs on its own spawned thread (#123); wait for its
+           ;; control_response write instead of assuming it is already there.
+           (is (wait-until (lambda () (= 2 (length (fake-client-writes transport))))))
            (let ((wire (second (reverse (fake-client-writes transport)))))
              (is (search "\"mcp_response\"" wire))
              (is (search "\"result\":\"ok\"" wire))))
@@ -277,6 +297,11 @@
                     (progn
                       (claude-agent-sdk-cl:connect client)
                       (claude-agent-sdk-cl:receive-response client)
+                      ;; An mcp_message control request runs its handler on
+                      ;; its own spawned thread (#123); wait for its
+                      ;; control_response write. A no-op wait for the other
+                      ;; (synchronous) subtypes this helper also exercises.
+                      (wait-until (lambda () (= 2 (length (fake-client-writes transport)))))
                       (second (reverse (fake-client-writes transport))))
                  (claude-agent-sdk-cl:disconnect client)))))
     (let* ((data (let ((object (make-hash-table :test #'equal)))

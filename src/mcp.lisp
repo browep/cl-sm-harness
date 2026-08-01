@@ -33,22 +33,57 @@
     ((listp value) (mapcar #'%copy-json-compatible value))
     (t value)))
 
-(defstruct (sdk-tool (:constructor %make-sdk-tool))
-  name description input-schema handler)
+(defparameter +sdk-tool-annotation-keys+
+  '(:read-only-p :destructive-p :idempotent-p :open-world-p)
+  "The only keys MAKE-SDK-TOOL's :ANNOTATIONS plist recognizes, mapped to the
+standard MCP ToolAnnotations wire object by %SDK-TOOL-ANNOTATIONS->MCP
+(readOnlyHint, destructiveHint, idempotentHint, openWorldHint respectively).")
 
-(defun make-sdk-tool (&key name description input-schema handler)
+(defun %validate-sdk-tool-annotations (annotations)
+  "ANNOTATIONS is NIL or a plist using only +SDK-TOOL-ANNOTATION-KEYS+, each
+value NIL or a boolean. NIL (the default) advertises no annotations at all,
+distinct from a key present with value NIL, which advertises that hint as
+explicitly false on the wire (see %SDK-TOOL-ANNOTATIONS->MCP)."
+  (when annotations
+    (unless (and (listp annotations) (evenp (length annotations)))
+      (signal-sdk-input-error "SDK tool annotations must be a plist"))
+    (loop for (key value) on annotations by #'cddr
+          do (unless (member key +sdk-tool-annotation-keys+)
+               (signal-sdk-input-error
+                (format nil "Unknown SDK tool annotation key: ~S" key)))
+             (unless (typep value 'boolean)
+               (signal-sdk-input-error
+                (format nil "SDK tool annotation ~S must be a boolean" key)))))
+  annotations)
+
+(defstruct (sdk-tool (:constructor %make-sdk-tool))
+  name description input-schema handler annotations)
+
+(defun make-sdk-tool (&key name description input-schema handler annotations)
   "Create one synchronous, in-process SDK MCP tool definition.
 
 HANDLER receives JSON-compatible arguments and a context plist. It runs as
-application code in the client control path; the SDK does not sandbox it."
+application code in the client control path; the SDK does not sandbox it.
+
+ANNOTATIONS is NIL (the default, meaning: advertise nothing) or a plist with
+only :READ-ONLY-P, :DESTRUCTIVE-P, :IDEMPOTENT-P, :OPEN-WORLD-P keys, each a
+boolean. These map to the MCP-standard ToolAnnotations object
+(readOnlyHint/destructiveHint/idempotentHint/openWorldHint) served in this
+tool's tools/list entry -- see %SDK-MCP-TOOL-LIST. :READ-ONLY-P T is what a
+conforming MCP client (including the real `claude` CLI) uses to decide a
+tool call is safe to run concurrently with other calls; this client's own
+belt-and-suspenders enforcement of that same policy lives in CLIENT.LISP's
+TOOL-EXECUTION-LOCK and MAKE-SDK-MCP-HANDLER's :SERIALIZATION-LOCK."
   (%nonempty-string-or-error name "SDK tool name")
   (%nonempty-string-or-error description "SDK tool description")
   (unless (and (hash-table-p input-schema) (%json-compatible-p input-schema))
     (signal-sdk-input-error "SDK tool input-schema must be a JSON-compatible object"))
   (unless (functionp handler)
     (signal-sdk-input-error "SDK tool handler must be a function"))
+  (%validate-sdk-tool-annotations annotations)
   (%make-sdk-tool :name name :description description
-                  :input-schema (%copy-json-compatible input-schema) :handler handler))
+                  :input-schema (%copy-json-compatible input-schema) :handler handler
+                  :annotations (copy-list annotations)))
 
 (defstruct (sdk-mcp-server (:constructor %make-sdk-mcp-server))
   name (version "1.0.0" :type string) tools)
@@ -93,7 +128,8 @@ MCP content list escape hatch. Exactly one of TEXT or CONTENT is required."
                                     :description (sdk-tool-description tool)
                                     :input-schema (%copy-json-compatible
                                                    (sdk-tool-input-schema tool))
-                                    :handler (sdk-tool-handler tool)))
+                                    :handler (sdk-tool-handler tool)
+                                    :annotations (copy-list (sdk-tool-annotations tool))))
                   (sdk-mcp-server-tools server))))
 
 (defun sdk-mcp-server->cli-config (server)
@@ -175,11 +211,45 @@ MCP content list escape hatch. Exactly one of TEXT or CONTENT is required."
 (defun %sdk-mcp-tool-by-name (server name)
   (find name (sdk-mcp-server-tools server) :key #'sdk-tool-name :test #'equal))
 
+(defun %sdk-tool-annotation-wire-key (key)
+  (ecase key
+    (:read-only-p "readOnlyHint")
+    (:destructive-p "destructiveHint")
+    (:idempotent-p "idempotentHint")
+    (:open-world-p "openWorldHint")))
+
+(defun %sdk-tool-annotations->mcp (annotations)
+  "Translate an SDK-TOOL's :ANNOTATIONS plist to an MCP ToolAnnotations wire
+object, or NIL when ANNOTATIONS has nothing to say (the MCP spec's
+annotations object is fully optional; omit it rather than sending an empty
+one). Only keys actually present in ANNOTATIONS are emitted -- a key with an
+explicit NIL value still emits its hint as wire `false`, not absence, since
+YASON encodes a bare Lisp NIL as JSON null; 'YASON:FALSE is this codebase's
+existing convention for an explicit JSON false (see %JSON-COMPATIBLE-P)."
+  (when annotations
+    (let ((object (%mcp-object)))
+      (loop for (key value) on annotations by #'cddr
+            do (setf (gethash (%sdk-tool-annotation-wire-key key) object)
+                     (if value t 'yason:false)))
+      object)))
+
+(defun %sdk-tool-read-only-p (tool)
+  "True only when TOOL's annotations explicitly declare :READ-ONLY-P T -- the
+MCP-standard signal (mirrored by the real `claude` CLI's own
+`isConcurrencySafe`/`isReadOnly` gate) that concurrent execution of this tool
+alongside other calls is safe. Absent or false annotations are conservatively
+not read-only."
+  (eq t (getf (sdk-tool-annotations tool) :read-only-p)))
+
 (defun %sdk-mcp-tool-list (server)
   (mapcar (lambda (tool)
-            (%mcp-object "name" (sdk-tool-name tool)
-                         "description" (sdk-tool-description tool)
-                         "inputSchema" (sdk-tool-input-schema tool)))
+            (let ((entry (%mcp-object "name" (sdk-tool-name tool)
+                                      "description" (sdk-tool-description tool)
+                                      "inputSchema" (sdk-tool-input-schema tool)))
+                  (annotations (%sdk-tool-annotations->mcp (sdk-tool-annotations tool))))
+              (when annotations
+                (setf (gethash "annotations" entry) annotations))
+              entry))
           (sdk-mcp-server-tools server)))
 
 (defun %sdk-tool-result->mcp (result)
@@ -202,11 +272,31 @@ MCP content list escape hatch. Exactly one of TEXT or CONTENT is required."
     ;; Do not catch non-error conditions such as implementation interrupts.
     (error () :sdk-tool-handler-failed)))
 
-(defun handle-sdk-mcp-message (server message &key context)
+(defun %invoke-sdk-tool-serialized (tool arguments context serialization-lock)
+  "Run %INVOKE-SDK-TOOL directly for a TOOL whose annotations declare it
+read-only-safe; otherwise, when SERIALIZATION-LOCK is given, hold it for the
+call's duration. This is the belt-and-suspenders half of this codebase's
+concurrency-safety story (see MAKE-SDK-TOOL's :ANNOTATIONS docstring): a
+non-read-only tool call physically cannot overlap another non-read-only call
+through this client, regardless of what the CLI itself schedules or whether
+it honors readOnlyHint at all. SERIALIZATION-LOCK is NIL for callers (tests,
+%SDK-MCP-JSONRPC-* fixtures) that never plumb one through; in that case no
+locking happens, matching this function's historical, always-synchronous
+behavior."
+  (if (and serialization-lock (not (%sdk-tool-read-only-p tool)))
+      (sb-thread:with-mutex (serialization-lock)
+        (%invoke-sdk-tool tool arguments context))
+      (%invoke-sdk-tool tool arguments context)))
+
+(defun handle-sdk-mcp-message (server message &key context serialization-lock)
   "Synchronously handle the tools-only MCP JSON-RPC surface for SERVER.
 
 The caller owns application handlers. This router preserves request IDs and maps
-bad methods/parameters to JSON-RPC errors without ending the client session."
+bad methods/parameters to JSON-RPC errors without ending the client session.
+
+SERIALIZATION-LOCK, when given, is held around a tools/call invocation unless
+the resolved tool's annotations declare it read-only-safe -- see
+%INVOKE-SDK-TOOL-SERIALIZED. It has no effect on any other method."
   (unless (hash-table-p message)
     (return-from handle-sdk-mcp-message
       (%sdk-mcp-jsonrpc-error (make-hash-table :test #'equal) -32600
@@ -244,19 +334,28 @@ bad methods/parameters to JSON-RPC errors without ending the client session."
          (unless (hash-table-p arguments)
            (return-from handle-sdk-mcp-message
              (%sdk-mcp-jsonrpc-error message -32602 "tools/call arguments must be an object")))
-         (let ((result (%invoke-sdk-tool
+         (let ((result (%invoke-sdk-tool-serialized
                         tool arguments
                         (append context (list :server-name (sdk-mcp-server-name server)
-                                              :tool-name (sdk-tool-name tool))))))
+                                              :tool-name (sdk-tool-name tool)))
+                        serialization-lock)))
            (if (eq result :sdk-tool-handler-failed)
                (%sdk-mcp-jsonrpc-error message -32603 "SDK tool handler failed")
                (%sdk-mcp-jsonrpc-response message :result result)))))
       (t (%sdk-mcp-jsonrpc-error message -32601
                                  (format nil "MCP method not found: ~A" method))))))
 
-(defun make-sdk-mcp-handler (server)
-  "Return the frozen MCP-envelope handler closure used by an interactive client."
+(defun make-sdk-mcp-handler (server &key serialization-lock)
+  "Return the frozen MCP-envelope handler closure used by an interactive client.
+
+SERIALIZATION-LOCK, when given, is CLIENT.LISP's per-client
+TOOL-EXECUTION-LOCK, threaded through to HANDLE-SDK-MCP-MESSAGE so a
+tools/call for a non-read-only tool stays serialized against every other
+non-read-only tools/call on the same client even though the client's own
+control-request read loop no longer blocks on tool execution (see
+%CLIENT-HANDLE-CONTROL-REQUEST's mcp_message thread-spawn)."
   (lambda (message)
     ;; Preserve the existing shared control-plane envelope convention.
     (make-mcp-control-result
-     :response (handle-sdk-mcp-message server message :context '(:signal nil)))))
+     :response (handle-sdk-mcp-message server message :context '(:signal nil)
+                                        :serialization-lock serialization-lock))))

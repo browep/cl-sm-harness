@@ -35,11 +35,12 @@
           (every #'json-value= left right)))
     (t (equal left right))))
 
-(defun mcp-test-tool (&key (handler nil))
+(defun mcp-test-tool (&key (handler nil) (name "lookup-order") annotations)
   (claude-agent-sdk-cl:make-sdk-tool
-   :name "lookup-order"
+   :name name
    :description "Look up an order by ID."
    :input-schema (mcp-test-schema)
+   :annotations annotations
    :handler (or handler
                 (lambda (arguments context)
                   (declare (ignore context))
@@ -260,7 +261,13 @@
          (progn
            (claude-agent-sdk-cl:connect client)
            (is (= 2 (length (claude-agent-sdk-cl:receive-response client))))
-           (is (= 1 calls))
+           ;; The tools/call handler runs on its own spawned thread (#123),
+           ;; concurrently with the reader loop that already moved on to
+           ;; deliver the assistant/result records above -- wait for its
+           ;; side effect and its control_response write instead of
+           ;; asserting the instant RECEIVE-RESPONSE returns.
+           (is (wait-until (lambda () (= 1 calls))))
+           (is (wait-until (lambda () (= 4 (length (fake-client-writes transport))))))
            (let ((responses (mapcar #'mcp-response-object
                                     (rest (reverse (fake-client-writes transport))))))
              (is (= 3 (length responses)))
@@ -303,7 +310,10 @@
              (is (= 2 (length response)))
              (is (string= "mcp done"
                           (claude-agent-sdk-cl:result-message-result (second response)))))
-           (is (= 1 calls))
+           ;; The tools/call handler runs on its own spawned thread (#123);
+           ;; wait for its side effect instead of assuming it is already
+           ;; done the instant RECEIVE-RESPONSE returns.
+           (is (wait-until (lambda () (= 1 calls))))
            (is (eq :connected (claude-agent-sdk-cl:client-state client))))
       (claude-agent-sdk-cl:disconnect client))))
 
@@ -328,6 +338,9 @@
          (progn
            (claude-agent-sdk-cl:connect client)
            (is (= 2 (length (claude-agent-sdk-cl:receive-response client))))
+           ;; The failing handler runs on its own spawned thread (#123); wait
+           ;; for its control_response write before indexing into it.
+           (is (wait-until (lambda () (= 2 (length (fake-client-writes transport))))))
            (let ((error (gethash "error"
                                  (mcp-response-object
                                   (second (reverse (fake-client-writes transport)))))))
@@ -394,6 +407,10 @@
          (progn
            (claude-agent-sdk-cl:connect client)
            (is (= 2 (length (claude-agent-sdk-cl:receive-response client))))
+           ;; This tools/call also runs (and fails, tool-not-found) on its
+           ;; own spawned thread (#123); wait for its control_response write
+           ;; before indexing into it.
+           (is (wait-until (lambda () (= 2 (length (fake-client-writes transport))))))
            (let ((error (gethash "error"
                                  (mcp-response-object
                                   (second (reverse (fake-client-writes transport)))))))
@@ -401,3 +418,188 @@
              (is (search "missing" (gethash "message" error))))
            (is (eq :connected (claude-agent-sdk-cl:client-state client))))
       (claude-agent-sdk-cl:disconnect client))))
+
+;;;; #123: MCP tool annotations (readOnlyHint et al.) and the client's own
+;;;; belt-and-suspenders concurrency enforcement for spawned mcp_message
+;;;; tool-call threads.
+
+(test make-sdk-tool-validates-annotations-plist
+  (signals claude-agent-sdk-cl:sdk-input-error
+    (claude-agent-sdk-cl:make-sdk-tool
+     :name "t" :description "d" :input-schema (mcp-test-schema)
+     :handler (lambda (arguments context) (declare (ignore arguments context)))
+     :annotations '(:read-only-p t :unknown-key t)))
+  (signals claude-agent-sdk-cl:sdk-input-error
+    (claude-agent-sdk-cl:make-sdk-tool
+     :name "t" :description "d" :input-schema (mcp-test-schema)
+     :handler (lambda (arguments context) (declare (ignore arguments context)))
+     :annotations '(:read-only-p "yes")))
+  (signals claude-agent-sdk-cl:sdk-input-error
+    (claude-agent-sdk-cl:make-sdk-tool
+     :name "t" :description "d" :input-schema (mcp-test-schema)
+     :handler (lambda (arguments context) (declare (ignore arguments context)))
+     :annotations '(:read-only-p t :destructive-p)))
+  ;; A well-formed plist using every recognized key is accepted, and round-trips
+  ;; unchanged through the tools/list wire payload (see the next test for the
+  ;; wire shape itself).
+  (let ((tool (claude-agent-sdk-cl:make-sdk-tool
+               :name "t" :description "d" :input-schema (mcp-test-schema)
+               :handler (lambda (arguments context) (declare (ignore arguments context)))
+               :annotations '(:read-only-p t :destructive-p nil
+                              :idempotent-p t :open-world-p nil))))
+    (is (equal '(:read-only-p t :destructive-p nil :idempotent-p t :open-world-p nil)
+               (claude-agent-sdk-cl::sdk-tool-annotations tool)))))
+
+(test tools-list-wire-payload-includes-annotations-only-for-declared-tools
+  (let* ((annotated (mcp-test-tool :name "annotated"
+                                   :annotations '(:read-only-p t :destructive-p nil)))
+         (plain (mcp-test-tool :name "plain"))
+         (server (mcp-server :tools (list annotated plain)))
+         (list-message (mcp-object "jsonrpc" "2.0" "id" "list"
+                                   "method" "tools/list" "params" (mcp-object)))
+         (response (claude-agent-sdk-cl::handle-sdk-mcp-message server list-message))
+         (listed (gethash "tools" (gethash "result" response))))
+    (let ((annotated-entry (find "annotated" listed :key (lambda (e) (gethash "name" e)) :test #'equal))
+          (plain-entry (find "plain" listed :key (lambda (e) (gethash "name" e)) :test #'equal)))
+      (let ((wire-annotations (gethash "annotations" annotated-entry)))
+        (is (hash-table-p wire-annotations))
+        (is (eq t (gethash "readOnlyHint" wire-annotations)))
+        ;; An explicit NIL in the Lisp plist is still a present key: it must
+        ;; reach the wire as JSON false, not be silently dropped (a bare Lisp
+        ;; NIL would otherwise encode as JSON null via plain YASON:ENCODE).
+        (multiple-value-bind (value presentp) (gethash "destructiveHint" wire-annotations)
+          (declare (ignore value))
+          (is (not (null presentp)))
+          (is (search "\"destructiveHint\":false" (mcp-json wire-annotations)))))
+      ;; A tool with no :ANNOTATIONS at all omits the whole key -- the MCP
+      ;; spec's annotations object is fully optional.
+      (multiple-value-bind (value presentp) (gethash "annotations" plain-entry)
+        (declare (ignore value))
+        (is (not presentp))))))
+
+(defun make-overlap-probe-tools (&key annotations (hold-seconds 0.08))
+  "Two distinctly-named SDK tools (\"probe-a\"/\"probe-b\") sharing one
+active/max-concurrency counter, each handler holding ACTIVE for HOLD-SECONDS
+-- the shared fixture for both
+NON-READ-ONLY-TOOL-CALLS-NEVER-OVERLAP-THROUGH-ONE-CLIENT and
+READ-ONLY-TOOL-CALLS-DO-OVERLAP-THROUGH-ONE-CLIENT below. Returns (values
+tool-a tool-b max-active-fn)."
+  (let ((active 0) (max-active 0)
+        (lock (sb-thread:make-mutex :name "overlap-probe")))
+    (flet ((handler (arguments context)
+             (declare (ignore arguments context))
+             (sb-thread:with-mutex (lock)
+               (incf active)
+               (setf max-active (max max-active active)))
+             (sleep hold-seconds)
+             (sb-thread:with-mutex (lock) (decf active))
+             (claude-agent-sdk-cl:make-sdk-tool-result :text "ok")))
+      (values
+       (claude-agent-sdk-cl:make-sdk-tool
+        :name "probe-a" :description "Concurrency probe A." :input-schema (mcp-test-schema)
+        :handler #'handler :annotations annotations)
+       (claude-agent-sdk-cl:make-sdk-tool
+        :name "probe-b" :description "Concurrency probe B." :input-schema (mcp-test-schema)
+        :handler #'handler :annotations annotations)
+       (lambda () max-active)))))
+
+(defun run-overlap-probe (tool-a tool-b)
+  "Deliver back-to-back tools/call requests for TOOL-A/TOOL-B -- without
+either waiting for the other's response first, matching the real CLI's own
+parallel-tool-use batching -- over one persistent client, and return once
+the turn's result record has been consumed and both control_responses have
+been written."
+  (let* ((client (mcp-client
+                  (mcp-server :tools (list tool-a tool-b))
+                  (list (concatenate 'string +initialize-response+ +client-nl+)
+                        (concatenate 'string
+                                     (mcp-control-request "call-a" 1 "tools/call"
+                                                          (mcp-object "name" "probe-a" "arguments" (mcp-object)))
+                                     +client-nl+
+                                     (mcp-control-request "call-b" 2 "tools/call"
+                                                          (mcp-object "name" "probe-b" "arguments" (mcp-object)))
+                                     +client-nl+
+                                     +turn-one-assistant+ +client-nl+
+                                     +client-result+ +client-nl+))))
+         (transport (claude-agent-sdk-cl::client-transport-instance client)))
+    (unwind-protect
+         (progn
+           (claude-agent-sdk-cl:connect client)
+           (is (= 2 (length (claude-agent-sdk-cl:receive-response client))))
+           (is (wait-until (lambda () (= 3 (length (fake-client-writes transport)))))))
+      (claude-agent-sdk-cl:disconnect client))))
+
+(test non-read-only-tool-calls-never-overlap-through-one-client
+  ;; The regression test for Part B's belt-and-suspenders TOOL-EXECUTION-LOCK:
+  ;; two non-read-only tools/call requests delivered without waiting for the
+  ;; first response must still never run concurrently through one client,
+  ;; exactly as when the reader loop itself served every tool call in-line.
+  (multiple-value-bind (tool-a tool-b max-active-fn) (make-overlap-probe-tools)
+    (run-overlap-probe tool-a tool-b)
+    (is (= 1 (funcall max-active-fn)))))
+
+(test read-only-tool-calls-do-overlap-through-one-client
+  ;; The positive counterpart: two tools whose annotations both declare
+  ;; :READ-ONLY-P T are allowed to actually run wall-clock-concurrently
+  ;; through one client -- the whole point of #123.
+  (multiple-value-bind (tool-a tool-b max-active-fn)
+      (make-overlap-probe-tools :annotations '(:read-only-p t))
+    (run-overlap-probe tool-a tool-b)
+    (is (= 2 (funcall max-active-fn)))))
+
+(test queued-event-is-delivered-without-waiting-for-a-slow-tool-call
+  ;; The direct regression test that the reader loop no longer blocks on
+  ;; tool execution: a assistant/result record queued behind a slow tool
+  ;; call is delivered by RECEIVE-RESPONSE long before that tool call's own
+  ;; multi-second handler returns.
+  (let* ((tool (mcp-test-tool
+                :handler (lambda (arguments context)
+                           (declare (ignore arguments context))
+                           (sleep 2.0)
+                           (claude-agent-sdk-cl:make-sdk-tool-result :text "slow"))))
+         (client (mcp-client
+                  (mcp-server :tools (list tool))
+                  (list (concatenate 'string +initialize-response+ +client-nl+)
+                        (concatenate 'string
+                                     (mcp-control-request "slow-call" 1 "tools/call"
+                                                          (mcp-object "name" "lookup-order"
+                                                                      "arguments" (mcp-object "order_id" "1")))
+                                     +client-nl+
+                                     +turn-one-assistant+ +client-nl+
+                                     +client-result+ +client-nl+)))))
+    (unwind-protect
+         (let ((start (get-internal-real-time)))
+           (claude-agent-sdk-cl:connect client)
+           (is (= 2 (length (claude-agent-sdk-cl:receive-response client))))
+           (is (< (/ (- (get-internal-real-time) start) internal-time-units-per-second)
+                  1.0)))
+      (claude-agent-sdk-cl:disconnect client))))
+
+(test disconnect-does-not-hang-on-an-in-flight-tool-thread
+  ;; DISCONNECT joins outstanding tool threads with a bounded grace period
+  ;; and abandons (logging, not blocking on) any straggler -- mirrors the
+  ;; sm-harness bash tool's own abandon-not-hang precedent (#79/#80).
+  (let* ((tool (mcp-test-tool
+                :handler (lambda (arguments context)
+                           (declare (ignore arguments context))
+                           (sleep 5.0)
+                           (claude-agent-sdk-cl:make-sdk-tool-result :text "late"))))
+         (events '())
+         (claude-agent-sdk-cl::*transport-log-function* (lambda (event) (push event events)))
+         (client (mcp-client
+                  (mcp-server :tools (list tool))
+                  (list (concatenate 'string +initialize-response+ +client-nl+)
+                        (concatenate 'string
+                                     (mcp-control-request "slow-call" 1 "tools/call"
+                                                          (mcp-object "name" "lookup-order"
+                                                                      "arguments" (mcp-object "order_id" "1")))
+                                     +client-nl+
+                                     +turn-one-assistant+ +client-nl+
+                                     +client-result+ +client-nl+)))))
+    (claude-agent-sdk-cl:connect client)
+    (is (= 2 (length (claude-agent-sdk-cl:receive-response client))))
+    (let ((claude-agent-sdk-cl::+client-tool-thread-disconnect-grace-seconds+ 0.05)
+          (start (get-internal-real-time)))
+      (claude-agent-sdk-cl:disconnect client)
+      (is (< (/ (- (get-internal-real-time) start) internal-time-units-per-second) 2.0)))
+    (is (find :client.tool-thread.abandoned events :key (lambda (event) (getf event :event))))))

@@ -325,8 +325,25 @@ record in `data`.
 
 Only the persistent client services inbound control requests. Configure handlers
 and session-start catalogs before `connect`; registration is frozen after
-connect. A handler runs synchronously while the client consumes its current
-turn, and its result is written on the same serialized client stream.
+connect.
+
+**Execution model (#123).** Every control subtype except `mcp_message`
+(`can_use_tool`, `hook_callback`, `initialize`/`interrupt` acks, ...) still
+runs fully synchronously and in-line on the client's single reader thread,
+exactly as before #123: the read loop cannot see the next inbound record
+until that handler returns. An `mcp_message` `tools/call`, in contrast, runs
+on its own freshly spawned thread so a slow or blocking tool handler cannot
+stall delivery of other queued control requests or public events; the
+reader loop spawns it and moves straight on. Concurrency *safety* between
+simultaneous tool calls is a separate, deliberate guarantee, not left to
+the CLI's own scheduling: the client holds one `tool-execution-lock` mutex
+per connection and acquires it for a tool call's duration unless that
+tool's own `:annotations` say `:read-only-p t` (see `make-sdk-tool` below),
+so two non-read-only tool calls through one client can never actually
+overlap in wall-clock execution, only two calls both marked read-only-safe
+can. `disconnect` joins any still-running tool threads with a bounded grace
+period and abandons (logging, never blocking indefinitely on) any
+straggler.
 
 ### Session-start in-process SDK MCP catalogs (preferred)
 
@@ -345,7 +362,15 @@ never leave the process; the CLI receives only metadata via `--mcp-config`.
                      (declare (ignore context))
                      (claude-agent-sdk-cl:make-sdk-tool-result
                       :text (format nil "order ~A"
-                                    (gethash "order_id" arguments))))))
+                                    (gethash "order_id" arguments))))
+          ;; Optional (#123): a plist of :READ-ONLY-P/:DESTRUCTIVE-P/
+          ;; :IDEMPOTENT-P/:OPEN-WORLD-P booleans, served as this tool's MCP
+          ;; ToolAnnotations on the tools/list wire and used by this client's
+          ;; own TOOL-EXECUTION-LOCK (see above). Defaults to NIL, i.e. no
+          ;; annotations at all -- treated as not read-only-safe, the
+          ;; conservative default.
+          :annotations '(:read-only-p t :destructive-p nil
+                         :idempotent-p t :open-world-p nil)))
        (server (claude-agent-sdk-cl:make-sdk-mcp-server
                 :name "orders" :tools (list lookup)))
        (options (claude-agent-sdk-cl:make-agent-options
@@ -377,6 +402,11 @@ Rules for this path:
   `register-sdk-mcp-handler`.
 - **Handlers:** must return `sdk-tool-result` text or JSON-compatible content.
   Errors become a safe JSON-RPC `-32603` without leaking condition text.
+- **Annotations (#123):** `:annotations` is optional and defaults to NIL
+  (no hints advertised, conservatively not read-only-safe). Only
+  `:read-only-p t` changes this client's own execution behavior (see above);
+  the other three keys are advertised on the wire for a conforming MCP
+  client's benefit but are not otherwise interpreted here.
 - **Out of v1 scope:** async handlers, external stdio/SSE/HTTP MCP, binary or
   size-managed content, and schema inference.
 

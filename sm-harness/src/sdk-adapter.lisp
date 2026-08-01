@@ -7,6 +7,11 @@
    :name (tool-definition-name definition)
    :description (tool-definition-description definition)
    :input-schema (tool-definition-input-schema definition)
+   ;; #123: pass this catalog's own MCP ToolAnnotations plist straight
+   ;; through -- claude-agent-sdk-cl:make-sdk-tool validates and serves it
+   ;; on the tools/list wire, and its own client uses :read-only-p to decide
+   ;; whether a call needs its belt-and-suspenders TOOL-EXECUTION-LOCK.
+   :annotations (tool-definition-annotations definition)
    :handler (lambda (arguments context)
               ;; A handler returning a single value (the existing echo_text
               ;; contract) gets IS-ERROR nil for free: an unrequested extra
