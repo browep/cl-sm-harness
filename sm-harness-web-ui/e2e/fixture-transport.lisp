@@ -2,10 +2,10 @@
 
 ;;;; Test/E2E-only deterministic SDK transport.  Never loaded by production UI.
 (defclass e2e-fake-transport (claude-agent-sdk-cl:client-transport)
-  ((chunks :initarg :chunks :accessor e2e-chunks)
+  ((chunks :initarg :chunks :accessor %e2e-chunks)
    (writes :initform '() :accessor e2e-writes)
    (read-count :initform 0 :accessor e2e-read-count)
-   (mcp-response-count :initform 0 :accessor e2e-mcp-response-count)
+   (mcp-response-count :initform 0 :accessor %e2e-mcp-response-count)
    (stop-mode-p :initform nil :accessor e2e-stop-mode-p)
    (stop-lock :initform (sb-thread:make-mutex :name "e2e-stop") :reader e2e-stop-lock)
    (stop-cv :initform (sb-thread:make-waitqueue :name "e2e-stop") :reader e2e-stop-cv)
@@ -16,7 +16,69 @@
    ;; arbitrary test-side sleeps.
    (delay-before-second-read-seconds :initarg :delay-before-second-read-seconds
                                      :initform 1
-                                     :accessor e2e-delay-before-second-read-seconds)))
+                                     :accessor e2e-delay-before-second-read-seconds)
+   ;; #123: READ-CLIENT-CHUNK (this fixture's own reader, called on the
+   ;; client's single reader thread) and WRITE-CLIENT-INPUT (called inline
+   ;; for most control subtypes, but on its own spawned thread for an
+   ;; mcp_message tools/call -- see claude-agent-sdk-cl's
+   ;; %CLIENT-SPAWN-TOOL-THREAD) both read and mutate CHUNKS/
+   ;; MCP-RESPONSE-COUNT. Before #123 every write happened synchronously on
+   ;; the same thread as every read, so this needed no lock of its own; a
+   ;; tool-handler-failure scenario run concretely reproduced the resulting
+   ;; unsynchronized concurrent list mutation once tool-call responses could
+   ;; write from a different thread than the reader loop -- this lock is
+   ;; that fix, test-fixture-local (production transports never touch
+   ;; mutable state from inside WRITE-CLIENT-INPUT this way).
+   (state-lock :initform (sb-thread:make-mutex :name "e2e-fixture-state")
+              :reader e2e-state-lock)
+   ;; #123: an mcp_message tools/call response -- and this fixture's own
+   ;; write-triggered follow-up chunks appended in WRITE-CLIENT-INPUT above
+   ;; -- can now arrive on a thread other than the one calling
+   ;; READ-CLIENT-CHUNK (claude-agent-sdk-cl's %CLIENT-SPAWN-TOOL-THREAD).
+   ;; Before #123, READ-CLIENT-CHUNK could never observe an empty CHUNKS
+   ;; queue while more was still coming: the write that appends a follow-up
+   ;; chunk always completed synchronously, on the same thread, before the
+   ;; reader loop could possibly ask for the next one. Now it can genuinely
+   ;; race ahead of that spawned thread and find CHUNKS momentarily empty --
+   ;; indistinguishable, to a plain (POP ...), from real transport EOF. A
+   ;; real subprocess pipe never has this problem (a blocking read just
+   ;; waits for more bytes or true EOF); this in-memory fixture has to
+   ;; emulate that explicitly, hence this waitqueue.
+   (chunks-cv :initform (sb-thread:make-waitqueue :name "e2e-fixture-chunks")
+             :reader e2e-chunks-cv)))
+
+(defparameter +e2e-chunk-wait-seconds+ 1.0
+  "Bounded wait in E2E-POP-CHUNK for a concurrently-appended follow-up chunk
+before treating an empty queue as real transport EOF (see the CHUNKS-CV
+slot doc above). Generous relative to any fixture handler's own work, but
+still bounded so a scenario that means real EOF right now is not delayed
+indefinitely.")
+
+(defun e2e-chunks (tport)
+  (sb-thread:with-mutex ((e2e-state-lock tport)) (%e2e-chunks tport)))
+(defun (setf e2e-chunks) (value tport)
+  (sb-thread:with-mutex ((e2e-state-lock tport))
+    (setf (%e2e-chunks tport) value)
+    (sb-thread:condition-broadcast (e2e-chunks-cv tport))))
+(defun e2e-pop-chunk (tport)
+  "Pop the next chunk, waiting briefly for one to be concurrently appended
+(see CHUNKS-CV) rather than immediately reporting EOF on a momentarily
+empty queue."
+  (sb-thread:with-mutex ((e2e-state-lock tport))
+    (loop
+      (when (%e2e-chunks tport)
+        (return (pop (%e2e-chunks tport))))
+      (unless (sb-thread:condition-wait (e2e-chunks-cv tport) (e2e-state-lock tport)
+                                        :timeout +e2e-chunk-wait-seconds+)
+        (return nil)))))
+(defun e2e-append-chunks (tport more)
+  (sb-thread:with-mutex ((e2e-state-lock tport))
+    (setf (%e2e-chunks tport) (append (%e2e-chunks tport) more))
+    (sb-thread:condition-broadcast (e2e-chunks-cv tport))))
+(defun e2e-mcp-response-count (tport)
+  (sb-thread:with-mutex ((e2e-state-lock tport)) (%e2e-mcp-response-count tport)))
+(defun e2e-incf-mcp-response-count (tport)
+  (sb-thread:with-mutex ((e2e-state-lock tport)) (incf (%e2e-mcp-response-count tport))))
 
 (defparameter *e2e-retry-failure-available* t)
 (defparameter *e2e-connect-failure-available* t)
@@ -38,7 +100,7 @@
     (when (and (e2e-read-error-after tport)
                (> read-count (e2e-read-error-after tport)))
       (error "fixture read secret: transport failed"))
-    (pop (e2e-chunks tport))))
+    (e2e-pop-chunk tport)))
 
 (defun %e2e-stop-terminal ()
   (let ((nl (string #\Newline)))
@@ -94,22 +156,35 @@
       (error "fixture expected a nested JSON-RPC internal error"))
     (unless (= 0 (e2e-mcp-response-count tport))
       (error "fixture failing tool handler response was not exactly once"))
-    (incf (e2e-mcp-response-count tport))
-    (setf (e2e-chunks tport)
-          (append (e2e-chunks tport)
-                  (list (concatenate 'string
-                         "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e2e-tool-fail-1\",\"content\":[{\"type\":\"text\",\"text\":\"Tool failed\"}],\"is_error\":true}]}}\n"
-                         "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"e2e-canon\",\"result\":\"tool handler failure handled\"}\n")))))
+    (e2e-incf-mcp-response-count tport)
+    ;; #123 regression-testing note: this uses a raw "\n" inside these Lisp
+    ;; string literals, which CL string syntax reads as the plain letter
+    ;; "n" (backslash only escapes the next character; it is not a C-style
+    ;; newline escape) -- so the two JSON records below are joined into one
+    ;; malformed blob with no real newline between them. Pre-existing,
+    ;; unrelated to #123, and deliberately left as-is: it happens to still
+    ;; pass, because it instead exercises the CLI-JSON-decode-error path,
+    ;; whose generic "internal error" text this scenario's assertions
+    ;; cannot distinguish from the tool-handler-failure path it is nominally
+    ;; testing. The well-formed version (real newlines, matching
+    ;; %E2E-TOOL-FOLLOWUP's own (STRING #\Newline) above) produces a
+    ;; genuinely different, successful terminal result instead, which this
+    ;; scenario's assertions do not expect -- fixing the string without also
+    ;; reworking those assertions would just trade one masked bug for a
+    ;; broken scenario, so it is left as a follow-up, not fixed here.
+    (e2e-append-chunks tport
+                        (list (concatenate 'string
+                               "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e2e-tool-fail-1\",\"content\":[{\"type\":\"text\",\"text\":\"Tool failed\"}],\"is_error\":true}]}}\n"
+                               "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"session_id\":\"e2e-canon\",\"result\":\"tool handler failure handled\"}\n"))))
   (let ((result-text (%e2e-mcp-result-text input)))
     (when result-text
       ;; A real session-start MCP handler produced this response.  Do not emit
       ;; a lifecycle result if that correlation is absent or unexpected.
       (unless (string= result-text "echo: browser-actual")
         (error "fixture MCP tool result did not match the catalog handler"))
-      (unless (= 1 (incf (e2e-mcp-response-count tport)))
+      (unless (= 1 (e2e-incf-mcp-response-count tport))
         (error "fixture catalog tool handler ran more than once"))
-      (setf (e2e-chunks tport)
-            (append (e2e-chunks tport) (list (%e2e-tool-followup result-text))))))
+      (e2e-append-chunks tport (list (%e2e-tool-followup result-text)))))
   t)
 (defmethod claude-agent-sdk-cl:close-client-transport ((tport e2e-fake-transport) &key reason)
   (declare (ignore reason))
