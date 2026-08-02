@@ -295,3 +295,88 @@ body {
 a.file-tree-file { color: #e7ecf3; }
 .file-tree-message { color: #9aa7b8; padding: 0.2rem 0.3rem; font-size: 0.85rem; }
 .file-tree-error { color: #ffb4b4; padding: 0.2rem 0.3rem; font-size: 0.85rem; }
+
+/* #140: any element below that sets its own explicit `display` and is
+   also toggled via CLOG:HIDDENP (the `hidden` attribute) needs an
+   explicit [hidden] override -- an author stylesheet's own `display`
+   declaration otherwise beats the UA default `[hidden] { display: none }`
+   rule at equal specificity, since this stylesheet loads after it, and
+   CLOG:HIDDENP then silently stops actually hiding the element (found
+   the hard way: e2e/scenarios/git-diff.lisp hung waiting for
+   #git-diff-body-wrap to become hidden after #git-diff-body-back). */
+.git-diff-file-list[hidden], .git-diff-body-wrap[hidden] { display: none; }
+
+/* #140: git diff viewer, a second internal view of the same
+   .file-browser-panel drawer above (TREE vs .git-diff-view, toggled via
+   CLOG:HIDDENP -- there is no independent slide transition for this
+   piece, so plain display:none is fine here unlike the drawer itself). */
+.file-tree-dir-row { display: flex; align-items: center; gap: 0.3rem; }
+.file-tree-dir-row .file-tree-row { flex: 1 1 auto; }
+.file-tree-diff-btn {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.78rem;
+  color: #9aa7b8;
+  border: 1px solid #2a3441;
+}
+.file-tree-diff-btn:hover, .file-tree-diff-btn:focus-visible { color: #e7ecf3; background: #1c2430; }
+.file-browser-panel.diff-open { width: min(720px, 92vw); }
+.git-diff-view { font-size: 0.9rem; }
+.git-diff-view-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+.git-diff-repo-title { color: #9aa7b8; font-size: 0.85rem; overflow-wrap: anywhere; }
+.git-diff-file-list { display: flex; flex-direction: column; gap: 0.1rem; }
+.git-diff-file-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: #e7ecf3;
+  padding: 0.25rem 0.3rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+.git-diff-file-row:hover, .git-diff-file-row:focus-visible { background: #1c2430; }
+.git-diff-badge {
+  display: inline-block;
+  min-width: 1.4rem;
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  margin-right: 0.4rem;
+  color: #121821;
+  background: #9aa7b8;
+}
+.git-diff-badge-modified { background: #e8c26a; }
+.git-diff-badge-added { background: #7ed99a; }
+.git-diff-badge-deleted { background: #ff9b9b; }
+.git-diff-badge-renamed { background: #8ec7ff; }
+.git-diff-badge-copied { background: #8ec7ff; }
+.git-diff-badge-untracked { background: #b8a9ff; }
+.git-diff-badge-conflict { background: #ff6b6b; }
+.git-diff-rename-from { color: #9aa7b8; font-size: 0.82rem; }
+.git-diff-body-wrap { display: flex; flex-direction: column; gap: 0.4rem; }
+.git-diff-body {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  overflow-x: auto;
+  border: 1px solid #2a3441;
+  border-radius: 6px;
+  background: #0d1117;
+}
+.diff-line { padding: 0 0.5rem; white-space: pre; }
+.diff-meta { color: #9aa7b8; }
+.diff-hunk { color: #8ec7ff; background: rgba(142, 199, 255, 0.08); }
+.diff-add { color: #7ed99a; background: rgba(126, 217, 154, 0.12); }
+.diff-del { color: #ff9b9b; background: rgba(255, 155, 155, 0.12); }
+.diff-context { color: #c7d0dc; }
+.diff-empty { color: #9aa7b8; padding: 0.3rem; }
+.diff-truncated { color: #ffb4b4; padding: 0.3rem; font-size: 0.85rem; }

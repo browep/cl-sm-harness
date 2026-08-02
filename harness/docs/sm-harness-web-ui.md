@@ -474,6 +474,169 @@ visible "submit" step of its own; choosing a file is the only action.
   file-chooser dialog, which is what makes this testable headlessly at
   all.
 
+## File browser (#138)
+
+A "Browse files" button (`#browse-files`) sits next to "Upload file" in the
+header, on both the home and chat screens (`install-file-browser-panel`,
+`src/ui/file-browser.lisp` — mirrors `install-log-export-panel`'s
+shared-across-both-screens shape). Clicking it slides open a left-hand
+drawer showing a lazily expandable directory tree rooted at
+`+file-browser-root+` (`presenter.lisp`) — deliberately `/`, the whole
+container filesystem, not just the live bind-mounted `/app` repo, per this
+project's already-stated no-sandbox posture ("Container privileges and the
+live repo mount" above). Directories expand via ordinary CLOG round trips
+(`%build-file-tree-node`); clicking a file opens it in a new tab via a
+plain `target="_blank"` anchor, needing no synchronous-gesture JS trick the
+way the upload button's native file-chooser does.
+
+- **Lazy, not eager**: the root listing happens on the panel's first open,
+  not at install time, and each subdirectory only lists its own children
+  the first time it is expanded (`%render-directory-listing`). A directory
+  with more than `+file-browser-max-entries+` (2000) children is truncated
+  with a "…truncated at N entries" row rather than building thousands of
+  DOM nodes in one click; dotfiles/dotdirs are shown, not filtered.
+- **The drawer is a real animated `.open` class toggle**
+  (`.file-browser-panel`/`.file-browser-backdrop` in `app.css`), not the
+  show/hide-in-place pattern `.logs-panel`/`.info-panel` use elsewhere in
+  this file — `display: none` can't transition, so a slide-in-from-the-left
+  drawer needs an always-in-the-DOM element with a class toggle instead.
+  Click-outside-to-close is a full-viewport backdrop element behind the
+  panel.
+- **Serving a file's raw content**: a file's browser URL is
+  `+file-browser-url-prefix+` (`/fs/`) followed by its own absolute path,
+  percent-encoded component by component (`%fs-href`). `+file-browser-url-
+  prefix+` exists (rather than a file's URL simply *being* its absolute
+  path, this feature's first version's approach when the root was still
+  the narrower `/app`) specifically because the root is now `/`: without a
+  distinct namespace, a URL like `/app.css` would be indistinguishable
+  from this app's own reserved static-asset routes, and CLOG's own
+  registered routes always take dispatch priority over a plugin/middleware
+  match regardless. Requests under `/fs/` are served by
+  `%serve-fs-request-app` (`src/ui/file-browser.lisp`), a LACK middleware
+  wrapping LACK's own hardened static-file middleware
+  (`lack/middleware/static`) — mime-typing, Last-Modified/304 support, and
+  `'..'`-traversal rejection all come for free from that.
+- **This middleware is wired in once, at real process boot, and cannot be
+  live-reloaded**: `%serve-fs-request-app` is passed into the *one*
+  `clog:initialize` call in `start-web-ui` via `:lack-middleware-list`.
+  Unlike `clog-connection:add-plugin-path` (this feature's first-version
+  mechanism, and everything else `%reinstall-clog-routes` re-asserts on a
+  reload — see "Self-healing CLOG's static-root" below), a LACK middleware
+  chain is folded together permanently at that one call; there is no
+  mutable table a later `reload_harness` can re-populate. A process that
+  booted before this feature shipped needs a real container restart, not
+  just a `reload_harness`, before `/fs/...` serves anything. `%serve-fs-
+  request-app` is still an ordinary named `defun` rather than a lambda
+  baked directly into that call, though, so *its own logic* (which files
+  are servable, from where) stays `reload_harness`-editable even though
+  the wiring itself is frozen — see its docstring and the `clog:initialize`
+  call site's comment.
+- **Defense in depth on the listing side**: `%path-under-root-p`
+  (`presenter.lisp`) never trusts a caller-supplied path on its own — the
+  same posture `upload.lisp`'s `%sanitize-path-component` documents. It
+  checks both the path's own (possibly nonexistent) textual form and,
+  when the path exists, its resolved `truename`, so a symlink that
+  textually looks like it's under the root but actually resolves outside
+  it is still caught.
+- **E2E coverage** (`e2e/scenarios/file-browser.lisp`, scenario name
+  `file-browser`) opens the panel from the home screen, expands three
+  levels (`/` → `app` → `harness` → `docs`), opens this project's own
+  `sm-harness-web-ui.md` in a new tab, and exercises both ways of closing
+  the drawer. This needed one new Playwright bridge op, `click_new_tab`
+  (`e2e/bridge.mjs`): Playwright's `popup` context event never fires for a
+  `target="_blank"` anchor carrying `rel="noopener"` (which these file
+  links deliberately set, since severing `window.opener` is exactly what
+  `popup` depends on to correlate the new tab with the click), but the
+  generic `page` context event fires for any new page in the browser
+  context regardless of that.
+
+## Git diff viewer (#140, follow-up to #138)
+
+Any directory row in the file browser's tree that is itself a git
+working-tree root (has an immediate `.git` entry, checked cheaply by
+`%git-repo-root-p` — no `git rev-parse` round trip) gets a small "Diff"
+button beside its usual expand/collapse row (`.file-tree-diff-btn`,
+`%build-file-tree-node`). Clicking it swaps the *same* drawer to a second
+internal view — the existing tree and a new `.git-diff-view` div, toggled
+via `clog:hiddenp` — rather than opening a whole separate top-level
+drawer/button: since #138 widened the tree's root from `/app` to `/`,
+there is no single "the repo" left to default a dedicated button to, so
+the entry point has to come from wherever in the tree a repo actually is.
+The changed-file list itself is click-to-load, not fetched eagerly for
+every rendered repo-root row — the same lazy posture the tree already has
+for directory contents.
+
+- **Scope (v1)**: the working tree's own uncommitted changes only
+  (`git diff HEAD`, which folds staged and unstaged changes into one
+  diff), no arbitrary ref/commit picker. A binary file renders git's own
+  plain `Binary files ... differ` line as-is, with no attempt to diff it.
+- **Pure git-plumbing/parsing logic lives in `presenter.lisp`** (not
+  `ui/file-browser.lisp`, which stays CLOG glue only), for
+  `presenter-tests` coverage without a live CLOG server — same split as
+  the file browser's own `%list-directory`/`%fs-href` above.
+- **`%run-git`** runs git as a plain argv list
+  (`sb-ext:run-program "git" argv ...`), never a shell string — deliberately
+  stronger than the bash tool's own posture (`tool-catalog.lisp`), which is
+  fine there only because that tool's whole point is running an arbitrary
+  caller-chosen command. A crafted pathspec/filename can never be parsed
+  as a flag or escape into a wider command line this way. Output is capped
+  at `+git-diff-max-chars+` (200000, mirroring `+file-browser-max-entries+`'s
+  "truncated" UX) and bounded by `+git-diff-timeout-seconds+` (10s) — a
+  run that outlives it is SIGTERM'd, then SIGKILL'd after a short grace
+  period; git spawns no grandchildren for a plain `diff`/`status`, so
+  unlike the bash tool's `killpg` this only ever needs to signal the one
+  child.
+- **`%git-status-entries`/`%parse-git-status-z`** parse `git status
+  --porcelain=v1 -z --untracked-files=all`. The `-z` rename-record shape
+  (`XY NEWPATH\0OLDPATH\0` — new path first, then the original) was
+  verified empirically against a real `git status -z` run while writing
+  this, not taken from memory of the docs.
+- **`%git-diff-text`** uses `git diff --no-color HEAD -- REL-PATH` for a
+  tracked change, or `git diff --no-color --no-index -- /dev/null
+  REL-PATH` for an untracked one (`git diff HEAD` never shows a path git
+  isn't tracking at all). Exit code alone can't tell a real error apart
+  from "differences found" here — empirically, `git diff --no-index` exits
+  1 both when the two sides differ *and* when the target flat-out doesn't
+  exist — so error detection checks STDERR content instead, which git
+  leaves empty on every ordinary successful run of either form.
+- **Path safety**: `REL-PATH` always comes from this feature's own
+  `%git-status-entries` parse of trusted `git status` output, never a
+  caller-typed value — but `%git-rel-path-safe-p` still rejects an
+  absolute path or a literal `..` path component before it ever reaches a
+  git argv, the same defense-in-depth posture `%path-under-root-p` already
+  documents; `REPO-ROOT` is independently re-checked against
+  `+file-browser-root+` on every call.
+- **Rendering**: `%parse-unified-diff`/`%git-diff-html` classify each line
+  (`:hunk`/`:meta`/`:add`/`:del`/`:context`) and `escape-text` it before
+  ever touching HTML — diff content is, after all, arbitrary file
+  content — the same posture `event-display`/`markdown-to-html` already
+  take with untrusted text elsewhere in this file.
+- **A CSS pitfall found the hard way, via the E2E scenario below actually
+  hanging**: `.git-diff-file-list`/`.git-diff-body-wrap` originally set
+  their own explicit `display: flex`, which — at equal selector
+  specificity, loaded after the browser's UA stylesheet — silently beat
+  the default `[hidden] { display: none }` rule. `clog:hiddenp` (which
+  just toggles the `hidden` attribute) then stopped actually hiding either
+  element. Fixed with explicit `.git-diff-file-list[hidden], .git-diff-
+  body-wrap[hidden] { display: none; }` overrides in `app.css` — worth
+  remembering for any *other* toggled element that also declares its own
+  `display`.
+- **Tests**: `presenter-tests` uses a `with-git-fixture` macro
+  (`test/ui-state.lisp`) that builds a real scratch git repo on disk (git
+  is present in this container) — modified/renamed/untracked/deleted
+  files, an initial commit — rather than feeding canned diff text through
+  the parser alone, the same real-fixture-over-mock preference
+  `with-fs-fixture` already set for the file browser's own tests.
+  `e2e/scenarios/git-diff.lisp` (scenario name `git-diff`) needs a real git
+  repo on disk *before* the browser side can walk the tree to it, which a
+  plain DOM assertion can't set up — it reuses the "throwaway `open_tab`
+  route runs a Lisp-side effect" trick `connection-lost-recovery` already
+  established (`e2e/test-hooks.lisp`'s `/e2e-setup-git-diff-fixture`
+  route rebuilds a small, deterministic repo at a *fixed* path,
+  `/tmp/e2e-git-diff-fixture/`, precisely so the scenario's own tree-
+  navigation selectors can stay static text rather than matching a
+  random per-run temp dir name).
+
 ## Dead browser tabs and listener delivery
 
 A tab whose websocket silently died (laptop sleep, network drop) leaves a

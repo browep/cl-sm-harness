@@ -439,3 +439,219 @@ afterwards regardless of outcome. Layout:
   ;; (found while writing %FS-UNRESERVED-BYTE-P: CODE-CHAR on a raw
   ;; continuation byte can land on an ALPHANUMERICP Latin-1 letter).
   (is (string= "%C3%A9" (sm-harness-web-ui::%fs-url-encode-component "é"))))
+
+;;; ---------------------------------------------------------------------
+;;; Git diff viewer (#140)
+
+(defmacro with-git-fixture ((root-var) &body body)
+  "Build a real scratch git repo (not canned diff text -- git itself is
+present in this container, and the project's existing WITH-FS-FIXTURE
+precedent above already favors a real filesystem over a mock) under a
+temp dir for the duration of BODY, bound to ROOT-VAR as a directory
+pathname, removed afterwards regardless of outcome. History/working-tree
+state after setup:
+  tracked.txt    committed at \"line1\", then modified to \"changed\"
+  stay.txt       committed, then `git mv`'d to renamed.txt (staged)
+  untracked.txt  never added -- a plain untracked file
+  gone.txt       committed, then removed with `git rm`
+An initial commit is required (%GIT-DIFF-TEXT diffs against HEAD) --
+`-c user.email=/user.name=` are passed on the git command line itself
+rather than relying on any global git config existing in the environment
+running these tests."
+  `(let ((,root-var (uiop:ensure-directory-pathname
+                     (merge-pathnames (format nil "sm-harness-web-ui-git-test-~A/"
+                                              (random 1000000 (make-random-state t)))
+                                      (uiop:temporary-directory)))))
+     (unwind-protect
+          (progn
+            (ensure-directories-exist ,root-var)
+            (let ((script (format nil "cd ~A && git init -q && ~
+git -c user.email=test@example.com -c user.name=test commit --allow-empty -qm init && ~
+echo line1 > tracked.txt && echo stay > stay.txt && echo gone > gone.txt && ~
+git add tracked.txt stay.txt gone.txt && ~
+git -c user.email=test@example.com -c user.name=test commit -qm seed && ~
+echo changed > tracked.txt && ~
+git mv stay.txt renamed.txt && ~
+git rm -q gone.txt && ~
+echo new > untracked.txt"
+                                   (namestring ,root-var))))
+              (multiple-value-bind (out err code)
+                  (uiop:run-program (list "/bin/sh" "-c" script)
+                                    :output '(:string) :error-output '(:string)
+                                    :ignore-error-status t)
+                (unless (zerop code)
+                  (error "with-git-fixture setup failed (exit ~A): ~A / ~A" code out err))))
+            ,@body)
+       (ignore-errors (uiop:delete-directory-tree ,root-var :validate t :if-does-not-exist :ignore)))))
+
+(test git-repo-root-p-detects-a-real-repo-and-rejects-a-plain-directory
+  (with-git-fixture (root)
+    (is (sm-harness-web-ui::%git-repo-root-p root))
+    (is (not (sm-harness-web-ui::%git-repo-root-p (uiop:temporary-directory))))))
+
+(test git-status-entries-covers-modified-renamed-untracked-and-deleted
+  (with-git-fixture (root)
+    (multiple-value-bind (entries reason) (sm-harness-web-ui::%git-status-entries root)
+      (is (null reason))
+      (flet ((entry (path) (find path entries :key (lambda (e) (getf e :path)) :test #'string=)))
+        (let ((tracked (entry "tracked.txt"))
+              (renamed (entry "renamed.txt"))
+              (untracked (entry "untracked.txt"))
+              (gone (entry "gone.txt")))
+          (is (char= #\M (getf tracked :worktree-status)))
+          (is (char= #\R (getf renamed :index-status)))
+          (is (string= "stay.txt" (getf renamed :rename-from)))
+          (is (char= #\? (getf untracked :index-status)))
+          (is (char= #\? (getf untracked :worktree-status)))
+          (is (char= #\D (getf gone :index-status))))))))
+
+(test git-status-entries-rejects-a-non-repo-directory
+  (multiple-value-bind (entries reason)
+      (sm-harness-web-ui::%git-status-entries (uiop:temporary-directory))
+    (is (null entries))
+    (is (eq :forbidden reason))))
+
+(test git-status-entries-rejects-a-repo-root-outside-file-browser-root
+  ;; %PATH-UNDER-ROOT-P re-check, same defense-in-depth posture as the
+  ;; file browser's own %LIST-DIRECTORY (#138). +FILE-BROWSER-ROOT+ is an
+  ;; ordinary DEFPARAMETER (a proclaimed special variable), so a plain LET
+  ;; here really does rebind it for the dynamic extent of the body, same
+  ;; as *WEB-UI-CONFIG* is rebound in the app-css-href tests above.
+  (with-git-fixture (root)
+    (let ((sm-harness-web-ui::+file-browser-root+ #P"/opt/not-a-real-file-browser-root/"))
+      (multiple-value-bind (entries reason) (sm-harness-web-ui::%git-status-entries root)
+        (is (null entries))
+        (is (eq :forbidden reason))))))
+
+(test git-status-badge-text-labels
+  (is (string= "Modified" (sm-harness-web-ui::%git-status-badge-text #\Space #\M)))
+  (is (string= "Added" (sm-harness-web-ui::%git-status-badge-text #\A #\Space)))
+  (is (string= "Deleted" (sm-harness-web-ui::%git-status-badge-text #\D #\Space)))
+  (is (string= "Renamed" (sm-harness-web-ui::%git-status-badge-text #\R #\Space)))
+  (is (string= "Untracked" (sm-harness-web-ui::%git-status-badge-text #\? #\?)))
+  (is (string= "Conflict" (sm-harness-web-ui::%git-status-badge-text #\U #\U))))
+
+(test git-diff-text-shows-a-tracked-modification
+  (with-git-fixture (root)
+    (multiple-value-bind (text reason) (sm-harness-web-ui::%git-diff-text root "tracked.txt")
+      (is (null reason))
+      (is (search "-line1" text))
+      (is (search "+changed" text)))))
+
+(test git-diff-text-shows-an-untracked-file-as-an-all-added-diff
+  (with-git-fixture (root)
+    (multiple-value-bind (text reason)
+        (sm-harness-web-ui::%git-diff-text root "untracked.txt" :untracked-p t)
+      (is (null reason))
+      (is (search "+new" text))
+      (is (not (search "-new" text))))))
+
+(test git-diff-text-shows-a-deleted-file
+  (with-git-fixture (root)
+    (multiple-value-bind (text reason) (sm-harness-web-ui::%git-diff-text root "gone.txt")
+      (is (null reason))
+      (is (search "-gone" text)))))
+
+(test git-diff-text-rejects-a-path-escaping-with-dot-dot
+  (with-git-fixture (root)
+    (multiple-value-bind (text reason)
+        (sm-harness-web-ui::%git-diff-text root "../../etc/passwd")
+      (is (null text))
+      (is (eq :forbidden reason)))))
+
+(test git-diff-text-rejects-an-absolute-path
+  (with-git-fixture (root)
+    (multiple-value-bind (text reason) (sm-harness-web-ui::%git-diff-text root "/etc/passwd")
+      (is (null text))
+      (is (eq :forbidden reason)))))
+
+(test git-diff-text-reports-an-error-for-a-path-outside-the-diff-with-no-index
+  (with-git-fixture (root)
+    (multiple-value-bind (text reason msg)
+        (sm-harness-web-ui::%git-diff-text root "no-such-file.txt" :untracked-p t)
+      (declare (ignore msg))
+      (is (null text))
+      (is (eq :error reason)))))
+
+(test git-rel-path-safe-p
+  (is (sm-harness-web-ui::%git-rel-path-safe-p "a/b.txt"))
+  (is (not (sm-harness-web-ui::%git-rel-path-safe-p "/a/b.txt")))
+  (is (not (sm-harness-web-ui::%git-rel-path-safe-p "../a.txt")))
+  (is (not (sm-harness-web-ui::%git-rel-path-safe-p "a/../../b.txt")))
+  (is (not (sm-harness-web-ui::%git-rel-path-safe-p ""))))
+
+(test parse-git-status-z-handles-a-rename-record
+  ;; Byte-for-byte the shape verified against a real `git status
+  ;; --porcelain=v1 -z` run while writing this feature: "XY NEWPATH\0
+  ;; OLDPATH\0" for a rename, new path first.
+  (let* ((text (format nil "R  renamed.txt~COLDPATH.txt~C M tracked.txt~C?? untracked.txt~C"
+                       #\Nul #\Nul #\Nul #\Nul))
+         (entries (sm-harness-web-ui::%parse-git-status-z text)))
+    (is (= 3 (length entries)))
+    (let ((renamed (first entries)))
+      (is (string= "renamed.txt" (getf renamed :path)))
+      (is (string= "OLDPATH.txt" (getf renamed :rename-from))))
+    (let ((tracked (second entries)))
+      (is (string= "tracked.txt" (getf tracked :path)))
+      (is (null (getf tracked :rename-from))))))
+
+(test parse-git-status-z-handles-empty-input
+  (is (null (sm-harness-web-ui::%parse-git-status-z ""))))
+
+(test classify-diff-line-kinds
+  (is (eq :meta (sm-harness-web-ui::%classify-diff-line "diff --git a/x b/x")))
+  (is (eq :meta (sm-harness-web-ui::%classify-diff-line "index abc..def 100644")))
+  (is (eq :meta (sm-harness-web-ui::%classify-diff-line "--- a/x")))
+  (is (eq :meta (sm-harness-web-ui::%classify-diff-line "+++ b/x")))
+  (is (eq :meta (sm-harness-web-ui::%classify-diff-line "Binary files a/x and b/x differ")))
+  (is (eq :hunk (sm-harness-web-ui::%classify-diff-line "@@ -1,2 +1,3 @@")))
+  (is (eq :add (sm-harness-web-ui::%classify-diff-line "+new line")))
+  (is (eq :del (sm-harness-web-ui::%classify-diff-line "-old line")))
+  (is (eq :context (sm-harness-web-ui::%classify-diff-line " unchanged line"))))
+
+(defun %count-substring (needle haystack)
+  (loop with count = 0 with start = 0
+        for pos = (search needle haystack :start2 start)
+        while pos do (incf count) (setf start (1+ pos))
+        finally (return count)))
+
+(test git-diff-html-escapes-content-and-drops-the-trailing-blank-line
+  (let ((html (sm-harness-web-ui::%git-diff-html
+               (format nil "@@ -1 +1 @@~%-<script>~%+safe~%"))))
+    (is (search "diff-hunk" html))
+    (is (search "diff-del" html))
+    (is (search "&lt;script&gt;" html))
+    (is (not (search "<script>" html)))
+    ;; Exactly 3 rendered lines, not 4 -- the trailing newline must not
+    ;; contribute a spurious empty diff-context row.
+    (is (= 3 (%count-substring "diff-line" html)))))
+
+(test git-diff-html-shows-no-changes-for-empty-text
+  (is (search "No changes" (sm-harness-web-ui::%git-diff-html ""))))
+
+(test git-diff-html-marks-truncation
+  (is (search "truncated" (sm-harness-web-ui::%git-diff-html
+                           (format nil "+x~%") :truncated-p t))))
+
+(test run-git-runs-a-real-git-command-and-captures-stdout
+  (with-git-fixture (root)
+    (multiple-value-bind (stdout stderr exit-code timed-out-p)
+        (sm-harness-web-ui::%run-git root (list "rev-parse" "HEAD"))
+      (declare (ignore stderr))
+      (is (= 0 exit-code))
+      (is (not timed-out-p))
+      (is (= 40 (length (string-trim '(#\Newline) stdout)))))))
+
+(test run-git-does-not-false-positive-timeout-on-a-fast-command
+  ;; %RUN-GIT only ever invokes "git" (deliberately -- see its own
+  ;; docstring on argv vs shell-string), so there is no easy, reliable way
+  ;; to make a *git* subcommand hang on demand the way the bash tool's own
+  ;; timeout tests can with a plain `sleep` (tool-catalog-tests); this only
+  ;; guards against a false-positive timeout on an ordinary fast command.
+  ;; The kill path itself was exercised manually against a real hang while
+  ;; writing this (see #140's PR description).
+  (with-git-fixture (root)
+    (multiple-value-bind (stdout stderr exit-code timed-out-p)
+        (sm-harness-web-ui::%run-git root (list "rev-parse" "HEAD") :timeout-seconds 5)
+      (declare (ignore stdout stderr exit-code))
+      (is (not timed-out-p)))))
