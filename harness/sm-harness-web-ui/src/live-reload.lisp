@@ -40,7 +40,18 @@ long-running process's lifetime."
   "Re-point CLOG's routing table at the just-reloaded #'ON-NEW-WINDOW (and
 #'ON-UPLOAD-WINDOW, #127) so any *new* connection (including a tab this
 same call is about to refresh) gets current code, not the stale closure
-CLOG:INITIALIZE originally captured."
+CLOG:INITIALIZE originally captured.
+
+Nothing to do here for #138's file-serving middleware
+(%SERVE-FS-REQUEST-APP, ui/file-browser.lisp): unlike these two routes,
+it isn't installed via a mutable table this function can just
+re-populate -- CLOG:INITIALIZE folds :LACK-MIDDLEWARE-LIST into its app
+chain once, permanently, at that one call in START-WEB-UI, and there is
+no equivalent of CLOG:SET-ON-NEW-WINDOW to call again here. See that call
+site's comment for the consequence (a fresh container boot, not a bare
+RELOAD_HARNESS, is what's needed to pick up a *new* middleware entry) and
+%SERVE-FS-REQUEST-APP's own docstring for why its *behavior* still stays
+RELOAD_HARNESS-editable regardless."
   (clog:set-on-new-window #'on-new-window :path "/" :boot-file "/boot.html")
   (clog:set-on-new-window #'on-new-window :path "/sessions" :boot-file "/boot.html")
   (clog:set-on-new-window #'on-upload-window :path "/upload" :boot-file "/boot.html"))

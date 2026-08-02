@@ -337,3 +337,105 @@ never print a negative duration")
                          (merge-pathnames "sm-harness-web-ui-css-test-missing/"
                                           (uiop:temporary-directory))))))
     (is (string= "/app.css" (sm-harness-web-ui::%app-css-href)))))
+
+;;; ---------------------------------------------------------------------
+;;; File browser (#138)
+
+(defmacro with-fs-fixture ((root-var) &body body)
+  "Build a scratch directory tree under a temp dir for the duration of
+BODY, bound to ROOT-VAR as a directory pathname, then remove it
+afterwards regardless of outcome. Layout:
+  b-dir/            (a directory, sorts after \".hidden\" but before z.txt)
+  .hidden           (a dotfile -- must still show up, #138 review answer)
+  a.txt, z.txt       (plain files)
+  many/ (with +file-browser-max-entries+ + 5 files in it, for truncation)"
+  `(let ((,root-var (uiop:ensure-directory-pathname
+                     (merge-pathnames (format nil "sm-harness-web-ui-fs-test-~A/"
+                                              (random 1000000 (make-random-state t)))
+                                      (uiop:temporary-directory)))))
+     (unwind-protect
+          (progn
+            (ensure-directories-exist ,root-var)
+            (ensure-directories-exist (merge-pathnames "b-dir/" ,root-var))
+            (ensure-directories-exist (merge-pathnames "many/" ,root-var))
+            (dolist (name '(".hidden" "a.txt" "z.txt"))
+              (with-open-file (out (merge-pathnames name ,root-var)
+                                   :direction :output :if-does-not-exist :create)
+                (write-string "x" out)))
+            (dotimes (i (+ sm-harness-web-ui::+file-browser-max-entries+ 5))
+              (with-open-file (out (merge-pathnames (format nil "f~4,'0D.txt" i)
+                                                     (merge-pathnames "many/" ,root-var))
+                                   :direction :output :if-does-not-exist :create)
+                (write-string "x" out)))
+            ,@body)
+       (ignore-errors (uiop:delete-directory-tree ,root-var :validate t :if-does-not-exist :ignore)))))
+
+(test file-browser-list-directory-sorts-directories-first-then-alpha
+  (with-fs-fixture (root)
+    (multiple-value-bind (entries truncated)
+        (sm-harness-web-ui::%list-directory root :root root)
+      (is (null truncated))
+      ;; b-dir (the only directory) sorts before every file, regardless of
+      ;; where "b" would otherwise land alphabetically among a/.hidden/z.
+      (is (eq :directory (getf (first entries) :kind)))
+      (is (string= "b-dir" (getf (first entries) :name)))
+      (let ((file-names (mapcar (lambda (e) (getf e :name)) (rest (rest entries)))))
+        (is (equal (sort (copy-list file-names) #'string-lessp) file-names))))))
+
+(test file-browser-list-directory-includes-dotfiles
+  ;; #138 review answer: dotfiles are shown, not filtered.
+  (with-fs-fixture (root)
+    (multiple-value-bind (entries truncated) (sm-harness-web-ui::%list-directory root :root root)
+      (declare (ignore truncated))
+      (is (member ".hidden" entries :key (lambda (e) (getf e :name)) :test #'string=)))))
+
+(test file-browser-list-directory-truncates-past-the-cap
+  ;; #138 review answer: cap very large directories rather than build
+  ;; thousands of DOM rows in one click.
+  (with-fs-fixture (root)
+    (multiple-value-bind (entries truncated)
+        (sm-harness-web-ui::%list-directory (merge-pathnames "many/" root) :root root)
+      (is (eq t truncated))
+      (is (= sm-harness-web-ui::+file-browser-max-entries+ (length entries))))))
+
+(test file-browser-list-directory-rejects-a-path-outside-root
+  (with-fs-fixture (root)
+    (multiple-value-bind (entries reason)
+        (sm-harness-web-ui::%list-directory (uiop:temporary-directory) :root root)
+      (is (null entries))
+      (is (eq :forbidden reason)))))
+
+(test file-browser-list-directory-surfaces-a-missing-directory-as-error
+  (with-fs-fixture (root)
+    (multiple-value-bind (entries reason)
+        (sm-harness-web-ui::%list-directory (merge-pathnames "does-not-exist/" root) :root root)
+      (is (null entries))
+      (is (eq :error reason)))))
+
+(test file-browser-path-under-root-accepts-nested-paths-and-rejects-escapes
+  (with-fs-fixture (root)
+    (is (sm-harness-web-ui::%path-under-root-p (merge-pathnames "b-dir/" root) root))
+    (is (not (sm-harness-web-ui::%path-under-root-p (uiop:temporary-directory) root)))))
+
+(test file-browser-href-matches-the-serve-fs-request-app-mapping
+  ;; The whole point of %FS-HREF (see %SERVE-FS-REQUEST-APP,
+  ;; ui/file-browser.lisp): +FILE-BROWSER-URL-PREFIX+ followed by a
+  ;; file's own absolute path, percent-encoded component by component --
+  ;; exactly what that middleware strips back off before resolving
+  ;; against +FILE-BROWSER-ROOT+. Exercised against a real file that
+  ;; genuinely exists in this container (this project's own docs --
+  ;; consistent with the project's stated posture that /app is real, not
+  ;; sandboxed/fixture data, see docs/sm-harness-web-ui.md "Running
+  ;; browser E2E without Docker").
+  (let* ((file #P"/app/harness/docs/sm-harness-web-ui.md")
+         (href (sm-harness-web-ui::%fs-href file)))
+    (is (string= "/fs/app/harness/docs/sm-harness-web-ui.md" href))))
+
+(test file-browser-url-encode-component-escapes-non-ascii-and-reserved-bytes
+  (is (string= "a%20b" (sm-harness-web-ui::%fs-url-encode-component "a b")))
+  (is (string= "a-b_c.d~e" (sm-harness-web-ui::%fs-url-encode-component "a-b_c.d~e")))
+  ;; A non-ASCII character's UTF-8 continuation bytes must each be
+  ;; percent-encoded individually, not accidentally passed through
+  ;; (found while writing %FS-UNRESERVED-BYTE-P: CODE-CHAR on a raw
+  ;; continuation byte can land on an ALPHANUMERICP Latin-1 letter).
+  (is (string= "%C3%A9" (sm-harness-web-ui::%fs-url-encode-component "é"))))

@@ -86,7 +86,25 @@ sm-harness-web-ui/e2e system providing them is loaded -- see
                            :port (web-ui-config-port cfg)
                            :static-root (namestring (web-ui-config-static-root cfg))
                            :boot-file "/boot.html"
-                           :extended-routing t))
+                           :extended-routing t
+                           ;; #138: the file browser's raw-file-serving
+                           ;; middleware (%SERVE-FS-REQUEST-APP,
+                           ;; ui/file-browser.lisp). CLOG:INITIALIZE folds
+                           ;; :LACK-MIDDLEWARE-LIST into its app chain once,
+                           ;; permanently, right here -- this is the *one*
+                           ;; part of #138 a bare RELOAD_HARNESS on an
+                           ;; already-running process cannot pick up; it
+                           ;; needs a fresh container boot, same category of
+                           ;; gotcha as docs/sm-harness-web-ui.md's
+                           ;; /opt/app-static static-asset note, just for a
+                           ;; middleware entry instead of a file. The lambda
+                           ;; here is intentionally a thin, never-changing
+                           ;; shim around a *named* function precisely so
+                           ;; that limitation stops at "this one entry gets
+                           ;; wired in", not "this one entry's *behavior* is
+                           ;; also frozen forever" -- see
+                           ;; %SERVE-FS-REQUEST-APP's own docstring.
+                           :lack-middleware-list (list #'%serve-fs-request-app)))
     (clog:set-on-new-window #'on-new-window :path "/sessions" :boot-file "/boot.html")
     ;; #127: the hidden-iframe upload target ui/upload.lisp posts into --
     ;; its own tiny CLOG route, separate from ON-NEW-WINDOW's home/chat

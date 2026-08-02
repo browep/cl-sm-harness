@@ -78,6 +78,35 @@ async function executeStep(page, base, step) {
       }
       return;
     }
+    // #138: click a real target="_blank" anchor (the file browser's file
+    // rows) and assert on the *new* tab it opens, then close it -- distinct
+    // from 'open_tab' above, which navigates a fresh tab to an
+    // explicitly-given path itself rather than asserting on wherever a
+    // click happens to lead. Waits for the generic 'page' context event,
+    // not 'popup': found the hard way that 'popup' never fires for a
+    // target="_blank" anchor carrying rel="noopener" (deliberately set on
+    // these file-tree links) -- severing window.opener is exactly what
+    // 'popup' depends on to correlate the new tab with this click, but
+    // 'page' fires for any new page in the context regardless.
+    case 'click_new_tab': {
+      const [popup] = await Promise.all([
+        page.context().waitForEvent('page'),
+        target().click(),
+      ]);
+      try {
+        await popup.waitForLoadState('load', { timeout });
+        if (step.url_pattern) {
+          assert.match(new URL(popup.url()).pathname, new RegExp(step.url_pattern));
+        }
+        if (step.text_contains) {
+          assert.match(await popup.evaluate(() => document.body.innerText || document.body.textContent || ''),
+                       new RegExp(step.text_contains));
+        }
+      } finally {
+        await popup.close();
+      }
+      return;
+    }
     case 'assert_url_pattern': return assert.match(new URL(page.url()).pathname, new RegExp(step.pattern));
     case 'assert_title': return assert.equal(await page.title(), step.value);
     case 'assert_active_id': return page.waitForFunction(
