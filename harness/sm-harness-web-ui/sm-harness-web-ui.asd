@@ -55,7 +55,8 @@
                              (:file "session-info")
                              (:file "title-live-update")
                              (:file "upload")
-                             (:file "file-browser")))))
+                             (:file "file-browser")
+                             (:file "git-diff")))))
 
 (asdf:defsystem #:sm-harness-web-ui/e2e
   :description "Test-only deterministic SDK transport for browser E2E"

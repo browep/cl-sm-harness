@@ -642,3 +642,283 @@ own docstring above for why a prefix is needed at all now that the root
 is / rather than the narrower /app this feature originally shipped with."
   (format nil "~A~{~A~^/~}" +file-browser-url-prefix+
           (mapcar #'%fs-url-encode-component (%fs-rel-components path))))
+
+;;; ---------------------------------------------------------------------
+;;; Git diff viewer (#140, follow-up to #138's file browser): pure
+;;; git-plumbing/parsing logic, kept here for the same PRESENTER-TESTS-
+;;; without-a-live-CLOG-server reason as the file browser section above.
+;;; ui/file-browser.lisp adds the CLOG glue: a "Diff" affordance on any
+;;; directory row that is itself a git working-tree root, reusing the
+;;; existing .file-browser-panel drawer (a second internal view, toggled
+;;; via HIDDENP, rather than a whole new drawer) instead of a dedicated
+;;; top-level button -- there is no single "the repo" to default such a
+;;; button to now that #138 widened the tree's root from /app to /.
+;;;
+;;; Scope (v1, #140): the working tree's own uncommitted changes only
+;;; (`git diff HEAD`, which folds staged and unstaged changes into one
+;;; diff), no arbitrary ref/commit picker.
+
+(defparameter +git-diff-timeout-seconds+ 10
+  "Bound on a single `git status`/`git diff` child process (#140), so a
+pathological repo (a corrupt .git, a diff/status hook that hangs, an
+enormous rename-detection search) can't wedge the UI thread that called
+%RUN-GIT forever -- the same posture as the bash tool's own timeout
+(tool-catalog.lisp), just far shorter: this always runs a fixed, cheap
+plumbing command, never arbitrary user input.")
+
+(defparameter +git-diff-max-chars+ 200000
+  "Cap (#140) on how much stdout a single %RUN-GIT call will ever return,
+so an enormous diff (a checked-in binary asset, a huge generated file)
+can't stall the browser tab rendering hundreds of thousands of DOM
+lines in one click -- same UX as +FILE-BROWSER-MAX-ENTRIES+'s truncated
+directory listing.")
+
+(defun %git-repo-root-p (dir)
+  "True when DIR (a directory pathname) is a git working-tree root -- has
+an immediate .git entry, whether that's an ordinary repo's .git
+directory or the single-line .git FILE a submodule/linked-worktree
+checkout uses instead. Deliberately shallow (just this one entry, not a
+full `git rev-parse --is-inside-work-tree` round trip) so it's cheap
+enough to call once per rendered directory row in the file tree (#138)
+without spawning a process for every row."
+  (let ((git-path (merge-pathnames ".git" (uiop:ensure-directory-pathname dir))))
+    (or (uiop:directory-exists-p git-path) (uiop:file-exists-p git-path))))
+
+(defun %git-read-stream-capped (stream max-chars)
+  "Local, trimmed copy of sm-harness/src/tool-catalog.lisp's
+%READ-STREAM-CAPPED (not reused directly across the package/system
+boundary: that symbol is internal to a different ASDF system and this
+call site never needs its process-group-kill machinery, only the plain
+capped read) -- returns (values text truncated-p)."
+  (if (<= max-chars 0)
+      (values "" (not (null (read-char stream nil nil))))
+      (let* ((buf (make-string max-chars))
+             (n (read-sequence buf stream)))
+        (values (subseq buf 0 n)
+                (and (= n max-chars) (not (null (read-char stream nil nil))))))))
+
+(defun %run-git (repo-root argv &key (timeout-seconds +git-diff-timeout-seconds+)
+                                      (max-chars +git-diff-max-chars+))
+  "Run git ARGV (a list of plain string arguments, e.g. (\"status\"
+\"--porcelain=v1\") -- never a shell string) with REPO-ROOT as its
+working directory. Returns (values stdout stderr exit-code timed-out-p).
+stdout is capped at MAX-CHARS the same way the bash tool's own output is
+(tool-catalog.lisp); a run that outlives TIMEOUT-SECONDS is killed
+(SIGTERM, then SIGKILL after a short grace period if still alive) rather
+than left to wedge the caller -- git spawns no grandchildren for a plain
+`diff`/`status`, so unlike the bash tool's process-group kill this only
+ever needs to signal the one child. ARGV going straight to RUN-PROGRAM
+as separate arguments (not interpolated into a command string) means a
+crafted pathspec/filename can never be parsed as a flag or escape into a
+wider command line -- deliberately stronger than the bash tool's own
+posture, which is fine there only because that tool's whole point is
+running an arbitrary caller-chosen command."
+  (let* ((process (sb-ext:run-program "git" argv :directory repo-root :search t
+                                       :output :stream :error :stream :wait nil))
+         (stdout-text nil) (stdout-truncated nil)
+         (stderr-text nil) (stderr-truncated nil)
+         (stdout-reader (sb-thread:make-thread
+                          (lambda ()
+                            (multiple-value-setq (stdout-text stdout-truncated)
+                              (%git-read-stream-capped (sb-ext:process-output process) max-chars)))
+                          :name "git-diff-stdout-reader"))
+         (stderr-reader (sb-thread:make-thread
+                          (lambda ()
+                            (multiple-value-setq (stderr-text stderr-truncated)
+                              (%git-read-stream-capped (sb-ext:process-error process) max-chars)))
+                          :name "git-diff-stderr-reader"))
+         (exited-p (loop repeat (max 1 (ceiling (* timeout-seconds 10)))
+                          do (unless (eq (sb-ext:process-status process) :running)
+                               (return t))
+                             (sleep 0.1)
+                          finally (return (not (eq (sb-ext:process-status process) :running))))))
+    (unless exited-p
+      (ignore-errors (sb-ext:process-kill process sb-posix:sigterm))
+      (sleep 0.2)
+      (unless (eq (sb-ext:process-status process) :exited)
+        (ignore-errors (sb-ext:process-kill process sb-posix:sigkill))))
+    (sb-thread:join-thread stdout-reader :timeout (+ timeout-seconds 5) :default nil)
+    (sb-thread:join-thread stderr-reader :timeout (+ timeout-seconds 5) :default nil)
+    (values (if stdout-truncated
+                (concatenate 'string (or stdout-text "") (format nil "~%[output truncated]"))
+                (or stdout-text ""))
+            (if stderr-truncated
+                (concatenate 'string (or stderr-text "") (format nil "~%[stderr truncated]"))
+                (or stderr-text ""))
+            (and exited-p (sb-ext:process-exit-code process))
+            (not exited-p))))
+
+(defun %split-on-char (text ch)
+  "TEXT split on every occurrence of CH, as a list of (possibly empty)
+substrings -- e.g. used to split git's NUL-delimited -z status output
+and to walk a relative path's '/'-separated components."
+  (let ((parts '()) (start 0))
+    (loop for i from 0 below (length text) do
+      (when (char= (char text i) ch)
+        (push (subseq text start i) parts)
+        (setf start (1+ i))))
+    (push (subseq text start) parts)
+    (nreverse parts)))
+
+(defun %git-rel-path-safe-p (rel-path)
+  "Defense in depth (#140), the same posture as %PATH-UNDER-ROOT-P's own
+comment about never trusting a caller-supplied path on its own: even
+though every REL-PATH this ever actually sees comes from our own
+%GIT-STATUS-ENTRIES parse of trusted `git status` output (never typed by
+a caller), reject an absolute path or one with a literal \"..\" path
+component before it ever reaches a git argv."
+  (and (stringp rel-path)
+       (plusp (length rel-path))
+       (not (char= (char rel-path 0) #\/))
+       (notany (lambda (c) (string= c "..")) (%split-on-char rel-path #\/))))
+
+(defun %parse-git-status-z (text)
+  "Parse `git status --porcelain=v1 -z --untracked-files=all` output into
+a list of plists (:PATH :INDEX-STATUS :WORKTREE-STATUS :RENAME-FROM),
+NIL RENAME-FROM unless either status char is #\\R or #\\C. Each record is
+\"XY PATH\\0\", or, for a rename/copy, \"XY PATH\\0ORIG-PATH\\0\" (the new
+path first, then the original -- verified empirically against a real
+`git status --porcelain=v1 -z` run, not from memory of the docs)."
+  (let ((tokens (remove "" (%split-on-char text #\Nul) :test #'string= :from-end t :count 1)))
+    ;; -z terminates every record with \0, so the split leaves exactly one
+    ;; trailing empty string when TEXT is non-empty; REMOVE ... :COUNT 1
+    ;; :FROM-END T drops only that one, not a genuinely empty leading path.
+    (let ((entries '()))
+      (loop while tokens do
+        (let* ((rec (pop tokens))
+               (index-status (char rec 0))
+               (worktree-status (char rec 1))
+               (path (subseq rec 3))
+               (renamed-p (or (char= index-status #\R) (char= index-status #\C)
+                               (char= worktree-status #\R) (char= worktree-status #\C))))
+          (push (list :path path :index-status index-status :worktree-status worktree-status
+                      :rename-from (when renamed-p (pop tokens)))
+                entries)))
+      (nreverse entries))))
+
+(defun %git-status-entries (repo-root)
+  "List ROOT's uncommitted changes (#140) via `git status --porcelain=v1
+-z --untracked-files=all`. Returns (values ENTRIES NIL) on success, each
+entry a %PARSE-GIT-STATUS-Z plist, sorted by :PATH; (values NIL
+:FORBIDDEN) if REPO-ROOT does not resolve under +FILE-BROWSER-ROOT+ or
+is not a git working-tree root; (values NIL :ERROR MESSAGE) if git
+itself failed or timed out."
+  (cond
+    ((not (%path-under-root-p repo-root +file-browser-root+)) (values nil :forbidden))
+    ((not (%git-repo-root-p repo-root)) (values nil :forbidden))
+    (t (multiple-value-bind (stdout stderr exit-code timed-out-p)
+           (%run-git repo-root (list "status" "--porcelain=v1" "-z" "--untracked-files=all"))
+         (declare (ignore exit-code))
+         (cond
+           (timed-out-p (values nil :error "git status timed out"))
+           ((plusp (length (string-trim '(#\Space #\Newline #\Return) stderr)))
+            (values nil :error (string-trim '(#\Space #\Newline #\Return) stderr)))
+           (t (values (sort (%parse-git-status-z stdout) #'string-lessp
+                             :key (lambda (e) (getf e :path)))
+                      nil)))))))
+
+(defun %git-status-badge-text (index-status worktree-status)
+  "Human label for a %GIT-STATUS-ENTRIES entry's two status characters,
+checked in the same priority order `git status`'s own plain-format
+column headers document (conflict/untracked first, since those are not
+really \"index vs worktree\" distinctions at all)."
+  (cond
+    ((and (char= index-status #\?) (char= worktree-status #\?)) "Untracked")
+    ((or (char= index-status #\U) (char= worktree-status #\U)) "Conflict")
+    ((char= index-status #\R) "Renamed")
+    ((char= index-status #\C) "Copied")
+    ((char= index-status #\A) "Added")
+    ((or (char= index-status #\D) (char= worktree-status #\D)) "Deleted")
+    ((or (char= index-status #\M) (char= worktree-status #\M)) "Modified")
+    (t (format nil "~C~C" index-status worktree-status))))
+
+(defun %git-diff-text (repo-root rel-path &key untracked-p)
+  "Uncommitted diff (#140) for REL-PATH (git-relative to REPO-ROOT, as
+returned by %GIT-STATUS-ENTRIES -- never a caller-typed path) within
+REPO-ROOT. Tracked files use `git diff --no-color HEAD -- REL-PATH`,
+which folds staged and unstaged changes into one diff; UNTRACKED-P (set
+for a %GIT-STATUS-ENTRIES entry whose status is \"??\") instead uses
+`git diff --no-color --no-index -- /dev/null REL-PATH`, since `git diff
+HEAD` never shows a file git isn't tracking at all. Returns (values TEXT
+NIL) on success (TEXT may be empty -- \"no changes\" -- e.g. a file whose
+mode changed back to match HEAD between status and this call), (values
+NIL :FORBIDDEN) if REPO-ROOT/REL-PATH fail validation, or (values NIL
+:ERROR MESSAGE) if git reported one. Exit code alone can't distinguish a
+real error from \"differences found\" here -- empirically, `git diff
+--no-index` exits 1 both when the two sides differ *and* when the target
+flat-out doesn't exist -- so this checks STDERR content instead, which
+git leaves empty on every ordinary successful run of either form."
+  (cond
+    ((not (%path-under-root-p repo-root +file-browser-root+)) (values nil :forbidden))
+    ((not (%git-rel-path-safe-p rel-path)) (values nil :forbidden))
+    (t (multiple-value-bind (stdout stderr exit-code timed-out-p)
+           (%run-git repo-root
+                     (if untracked-p
+                         (list "diff" "--no-color" "--no-index" "--" "/dev/null" rel-path)
+                         (list "diff" "--no-color" "HEAD" "--" rel-path)))
+         (declare (ignore exit-code))
+         (cond
+           (timed-out-p (values nil :error "git diff timed out"))
+           ((plusp (length (string-trim '(#\Space #\Newline #\Return) stderr)))
+            (values nil :error (string-trim '(#\Space #\Newline #\Return) stderr)))
+           (t (values stdout nil)))))))
+
+(defparameter +git-diff-meta-line-prefixes+
+  '("diff --git" "index " "similarity index" "dissimilarity index"
+    "rename from" "rename to" "copy from" "copy to" "new file mode"
+    "deleted file mode" "old mode" "new mode" "Binary files"
+    "\\ No newline")
+  "Unified-diff header/metadata lines (#140), rendered with the dimmer
+\"diff-meta\" style rather than as context/added/removed content.")
+
+(defun %diff-meta-line-p (line)
+  (some (lambda (prefix)
+          (and (>= (length line) (length prefix))
+               (string= line prefix :end1 (length prefix))))
+        +git-diff-meta-line-prefixes+))
+
+(defun %classify-diff-line (line)
+  "One of :HUNK, :META, :ADD, :DEL, :CONTEXT for a single unified-diff
+LINE (#140) -- checked in an order where a \"+++ \"/\"--- \" file-header
+line is caught as :META before the plain \"starts with +/-\" content
+checks below it would otherwise misclassify it as :ADD/:DEL."
+  (cond
+    ((and (>= (length line) 2) (string= line "@@" :end1 2)) :hunk)
+    ((and (>= (length line) 4) (or (string= line "+++ " :end1 4)
+                                    (string= line "--- " :end1 4)))
+     :meta)
+    ((%diff-meta-line-p line) :meta)
+    ((and (plusp (length line)) (char= (char line 0) #\+)) :add)
+    ((and (plusp (length line)) (char= (char line 0) #\-)) :del)
+    (t :context)))
+
+(defun %parse-unified-diff (text)
+  "TEXT (a %GIT-DIFF-TEXT result) as a list of plists (:KIND :TEXT), one
+per line, via %CLASSIFY-DIFF-LINE. %SPLIT-LINES always contributes one
+final empty \"line\" for TEXT's own trailing newline (every real git diff
+ends with one) -- dropped here so the rendered diff doesn't end with a
+spurious blank row; a TEXT that doesn't end in a newline (or is empty)
+keeps whatever %SPLIT-LINES actually produced, untouched."
+  (let ((lines (%split-lines text)))
+    (when (and lines
+               (plusp (length text))
+               (char= (char text (1- (length text))) #\Newline))
+      (setf lines (butlast lines)))
+    (mapcar (lambda (line) (list :kind (%classify-diff-line line) :text line))
+            lines)))
+
+(defun %git-diff-html (text &key truncated-p)
+  "Render unified diff TEXT (#140) as HTML: one <div class=\"diff-line
+diff-KIND\"> per line, ESCAPE-TEXT'd so raw diff content -- which is
+after all arbitrary file content -- can never inject markup, the same
+posture as EVENT-DISPLAY/MARKDOWN-TO-HTML above. Empty TEXT renders a
+plain \"No changes\" message instead of an empty element."
+  (with-output-to-string (out)
+    (if (zerop (length (or text "")))
+        (format out "<div class=\"diff-empty\">No changes</div>")
+        (dolist (entry (%parse-unified-diff text))
+          (format out "<div class=\"diff-line diff-~(~A~)\">~A</div>"
+                  (getf entry :kind) (escape-text (getf entry :text)))))
+    (when truncated-p
+      (format out "<div class=\"diff-truncated\">…diff truncated at ~D characters</div>"
+              +git-diff-max-chars+))))

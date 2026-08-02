@@ -35,7 +35,8 @@
         (e2e-session-info-scenario)
         (e2e-title-live-update-scenario)
         (e2e-upload-scenario)
-        (e2e-file-browser-scenario)))
+        (e2e-file-browser-scenario)
+        (e2e-git-diff-scenario)))
 
 (defparameter +e2e-supported-ops+
   '("assert_text_count" "wait" "wait_text" "assert_text" "assert_title"
