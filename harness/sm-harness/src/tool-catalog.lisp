@@ -887,6 +887,23 @@ dependency-injection points above: this file (:SM-HARNESS) must not
 itself depend on :SM-HARNESS-WEB-UI, so the wiring happens in the other
 direction, at application startup, not via an import here.")
 
+(defvar *current-session-record* nil
+  "The SESSION-RECORD (model.lisp) of the session a tool call is currently
+running inside -- NIL unless a caller is actually inside a live turn.
+%ENSURE-CLIENT (runtime.lisp) binds this dynamically around every call to
+HARNESS-CATALOG-PROVIDER, precisely so this stays authoritative rather than
+something a tool argument could misreport: unlike SET-SESSION-TITLE's
+SESSION-ID (a plain, model-supplied argument, fine for a rename a human can
+always correct), RUN_SUBAGENT (#142) needs the *actual* calling session's
+id to stamp as a spawned child's PARENT-SESSION-ID, and a confused or
+careless model asked to supply its own id is exactly the failure mode that
+would corrupt that audit trail. DEFAULT-TOOL-CATALOG reads this twice: to
+omit RUN_SUBAGENT's own tool definition when this session is itself a
+subagent (#142's \"no recursive spawning\" decision), and to capture this
+session's id into RUN_SUBAGENT's handler closure. NIL by default so this
+file keeps loading and running standalone with no runtime wired up, same
+reasoning as *TOOL-HARNESS*.")
+
 (defun %set-session-title-schema ()
   (let ((schema (%json-object "type" "object"))
         (props (%json-object))
@@ -970,17 +987,281 @@ about it -- only the display title."
    :annotations '(:read-only-p nil :destructive-p nil :idempotent-p t :open-world-p nil)
    :handler '%set-session-title-tool-handler))
 
+(defparameter +run-subagent-max-requests+ 8
+  "Handler-side cap on REQUESTS per RUN_SUBAGENT call (#142) -- the safety
+boundary every catalog tool needs, since every catalog tool executes with
+no approval gate (see the file-level note above the tool-definition
+handlers). Recursive fan-out is already impossible by construction (a
+subagent's own catalog omits RUN_SUBAGENT entirely, see
+DEFAULT-TOOL-CATALOG below), so this only needs to bound *width*, not
+depth: how many subagent turns one call can launch in parallel.")
+
+(defun %run-subagent-schema ()
+  (let ((schema (%json-object "type" "object"))
+        (props (%json-object))
+        (requests-field (%json-object "type" "array"))
+        (item-schema (%json-object "type" "object"))
+        (item-props (%json-object)))
+    (setf (gethash "prompt" item-props) (%json-object "type" "string")
+          (gethash "backend" item-props) (%json-object "type" "string")
+          (gethash "model" item-props) (%json-object "type" "string")
+          (gethash "properties" item-schema) item-props
+          (gethash "required" item-schema) (list "prompt")
+          (gethash "items" requests-field) item-schema
+          (gethash "requests" props) requests-field
+          (gethash "properties" schema) props
+          (gethash "required" schema) (list "requests"))
+    schema))
+
+(defun %subagent-title (prompt)
+  "A short home-screen/info-panel label for a spawned subagent session --
+derived from its own prompt (truncated, never the full text) since a
+subagent has no human present to name it via SET_SESSION_TITLE."
+  (let ((trimmed (string-trim '(#\Space #\Tab #\Newline #\Return) prompt)))
+    (format nil "Subagent: ~A"
+            (if (> (length trimmed) 60)
+                (concatenate 'string (subseq trimmed 0 60) "...")
+                trimmed))))
+
+(defun %parse-subagent-request (req)
+  "Validate one element of RUN_SUBAGENT's REQUESTS array. Returns (VALUES
+SPEC NIL) on success -- SPEC a plist (:PROMPT :BACKEND :MODEL) -- or
+(VALUES NIL ERROR-MESSAGE) otherwise. Deliberately does not re-validate
+BACKEND/MODEL against the catalog here: START-SESSION is already the
+single source of truth for what is legal (#106), so an invalid choice is
+caught once, at spawn time, inside %RUN-ONE-SUBAGENT, not duplicated here."
+  (cond
+    ((not (hash-table-p req))
+     (values nil "each request must be a JSON object with at least a \"prompt\" field"))
+    (t
+     (let ((prompt (gethash "prompt" req))
+           (backend (gethash "backend" req))
+           (model (gethash "model" req)))
+       (cond
+         ((not (and (stringp prompt)
+                    (plusp (length (string-trim '(#\Space #\Tab #\Newline #\Return) prompt)))))
+          (values nil "\"prompt\" must be a non-empty string"))
+         ((and backend (not (stringp backend)))
+          (values nil "\"backend\" must be a string"))
+         ((and model (not (stringp model)))
+          (values nil "\"model\" must be a string"))
+         (t (values (list :prompt prompt :backend backend :model model) nil)))))))
+
+(defun %run-one-subagent (harness parent-id index spec)
+  "Runs one REQUESTS entry to completion and never signals -- every
+failure mode (invalid backend/model, a HARNESS-ERROR from START-SESSION,
+a turn that never completes) is captured as data instead, so one bad
+request in a parallel batch can never take the others down via
+SB-THREAD:JOIN-THREAD propagating a condition. Returns a plist:
+(:INDEX :SESSION-ID :OK :TEXT).
+
+Waits for completion via ATTACH-SESSION-LISTENER, attached *before*
+SUBMIT-TURN, not by polling SESSION-STATUS: a brand-new session's status
+defaults to :READY (model.lisp) before its turn has even started, so a
+poll begun right after SUBMIT-TURN cannot tell \"not started yet\" apart
+from \"already finished\" -- both read :READY. A listener attached first
+cannot miss the terminating event no matter how fast or slow the turn
+runs."
+  (handler-case
+      (let* ((prompt (getf spec :prompt))
+             (backend (getf spec :backend))
+             (model (getf spec :model))
+             (snapshot (start-session harness
+                                      :title (%subagent-title prompt)
+                                      :backend backend
+                                      :model model
+                                      :parent-session-id parent-id))
+             (child-id (session-snapshot-id snapshot))
+             (deadline-seconds
+               (harness-config-turn-deadline-seconds (harness-config harness)))
+             (done (sb-thread:make-semaphore :count 0))
+             (state-lock (sb-thread:make-mutex :name "run-subagent-wait"))
+             (last-assistant-text nil)
+             (terminal-text nil)
+             (turn-is-error nil))
+        (multiple-value-bind (initial-snapshot listener-id cursor)
+            (attach-session-listener
+             harness child-id
+             :callback
+             (lambda (ev)
+               (sb-thread:with-mutex (state-lock)
+                 (case (event-type ev)
+                   (:assistant-text
+                    (setf last-assistant-text (getf (event-payload ev) :text)))
+                   (:terminal
+                    (setf terminal-text (getf (event-payload ev) :text))
+                    (sb-thread:signal-semaphore done))
+                   (:error
+                    (setf turn-is-error t)
+                    (sb-thread:signal-semaphore done))))))
+          (declare (ignore initial-snapshot cursor))
+          (unwind-protect
+               (progn
+                 (submit-turn harness child-id prompt)
+                 (if (sb-thread:wait-on-semaphore
+                      done
+                      ;; Generous grace beyond the turn's own deadline
+                      ;; watchdog, so that watchdog gets the first chance to
+                      ;; resolve a stalled subagent rather than this giving
+                      ;; up first and leaving it to keep running orphaned.
+                      :timeout (+ deadline-seconds 30))
+                     (sb-thread:with-mutex (state-lock)
+                       (list :index index :session-id child-id
+                             :ok (not turn-is-error)
+                             ;; LAST-ASSISTANT-TEXT first: that is the
+                             ;; subagent's actual conversational answer,
+                             ;; which is what a caller of RUN_SUBAGENT wants
+                             ;; back. TERMINAL-TEXT is a fallback for a
+                             ;; tool-only turn that produced no assistant
+                             ;; text at all (runtime.lisp's own comment: "a
+                             ;; tool-only turn with no assistant text still
+                             ;; gets its own [terminal] entry") -- in the
+                             ;; ordinary case the two already carry the same
+                             ;; text (and %HANDLE-MAPPED-EVENT even nils
+                             ;; TERMINAL-TEXT out then to avoid double-
+                             ;; rendering it), so this order only matters
+                             ;; when they genuinely differ.
+                             :text (or last-assistant-text
+                                      (and terminal-text (plusp (length terminal-text))
+                                           terminal-text)
+                                      "")))
+                     (list :index index :session-id child-id :ok nil
+                           :text "subagent did not finish within the turn-deadline budget; it may still be running")))
+            (detach-session-listener harness child-id listener-id))))
+    (harness-error (c)
+      (list :index index :session-id nil :ok nil
+            :text (format nil "run_subagent request failed: ~A" (harness-error-message c))))
+    (error (c)
+      (list :index index :session-id nil :ok nil
+            :text (format nil "run_subagent request failed: ~A" c)))))
+
+(defun %format-subagent-results (results total-count)
+  "Renders every request's outcome into one tool result, each entry's TEXT
+truncated to a fair per-request share of +TOOL-RESULT-MAX-CHARS+ (the same
+never-silently-drop discipline as READ_FILE/#126, applied per item here
+rather than to one shared blob) -- a truncated entry says so explicitly
+rather than just stopping."
+  (let ((per-item-cap (max 256 (floor +tool-result-max-chars+ (max 1 total-count)))))
+    (with-output-to-string (out)
+      (dolist (r results)
+        (let* ((text (or (getf r :text) ""))
+               (truncated-p (> (length text) per-item-cap))
+               (shown (if truncated-p (subseq text 0 per-item-cap) text)))
+          (format out "[~D] session ~A: ~:[FAILED~;ok~]~%~A~%"
+                  (getf r :index) (or (getf r :session-id) "(none)")
+                  (getf r :ok) shown)
+          (when truncated-p
+            (format out "[truncated: this request's output exceeds its ~:D character share of this tool result's cap]~%"
+                    per-item-cap))
+          (terpri out))))))
+
+(defun %run-subagent-tool-handler (arguments context)
+  (declare (ignore context))
+  (cond
+    ((null *tool-harness*)
+     (values "run_subagent is unavailable: no harness is wired up for tool calls in this process" t))
+    ((null *current-session-record*)
+     (values "run_subagent is unavailable: no calling-session context for this tool invocation" t))
+    (t
+     (let ((requests (gethash "requests" arguments)))
+       (cond
+         ((not (and (listp requests) requests))
+          (values "run_subagent requires a non-empty \"requests\" array" t))
+         ((> (length requests) +run-subagent-max-requests+)
+          (values (format nil "run_subagent supports at most ~D requests per call, got ~D"
+                          +run-subagent-max-requests+ (length requests))
+                  t))
+         (t
+          (let ((parse-error nil) (specs '()) (i 0))
+            (dolist (req requests)
+              (multiple-value-bind (spec err) (%parse-subagent-request req)
+                (if err
+                    (setf parse-error (or parse-error (format nil "request ~D: ~A" i err)))
+                    (push spec specs)))
+              (incf i))
+            (if parse-error
+                (values parse-error t)
+                (let* ((harness *tool-harness*)
+                       (parent-id (session-record-id *current-session-record*))
+                       (specs (nreverse specs))
+                       (threads
+                         (loop for spec in specs
+                               for idx from 0
+                               ;; LET rebinds SPEC/IDX fresh per iteration:
+                               ;; LOOP's own SPEC/IDX bindings are reused
+                               ;; (mutated), not fresh, across iterations in
+                               ;; SBCL, so a LAMBDA closing over them
+                               ;; directly would see only the *last*
+                               ;; request/index by the time its thread
+                               ;; actually ran -- every spawned thread
+                               ;; processing the same, final request.
+                               collect (let ((spec spec) (idx idx))
+                                        (sb-thread:make-thread
+                                         (lambda () (%run-one-subagent harness parent-id idx spec))
+                                         :name (format nil "sm-subagent-~A-~D" parent-id idx))))))
+                  (let ((results (mapcar #'sb-thread:join-thread threads)))
+                    (values (%format-subagent-results results (length specs))
+                            (some (lambda (r) (not (getf r :ok))) results))))))))))))
+
+(defun make-run-subagent-tool-definition ()
+  "Spawns one or more subordinate agent sessions (#142), runs each to a
+full turn's completion in parallel, and reports every outcome back in one
+result. REQUESTS is a non-empty array (at most +RUN-SUBAGENT-MAX-REQUESTS+
+per call) of {prompt (required), backend, model} -- BACKEND/MODEL validated
+the same way START-SESSION already validates them (#106), defaulting the
+same way when omitted. Each spawned session's PARENT-SESSION-ID is this
+calling session's own id, captured authoritatively from
+*CURRENT-SESSION-RECORD* rather than trusted from a model-supplied
+argument -- see *CURRENT-SESSION-RECORD*'s docstring. A subagent gets the
+full default catalog *except* RUN_SUBAGENT itself (DEFAULT-TOOL-CATALOG
+omits it whenever *CURRENT-SESSION-RECORD* already has a non-NIL
+PARENT-SESSION-ID), so recursive spawning is impossible by construction,
+not by a depth counter. Interrupting the *calling* session's own turn does
+not interrupt an in-flight subagent turn -- it keeps running to completion
+independently, per #142's resolved decision; a subagent that outlives its
+caller's interrupted turn is not otherwise marked as orphaned."
+  (make-tool-definition
+   :name "run_subagent"
+   :description "Run one or more subordinate agent sessions in parallel and
+return their results. REQUESTS is a required, non-empty array of objects,
+each with a required PROMPT (string) and optional BACKEND/MODEL strings
+(same catalog and defaults as session creation) -- at most 8 requests per
+call. Each subagent runs the full tool catalog except run_subagent itself
+(no recursive spawning) and to completion independently of this call's own
+turn (interrupting this turn does not stop an in-flight subagent). Returns
+one combined result reporting, per request, its spawned session id, whether
+it succeeded, and its final answer text."
+   :input-schema (%run-subagent-schema)
+   ;; #123: definitely not read-only (creates new sessions and runs real
+   ;; model turns, which may themselves run bash/write_file), not
+   ;; idempotent (each call spawns brand-new sessions/side effects even
+   ;; with identical arguments), open-world (drives an external CLI/model).
+   :annotations '(:read-only-p nil :destructive-p t :idempotent-p nil :open-world-p t)
+   :handler '%run-subagent-tool-handler))
+
 (defun default-tool-catalog ()
-  "Return product-owned tool metadata, not SDK objects."
+  "Return product-owned tool metadata, not SDK objects. RUN_SUBAGENT (#142)
+is included unless *CURRENT-SESSION-RECORD* shows this session is itself a
+subagent (a non-NIL PARENT-SESSION-ID) -- the enforcement mechanism for
+'a subagent cannot itself call run_subagent', not a separate depth
+counter. A session with no bound *CURRENT-SESSION-RECORD* at all (headless
+sm-harness with nothing wired up, most of this file's own test suite) is
+treated as NOT a subagent, so RUN_SUBAGENT still appears -- consistent with
+every other *TOOL-HARNESS*-gated tool here, which reports a safe result
+error rather than being hidden when nothing is wired up."
   (make-tool-catalog
    :servers
    (list (make-tool-server-definition
           :name "sm_harness"
           :version "0.1.0"
-          :tools (list (make-echo-tool-definition)
-                       (make-read-tool-definition)
-                       (make-write-tool-definition)
-                       (make-bash-tool-definition)
-                       (make-reload-tool-definition)
-                       (make-web-search-tool-definition)
-                       (make-set-session-title-tool-definition))))))
+          :tools (append (list (make-echo-tool-definition)
+                               (make-read-tool-definition)
+                               (make-write-tool-definition)
+                               (make-bash-tool-definition)
+                               (make-reload-tool-definition)
+                               (make-web-search-tool-definition)
+                               (make-set-session-title-tool-definition))
+                         (unless (and *current-session-record*
+                                      (session-record-parent-session-id
+                                       *current-session-record*))
+                           (list (make-run-subagent-tool-definition))))))))

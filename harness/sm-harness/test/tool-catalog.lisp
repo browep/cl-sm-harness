@@ -710,3 +710,177 @@ persisted."
          (sdk-tool (sm-harness::%sdk-tool-from-definition definition)))
     (is (equal '(:read-only-p t :destructive-p nil :idempotent-p t :open-world-p nil)
                (claude-agent-sdk-cl:sdk-tool-annotations sdk-tool)))))
+
+;;;; #142: RUN_SUBAGENT -- parallel subagent sessions with backend/model
+;;;; choice and authoritative parent-session linkage via
+;;;; *CURRENT-SESSION-RECORD*, never a model-supplied argument.
+
+(defun %call-run-subagent-tool (requests)
+  "REQUESTS is a list of plists (:prompt :backend :model); NIL entries for
+:backend/:model are simply omitted from that request's JSON object,
+matching how an optional field looks over the wire."
+  (let ((arguments (make-hash-table :test #'equal))
+        (items '()))
+    (dolist (r requests)
+      (let ((item (make-hash-table :test #'equal)))
+        (setf (gethash "prompt" item) (getf r :prompt))
+        (when (getf r :backend) (setf (gethash "backend" item) (getf r :backend)))
+        (when (getf r :model) (setf (gethash "model" item) (getf r :model)))
+        (push item items)))
+    (setf (gethash "requests" arguments) (nreverse items))
+    (multiple-value-bind (text is-error)
+        (sm-harness::%run-subagent-tool-handler arguments nil)
+      (list text is-error))))
+
+(test run-subagent-tool-is-registered-in-the-default-catalog-for-a-top-level-session
+  (let ((sm-harness::*current-session-record* nil))
+    (let* ((catalog (sm-harness:default-tool-catalog))
+           (tools (sm-harness:tool-server-definition-tools
+                   (first (sm-harness:tool-catalog-servers catalog))))
+           (tool (find "run_subagent" tools
+                       :key #'sm-harness:tool-definition-name :test #'string=)))
+      (is (not (null tool)))
+      (is (equal '("requests") (gethash "required" (sm-harness:tool-definition-input-schema tool)))))))
+
+(test run-subagent-tool-is-omitted-from-a-subagents-own-catalog
+  "#142's resolved decision: a subagent cannot itself call run_subagent --
+enforced here by DEFAULT-TOOL-CATALOG simply never including it, not by a
+depth counter a subagent's own tool calls could evade."
+  (let* ((parent (sm-harness::make-session-record :title "Parent"))
+         (child (sm-harness::make-session-record
+                 :title "Child"
+                 :parent-session-id (sm-harness::session-record-id parent)))
+         (sm-harness::*current-session-record* child))
+    (let* ((catalog (sm-harness:default-tool-catalog))
+           (tools (sm-harness:tool-server-definition-tools
+                   (first (sm-harness:tool-catalog-servers catalog)))))
+      (is (null (find "run_subagent" tools
+                      :key #'sm-harness:tool-definition-name :test #'string=)))
+      ;; every other tool is still present -- full catalog minus run_subagent.
+      (is (not (null (find "bash" tools
+                          :key #'sm-harness:tool-definition-name :test #'string=)))))))
+
+(test run-subagent-tool-handler-requires-tool-harness-to-be-configured
+  (let ((sm-harness::*tool-harness* nil)
+        (sm-harness::*current-session-record*
+          (sm-harness::make-session-record :title "P")))
+    (destructuring-bind (text is-error)
+        (%call-run-subagent-tool (list (list :prompt "do something")))
+      (is (eq t is-error))
+      (is (search "no harness is wired up" text)))))
+
+(test run-subagent-tool-handler-requires-calling-session-context
+  (let ((sm-harness::*tool-harness* :not-actually-used)
+        (sm-harness::*current-session-record* nil))
+    (destructuring-bind (text is-error)
+        (%call-run-subagent-tool (list (list :prompt "do something")))
+      (is (eq t is-error))
+      (is (search "no calling-session context" text)))))
+
+(test run-subagent-tool-handler-rejects-empty-or-oversized-requests
+  (let ((sm-harness::*tool-harness* :not-actually-used)
+        (sm-harness::*current-session-record*
+          (sm-harness::make-session-record :title "P")))
+    (destructuring-bind (text is-error) (%call-run-subagent-tool '())
+      (is (eq t is-error))
+      (is (search "non-empty" text)))
+    (destructuring-bind (text is-error)
+        (%call-run-subagent-tool
+         (loop repeat (1+ sm-harness::+run-subagent-max-requests+)
+               collect (list :prompt "hi")))
+      (is (eq t is-error))
+      (is (search "at most" text)))))
+
+(test run-subagent-tool-handler-rejects-a-non-string-prompt-without-launching-anything
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config :data-root root)))
+         (parent-snap (sm-harness:start-session h :title "P"))
+         (parent-rec (sm-harness::repository-load-session
+                      (sm-harness::harness-repository h)
+                      (sm-harness:session-snapshot-id parent-snap))))
+    (unwind-protect
+         (let ((sm-harness::*tool-harness* h)
+               (sm-harness::*current-session-record* parent-rec))
+           (destructuring-bind (text is-error)
+               (%call-run-subagent-tool (list (list :prompt "")))
+             (is (eq t is-error))
+             (is (search "prompt" text)))
+           ;; Nothing was launched: still only the parent session on disk.
+           (is (= 1 (length (sm-harness:list-sessions h :include-subagents t)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test run-subagent-tool-handler-end-to-end-parallel-with-parent-linkage
+  "Real HARNESS, real (fixture-transport) sessions: two requests launched in
+parallel both complete, each spawned session's PARENT-SESSION-ID is the
+calling session's own id (captured from *CURRENT-SESSION-RECORD*, never
+from a tool argument), both are excluded from the default LIST-SESSIONS,
+and both are found via the :PARENT-SESSION-ID reverse-edge query."
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :turn-deadline-seconds 5
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-simple-turn-transport))))))
+    (unwind-protect
+         (let* ((parent-snap (sm-harness:start-session h :title "Parent"))
+                (parent-id (sm-harness:session-snapshot-id parent-snap))
+                (parent-rec (sm-harness::repository-load-session
+                             (sm-harness::harness-repository h) parent-id))
+                (sm-harness::*tool-harness* h)
+                (sm-harness::*current-session-record* parent-rec))
+           (destructuring-bind (text is-error)
+               (%call-run-subagent-tool
+                (list (list :prompt "first subagent prompt")
+                      (list :prompt "second subagent prompt" :backend "claude")))
+             (is (null is-error))
+             (is (search "[0]" text))
+             (is (search "[1]" text))
+             (is (search "ok" text))
+             (is (search "hello from fixture" text)))
+           (let ((children (sm-harness:list-sessions h :parent-session-id parent-id)))
+             (is (= 2 (length children)))
+             (dolist (c children)
+               (is (string= parent-id (sm-harness:session-summary-parent-session-id c)))))
+           ;; Default listing (what the home screen/any other caller sees)
+           ;; still shows only the parent.
+           (let ((ids (mapcar #'sm-harness:session-summary-id (sm-harness:list-sessions h))))
+             (is (member parent-id ids :test #'string=))
+             (is (= 1 (length ids)))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test run-subagent-tool-handler-isolates-one-bad-request-from-the-rest
+  "An unknown backend fails START-SESSION for just that request (#106's own
+validation, not duplicated here) -- reported as that request's own failure
+text, never crashing the whole batch or the sibling request's own thread."
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :turn-deadline-seconds 5
+                      :transport-factory
+                      (lambda (options)
+                        (declare (ignore options))
+                        (make-simple-turn-transport))))))
+    (unwind-protect
+         (let* ((parent-snap (sm-harness:start-session h :title "Parent"))
+                (parent-id (sm-harness:session-snapshot-id parent-snap))
+                (parent-rec (sm-harness::repository-load-session
+                             (sm-harness::harness-repository h) parent-id))
+                (sm-harness::*tool-harness* h)
+                (sm-harness::*current-session-record* parent-rec))
+           (destructuring-bind (text is-error)
+               (%call-run-subagent-tool
+                (list (list :prompt "good prompt")
+                      (list :prompt "bad prompt" :backend "no-such-backend")))
+             (is (eq t is-error))
+             (is (search "ok" text))
+             (is (search "FAILED" text))
+             (is (search "unknown backend" text))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

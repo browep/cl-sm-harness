@@ -334,7 +334,17 @@ Its transcript is persisted at ~A."
          ;; Fresh every new connection, never cached across reconnects (#116):
          ;; a RELOAD_HARNESS that added a tool must reach the *next* client
          ;; this builds, including one for a session that already existed.
-         (catalog (funcall (harness-catalog-provider harness)))
+         ;; #142: *CURRENT-SESSION-RECORD* is bound (not an extra argument
+         ;; to HARNESS-CATALOG-PROVIDER -- that would break every existing
+         ;; zero-arg provider, including MAKE-HARNESS's fixed-:CATALOG
+         ;; closure and several tests') so DEFAULT-TOOL-CATALOG can omit
+         ;; RUN_SUBAGENT for a session that is itself a subagent, and so
+         ;; RUN_SUBAGENT's own handler can capture *this* session's id as
+         ;; the trustworthy PARENT-SESSION-ID for whatever it spawns --
+         ;; never a model-supplied argument, which a confused or careless
+         ;; model could get wrong.
+         (catalog (let ((*current-session-record* (session-runtime-record rt)))
+                    (funcall (harness-catalog-provider harness))))
          (policy (harness-policy harness))
          ;; #106: a session created with an explicit :MODEL overrides the
          ;; harness-wide default; a legacy or default-backend session (NIL

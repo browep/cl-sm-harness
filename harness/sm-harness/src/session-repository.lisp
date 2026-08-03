@@ -204,6 +204,10 @@ would sidestep a live owner's record lock entirely."
       (setf (gethash "draft" o) (session-record-draft rec)))
     (when (session-record-model rec)
       (setf (gethash "model" o) (session-record-model rec)))
+    ;; #142: absent entirely for an ordinary top-level session, matching how
+    ;; MODEL is only ever written when non-NIL.
+    (when (session-record-parent-session-id rec)
+      (setf (gethash "parent_session_id" o) (session-record-parent-session-id rec)))
     o))
 
 (defun %json->status (s)
@@ -232,7 +236,10 @@ would sidestep a live owner's record lock entirely."
    ;; to the sole pre-existing backend, MODEL stays NIL exactly as it always
    ;; implicitly was (HARNESS-CONFIG-MODEL/CLI default still applies).
    :backend (or (gethash "backend" obj) *default-backend-id*)
-   :model (gethash "model" obj)))
+   :model (gethash "model" obj)
+   ;; #142: absent on any record predating RUN_SUBAGENT (or any ordinary
+   ;; top-level session) -- NIL, exactly the "not a subagent" default.
+   :parent-session-id (gethash "parent_session_id" obj)))
 
 (defun repository-save-session (repo rec)
   (sb-thread:with-mutex ((session-repository-lock repo))
@@ -259,6 +266,12 @@ would sidestep a live owner's record lock entirely."
         (setf (gethash "canonical_id" summary) (session-record-canonical-id rec)))
       (when (session-record-model rec)
         (setf (gethash "model" summary) (session-record-model rec)))
+      ;; #142: kept in the lightweight index too (not just the full
+      ;; per-session file), same reasoning as #111's CREATED-AT/TURN-COUNT --
+      ;; LIST-SESSIONS's default subagent-exclusion filter (below) needs this
+      ;; without re-reading every transcript from disk.
+      (when (session-record-parent-session-id rec)
+        (setf (gethash "parent_session_id" summary) (session-record-parent-session-id rec)))
       (setf sessions
             (cons summary
                   (remove (session-record-id rec) sessions
@@ -279,11 +292,34 @@ would sidestep a live owner's record lock entirely."
                :message (format nil "session not found: ~A" session-id)))
       (%json->record obj))))
 
-(defun repository-list-sessions (repo)
+(defun repository-list-sessions (repo &key include-subagents parent-session-id)
+  "By default, omits any index entry with a non-NIL PARENT_SESSION_ID
+(#142) -- a session RUN_SUBAGENT spawned is reachable through its parent's
+transcript, never as a top-level entry a caller browses to directly. This
+filter lives here, at the repository layer, rather than in the web UI or
+any other single caller, so every present and future caller of
+LIST-SESSIONS gets the same behavior without having to remember to hide
+subagents itself.
+
+INCLUDE-SUBAGENTS non-NIL disables that filter entirely. PARENT-SESSION-ID,
+if supplied, instead returns only entries whose parent-session-id matches
+it exactly (a specific session's children -- the reverse edge of
+'this session's own parent-session-id field') regardless of
+INCLUDE-SUBAGENTS; the two keywords are mutually exclusive in intent, but
+PARENT-SESSION-ID simply wins if both are somehow supplied, since it is
+the more specific request."
   (sb-thread:with-mutex ((session-repository-lock repo))
     (let* ((index (or (%json-decode-file (%repo-index-path repo))
                       (make-hash-table :test #'equal)))
            (sessions (or (gethash "sessions" index) '())))
+      (when (and sessions (not parent-session-id) (not include-subagents))
+        (setf sessions
+              (remove-if (lambda (s) (gethash "parent_session_id" s)) sessions)))
+      (when parent-session-id
+        (setf sessions
+              (remove-if-not
+               (lambda (s) (equal parent-session-id (gethash "parent_session_id" s)))
+               sessions)))
       (mapcar (lambda (s)
                 (make-session-summary
                  :id (gethash "id" s)
@@ -299,5 +335,6 @@ would sidestep a live owner's record lock entirely."
                  ;; TURN-COUNT to 0, matching the pre-#111 world where no
                  ;; turn had ever been counted at all.
                  :created-at (or (gethash "created_at" s) "")
-                 :turn-count (or (gethash "turn_count" s) 0)))
+                 :turn-count (or (gethash "turn_count" s) 0)
+                 :parent-session-id (gethash "parent_session_id" s)))
               sessions))))
