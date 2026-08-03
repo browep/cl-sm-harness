@@ -712,13 +712,20 @@ persisted."
                (claude-agent-sdk-cl:sdk-tool-annotations sdk-tool)))))
 
 ;;;; #142: RUN_SUBAGENT -- parallel subagent sessions with backend/model
-;;;; choice and authoritative parent-session linkage via
-;;;; *CURRENT-SESSION-RECORD*, never a model-supplied argument.
+;;;; choice and authoritative parent-session linkage via CONTEXT's
+;;;; :CALLING-SESSION-ID (captured by %SDK-TOOL-FROM-DEFINITION from
+;;;; *CURRENT-SESSION-RECORD* at catalog-construction time, never read
+;;;; directly by the handler -- see %RUN-SUBAGENT-TOOL-HANDLER's docstring
+;;;; for why: every MCP tool call runs on a freshly spawned thread that was
+;;;; never inside the dynamic extent where *CURRENT-SESSION-RECORD* was
+;;;; bound, so CALLING-SESSION-ID has to travel as a genuine argument).
 
-(defun %call-run-subagent-tool (requests)
+(defun %call-run-subagent-tool (requests &key calling-session-id)
   "REQUESTS is a list of plists (:prompt :backend :model); NIL entries for
 :backend/:model are simply omitted from that request's JSON object,
-matching how an optional field looks over the wire."
+matching how an optional field looks over the wire. CALLING-SESSION-ID
+models what %SDK-TOOL-FROM-DEFINITION would have put in CONTEXT for a real
+tool call."
   (let ((arguments (make-hash-table :test #'equal))
         (items '()))
     (dolist (r requests)
@@ -729,7 +736,8 @@ matching how an optional field looks over the wire."
         (push item items)))
     (setf (gethash "requests" arguments) (nreverse items))
     (multiple-value-bind (text is-error)
-        (sm-harness::%run-subagent-tool-handler arguments nil)
+        (sm-harness::%run-subagent-tool-handler
+         arguments (list :calling-session-id calling-session-id))
       (list text is-error))))
 
 (test run-subagent-tool-is-registered-in-the-default-catalog-for-a-top-level-session
@@ -761,33 +769,35 @@ depth counter a subagent's own tool calls could evade."
                           :key #'sm-harness:tool-definition-name :test #'string=)))))))
 
 (test run-subagent-tool-handler-requires-tool-harness-to-be-configured
-  (let ((sm-harness::*tool-harness* nil)
-        (sm-harness::*current-session-record*
-          (sm-harness::make-session-record :title "P")))
+  (let ((sm-harness::*tool-harness* nil))
     (destructuring-bind (text is-error)
-        (%call-run-subagent-tool (list (list :prompt "do something")))
+        (%call-run-subagent-tool (list (list :prompt "do something"))
+                                 :calling-session-id "sess-parent-1")
       (is (eq t is-error))
       (is (search "no harness is wired up" text)))))
 
 (test run-subagent-tool-handler-requires-calling-session-context
-  (let ((sm-harness::*tool-harness* :not-actually-used)
-        (sm-harness::*current-session-record* nil))
+  "CALLING-SESSION-ID absent from CONTEXT (as it would be if
+*CURRENT-SESSION-RECORD* were unbound when %SDK-TOOL-FROM-DEFINITION built
+this connection's tools, e.g. headless sm-harness with nothing wired up)
+is reported as a safe error, never crashes trying to use a NIL id."
+  (let ((sm-harness::*tool-harness* :not-actually-used))
     (destructuring-bind (text is-error)
         (%call-run-subagent-tool (list (list :prompt "do something")))
       (is (eq t is-error))
       (is (search "no calling-session context" text)))))
 
 (test run-subagent-tool-handler-rejects-empty-or-oversized-requests
-  (let ((sm-harness::*tool-harness* :not-actually-used)
-        (sm-harness::*current-session-record*
-          (sm-harness::make-session-record :title "P")))
-    (destructuring-bind (text is-error) (%call-run-subagent-tool '())
+  (let ((sm-harness::*tool-harness* :not-actually-used))
+    (destructuring-bind (text is-error)
+        (%call-run-subagent-tool '() :calling-session-id "sess-parent-1")
       (is (eq t is-error))
       (is (search "non-empty" text)))
     (destructuring-bind (text is-error)
         (%call-run-subagent-tool
          (loop repeat (1+ sm-harness::+run-subagent-max-requests+)
-               collect (list :prompt "hi")))
+               collect (list :prompt "hi"))
+         :calling-session-id "sess-parent-1")
       (is (eq t is-error))
       (is (search "at most" text)))))
 
@@ -796,14 +806,12 @@ depth counter a subagent's own tool calls could evade."
          (h (sm-harness:make-harness
              :config (sm-harness:make-harness-config :data-root root)))
          (parent-snap (sm-harness:start-session h :title "P"))
-         (parent-rec (sm-harness::repository-load-session
-                      (sm-harness::harness-repository h)
-                      (sm-harness:session-snapshot-id parent-snap))))
+         (parent-id (sm-harness:session-snapshot-id parent-snap)))
     (unwind-protect
-         (let ((sm-harness::*tool-harness* h)
-               (sm-harness::*current-session-record* parent-rec))
+         (let ((sm-harness::*tool-harness* h))
            (destructuring-bind (text is-error)
-               (%call-run-subagent-tool (list (list :prompt "")))
+               (%call-run-subagent-tool (list (list :prompt ""))
+                                        :calling-session-id parent-id)
              (is (eq t is-error))
              (is (search "prompt" text)))
            ;; Nothing was launched: still only the parent session on disk.
@@ -814,7 +822,7 @@ depth counter a subagent's own tool calls could evade."
 (test run-subagent-tool-handler-end-to-end-parallel-with-parent-linkage
   "Real HARNESS, real (fixture-transport) sessions: two requests launched in
 parallel both complete, each spawned session's PARENT-SESSION-ID is the
-calling session's own id (captured from *CURRENT-SESSION-RECORD*, never
+calling session's own id (arriving via CONTEXT's :CALLING-SESSION-ID, never
 from a tool argument), both are excluded from the default LIST-SESSIONS,
 and both are found via the :PARENT-SESSION-ID reverse-edge query."
   (let* ((root (temp-data-root))
@@ -829,14 +837,12 @@ and both are found via the :PARENT-SESSION-ID reverse-edge query."
     (unwind-protect
          (let* ((parent-snap (sm-harness:start-session h :title "Parent"))
                 (parent-id (sm-harness:session-snapshot-id parent-snap))
-                (parent-rec (sm-harness::repository-load-session
-                             (sm-harness::harness-repository h) parent-id))
-                (sm-harness::*tool-harness* h)
-                (sm-harness::*current-session-record* parent-rec))
+                (sm-harness::*tool-harness* h))
            (destructuring-bind (text is-error)
                (%call-run-subagent-tool
                 (list (list :prompt "first subagent prompt")
-                      (list :prompt "second subagent prompt" :backend "claude")))
+                      (list :prompt "second subagent prompt" :backend "claude"))
+                :calling-session-id parent-id)
              (is (null is-error))
              (is (search "[0]" text))
              (is (search "[1]" text))
@@ -870,17 +876,70 @@ text, never crashing the whole batch or the sibling request's own thread."
     (unwind-protect
          (let* ((parent-snap (sm-harness:start-session h :title "Parent"))
                 (parent-id (sm-harness:session-snapshot-id parent-snap))
-                (parent-rec (sm-harness::repository-load-session
-                             (sm-harness::harness-repository h) parent-id))
-                (sm-harness::*tool-harness* h)
-                (sm-harness::*current-session-record* parent-rec))
+                (sm-harness::*tool-harness* h))
            (destructuring-bind (text is-error)
                (%call-run-subagent-tool
                 (list (list :prompt "good prompt")
-                      (list :prompt "bad prompt" :backend "no-such-backend")))
+                      (list :prompt "bad prompt" :backend "no-such-backend"))
+                :calling-session-id parent-id)
              (is (eq t is-error))
              (is (search "ok" text))
              (is (search "FAILED" text))
              (is (search "unknown backend" text))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test run-subagent-tool-handler-reaches-a-real-caller-id-through-a-spawned-mcp-tool-thread
+  "The real bug this guards against: RUN_SUBAGENT's caller id must survive
+being read on a *different thread* than the one that built the catalog --
+exactly what CLAUDE-AGENT-SDK-CL's %CLIENT-SPAWN-TOOL-THREAD does for every
+real MCP tool call, and exactly what a naive *CURRENT-SESSION-RECORD*-only
+design (the first, broken #142 implementation) got wrong: a special bound
+via LET in %ENSURE-CLIENT is invisible to a freshly spawned SB-THREAD. This
+drives the exact same path a real tool call does: %SDK-TOOL-FROM-DEFINITION
+captures the id while *CURRENT-SESSION-RECORD* is genuinely bound, then a
+brand-new thread (standing in for %CLIENT-SPAWN-TOOL-THREAD) invokes the
+resulting handler with only CONTEXT to go on."
+  (let* ((root (temp-data-root))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config :data-root root)))
+         (parent-snap (sm-harness:start-session h :title "Parent"))
+         (parent-id (sm-harness:session-snapshot-id parent-snap))
+         (parent-rec (sm-harness::repository-load-session
+                      (sm-harness::harness-repository h) parent-id)))
+    ;; *TOOL-HARNESS* set via SETF, not LET, deliberately: that is how
+    ;; production actually sets it (sm-harness-web-ui's START-WEB-UI, once,
+    ;; at startup) -- a genuine global value change any thread sees, unlike
+    ;; a LET binding's dynamic extent, which a freshly spawned thread never
+    ;; inherits either (the same class of bug this whole test exists to
+    ;; catch, so the harness here has to avoid it too).
+    (setf sm-harness::*tool-harness* h)
+    (unwind-protect
+         (let* ((sdk-tool
+                  (let ((sm-harness::*current-session-record* parent-rec))
+                    (sm-harness::%sdk-tool-from-definition
+                     (sm-harness::make-run-subagent-tool-definition))))
+                (arguments (make-hash-table :test #'equal))
+                (item (make-hash-table :test #'equal)))
+           (setf (gethash "prompt" item) "")
+           (setf (gethash "requests" arguments) (list item))
+           ;; *CURRENT-SESSION-RECORD* is unbound again out here -- the
+           ;; whole point. A different thread (standing in for
+           ;; %CLIENT-SPAWN-TOOL-THREAD) invokes the handler with no access
+           ;; to it at all, only whatever SDK-TOOL's own handler closure
+           ;; already captured.
+           (let ((sdk-result
+                   (sb-thread:join-thread
+                    (sb-thread:make-thread
+                     (lambda ()
+                       (funcall (claude-agent-sdk-cl:sdk-tool-handler sdk-tool)
+                                arguments nil))))))
+             (is (claude-agent-sdk-cl:sdk-tool-result-is-error sdk-result))
+             ;; An empty prompt is rejected *after* the calling-session-id
+             ;; check succeeds -- if CALLING-SESSION-ID had failed to reach
+             ;; the handler, this would instead be "no calling-session
+             ;; context", not "prompt".
+             (is (search "prompt" (claude-agent-sdk-cl:sdk-tool-result-text sdk-result)))))
+      (setf sm-harness::*tool-harness* nil)
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

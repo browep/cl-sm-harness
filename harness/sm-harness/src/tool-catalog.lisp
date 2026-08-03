@@ -888,21 +888,35 @@ itself depend on :SM-HARNESS-WEB-UI, so the wiring happens in the other
 direction, at application startup, not via an import here.")
 
 (defvar *current-session-record* nil
-  "The SESSION-RECORD (model.lisp) of the session a tool call is currently
-running inside -- NIL unless a caller is actually inside a live turn.
-%ENSURE-CLIENT (runtime.lisp) binds this dynamically around every call to
-HARNESS-CATALOG-PROVIDER, precisely so this stays authoritative rather than
-something a tool argument could misreport: unlike SET-SESSION-TITLE's
-SESSION-ID (a plain, model-supplied argument, fine for a rename a human can
-always correct), RUN_SUBAGENT (#142) needs the *actual* calling session's
-id to stamp as a spawned child's PARENT-SESSION-ID, and a confused or
-careless model asked to supply its own id is exactly the failure mode that
-would corrupt that audit trail. DEFAULT-TOOL-CATALOG reads this twice: to
-omit RUN_SUBAGENT's own tool definition when this session is itself a
-subagent (#142's \"no recursive spawning\" decision), and to capture this
-session's id into RUN_SUBAGENT's handler closure. NIL by default so this
-file keeps loading and running standalone with no runtime wired up, same
-reasoning as *TOOL-HARNESS*.")
+  "The SESSION-RECORD (model.lisp) of the session whose client connection
+is currently being (re)built -- NIL unless %ENSURE-CLIENT (runtime.lisp)
+has it bound, which it does for the whole LET* that constructs that
+connection's catalog and SDK options, precisely so this stays
+authoritative rather than something a tool argument could misreport:
+unlike SET-SESSION-TITLE's SESSION-ID (a plain, model-supplied argument,
+fine for a rename a human can always correct), RUN_SUBAGENT (#142) needs
+the *actual* calling session's id to stamp as a spawned child's
+PARENT-SESSION-ID, and a confused or careless model asked to supply its
+own id is exactly the failure mode that would corrupt that audit trail.
+
+Only ever safe to read *synchronously*, during catalog/SDK-option
+construction -- never from inside a running tool handler. Every MCP tool
+call actually executes on a freshly spawned thread
+(CLAUDE-AGENT-SDK-CL's %CLIENT-SPAWN-TOOL-THREAD) that was never inside
+%ENSURE-CLIENT's dynamic extent, so a handler that reads this special
+directly always sees NIL, no matter how correctly it was bound upstream --
+a real bug this exact comment used to invite before #142 was first tested
+live. DEFAULT-TOOL-CATALOG reads this once, synchronously, to omit
+RUN_SUBAGENT's own tool definition when this session is itself a subagent
+(#142's \"no recursive spawning\" decision) -- that use is fine as-is,
+since it runs at catalog-construction time. %SDK-TOOL-FROM-DEFINITION
+(sdk-adapter.lisp) also reads this once, synchronously, at the same time,
+to capture the calling session's id into the per-connection SDK wrapper
+closure it builds -- which then passes it down to the handler via
+CONTEXT's :CALLING-SESSION-ID, a genuine argument that survives the
+thread hop this special cannot. NIL by default so this file keeps loading
+and running standalone with no runtime wired up, same reasoning as
+*TOOL-HARNESS*.")
 
 (defun %set-session-title-schema ()
   (let ((schema (%json-object "type" "object"))
@@ -1156,14 +1170,23 @@ rather than just stopping."
           (terpri out))))))
 
 (defun %run-subagent-tool-handler (arguments context)
-  (declare (ignore context))
-  (cond
-    ((null *tool-harness*)
-     (values "run_subagent is unavailable: no harness is wired up for tool calls in this process" t))
-    ((null *current-session-record*)
-     (values "run_subagent is unavailable: no calling-session context for this tool invocation" t))
-    (t
-     (let ((requests (gethash "requests" arguments)))
+  "CONTEXT's :CALLING-SESSION-ID (not *CURRENT-SESSION-RECORD*) is this
+handler's only trustworthy source for \"which session is calling\":
+%SDK-TOOL-FROM-DEFINITION (sdk-adapter.lisp) captures that id from
+*CURRENT-SESSION-RECORD* once, synchronously, at catalog-construction time,
+then passes it down as a genuine argument -- because every MCP tool call
+actually runs on a freshly spawned thread (CLAUDE-AGENT-SDK-CL's
+%CLIENT-SPAWN-TOOL-THREAD), never inside %ENSURE-CLIENT's dynamic extent,
+so reading the special directly here always sees NIL no matter how
+correctly it was bound upstream."
+  (let ((calling-session-id (getf context :calling-session-id)))
+    (cond
+      ((null *tool-harness*)
+       (values "run_subagent is unavailable: no harness is wired up for tool calls in this process" t))
+      ((null calling-session-id)
+       (values "run_subagent is unavailable: no calling-session context for this tool invocation" t))
+      (t
+       (let ((requests (gethash "requests" arguments)))
        (cond
          ((not (and (listp requests) requests))
           (values "run_subagent requires a non-empty \"requests\" array" t))
@@ -1182,7 +1205,7 @@ rather than just stopping."
             (if parse-error
                 (values parse-error t)
                 (let* ((harness *tool-harness*)
-                       (parent-id (session-record-id *current-session-record*))
+                       (parent-id calling-session-id)
                        (specs (nreverse specs))
                        (threads
                          (loop for spec in specs
@@ -1201,7 +1224,7 @@ rather than just stopping."
                                          :name (format nil "sm-subagent-~A-~D" parent-id idx))))))
                   (let ((results (mapcar #'sb-thread:join-thread threads)))
                     (values (%format-subagent-results results (length specs))
-                            (some (lambda (r) (not (getf r :ok))) results))))))))))))
+                            (some (lambda (r) (not (getf r :ok))) results)))))))))))))
 
 (defun make-run-subagent-tool-definition ()
   "Spawns one or more subordinate agent sessions (#142), runs each to a
@@ -1210,9 +1233,12 @@ result. REQUESTS is a non-empty array (at most +RUN-SUBAGENT-MAX-REQUESTS+
 per call) of {prompt (required), backend, model} -- BACKEND/MODEL validated
 the same way START-SESSION already validates them (#106), defaulting the
 same way when omitted. Each spawned session's PARENT-SESSION-ID is this
-calling session's own id, captured authoritatively from
-*CURRENT-SESSION-RECORD* rather than trusted from a model-supplied
-argument -- see *CURRENT-SESSION-RECORD*'s docstring. A subagent gets the
+calling session's own id, reaching the handler via CONTEXT's
+:CALLING-SESSION-ID -- captured authoritatively from
+*CURRENT-SESSION-RECORD* by %SDK-TOOL-FROM-DEFINITION at catalog-
+construction time (sdk-adapter.lisp), never trusted from a model-supplied
+argument -- see *CURRENT-SESSION-RECORD*'s docstring for why a tool
+argument or a directly-read special both fail here. A subagent gets the
 full default catalog *except* RUN_SUBAGENT itself (DEFAULT-TOOL-CATALOG
 omits it whenever *CURRENT-SESSION-RECORD* already has a non-NIL
 PARENT-SESSION-ID), so recursive spawning is impossible by construction,
