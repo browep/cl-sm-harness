@@ -189,3 +189,47 @@ carried in the lightweight index summary, not just the per-session file."
              (is (string= "" (sm-harness:session-summary-created-at summary)))))
       (sm-harness::close-session-repository repo)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+(test repository-roundtrip-persists-parent-session-id-and-filters-subagents
+  "#142: PARENT-SESSION-ID round-trips through both the per-session file and
+the lightweight index the way BACKEND/MODEL (#106) already do, and
+REPOSITORY-LIST-SESSIONS omits any subagent (non-NIL PARENT-SESSION-ID) by
+default -- the filter lives at this layer, not in any one caller -- while
+INCLUDE-SUBAGENTS and a PARENT-SESSION-ID query both still reach it."
+  (let* ((root (temp-data-root))
+         (repo (sm-harness::open-session-repository :root root :project-key "p1"))
+         (parent (sm-harness::make-session-record :title "Parent"))
+         (child (sm-harness::make-session-record
+                 :title "Child"
+                 :parent-session-id (sm-harness::session-record-id parent))))
+    (unwind-protect
+         (progn
+           (sm-harness::repository-save-session repo parent)
+           (sm-harness::repository-save-session repo child)
+           (let ((loaded (sm-harness::repository-load-session
+                          repo (sm-harness::session-record-id child))))
+             (is (string= (sm-harness::session-record-id parent)
+                         (sm-harness::session-record-parent-session-id loaded))))
+           ;; Default LIST-SESSIONS: parent shows up, child does not.
+           (let ((ids (mapcar #'sm-harness:session-summary-id
+                              (sm-harness::repository-list-sessions repo))))
+             (is (member (sm-harness::session-record-id parent) ids :test #'string=))
+             (is (not (member (sm-harness::session-record-id child) ids :test #'string=))))
+           ;; :INCLUDE-SUBAGENTS T brings it back, with the field populated.
+           (let ((summary (find (sm-harness::session-record-id child)
+                                (sm-harness::repository-list-sessions repo :include-subagents t)
+                                :key #'sm-harness:session-summary-id :test #'string=)))
+             (is (not (null summary)))
+             (is (string= (sm-harness::session-record-id parent)
+                         (sm-harness:session-summary-parent-session-id summary))))
+           ;; :PARENT-SESSION-ID queries the reverse edge directly.
+           (let ((ids (mapcar #'sm-harness:session-summary-id
+                              (sm-harness::repository-list-sessions
+                               repo :parent-session-id (sm-harness::session-record-id parent)))))
+             (is (equal (list (sm-harness::session-record-id child)) ids)))
+           ;; An ordinary top-level session has no parent-session-id at all.
+           (let ((summary (find (sm-harness::session-record-id parent)
+                                (sm-harness::repository-list-sessions repo)
+                                :key #'sm-harness:session-summary-id :test #'string=)))
+             (is (null (sm-harness:session-summary-parent-session-id summary)))))
+      (sm-harness::close-session-repository repo)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))

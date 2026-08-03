@@ -330,7 +330,31 @@ Its transcript is persisted at ~A."
       (setf (session-runtime-client rt) nil)))
   (when (session-runtime-client rt)
     (return-from %ensure-client (session-runtime-client rt)))
-  (let* ((cfg (harness-config harness))
+  ;; #142: *CURRENT-SESSION-RECORD* (special, tool-catalog.lisp) is bound
+  ;; for this ENTIRE LET*, not just the CATALOG line below -- it must still
+  ;; be bound when BUILD-AGENT-OPTIONS runs, because that call is what
+  ;; actually converts each TOOL-DEFINITION into an SDK-level tool
+  ;; (%SDK-TOOL-FROM-DEFINITION, sdk-adapter.lisp), and RUN_SUBAGENT's
+  ;; caller-id capture happens *there*, not in DEFAULT-TOOL-CATALOG itself.
+  ;; A binding that only covered the CATALOG line would still correctly
+  ;; gate whether RUN_SUBAGENT appears in the catalog at all (that decision
+  ;; is made while building the TOOL-CATALOG value), but would already be
+  ;; unbound again by the time %SDK-TOOL-FROM-DEFINITION ran -- which is
+  ;; exactly the bug this comment replaced: RUN_SUBAGENT's handler read a
+  ;; dynamic variable that only stays bound for one thread's *dynamic
+  ;; extent*, and every MCP tool call actually runs on a freshly spawned
+  ;; thread (CLAUDE-AGENT-SDK-CL's %CLIENT-SPAWN-TOOL-THREAD) that was
+  ;; never inside this LET*'s extent at all, so the handler always saw NIL.
+  ;; The real, thread-safe fix: %SDK-TOOL-FROM-DEFINITION reads
+  ;; *CURRENT-SESSION-RECORD* once, synchronously, right here while it is
+  ;; still genuinely in scope, and bakes the resulting id into the
+  ;; per-connection SDK wrapper closure it returns (already an accepted
+  ;; pattern for that specific closure -- it captures TOOL-DEFINITION
+  ;; itself the same way, and is rebuilt fresh every reconnect regardless,
+  ;; per #116) -- then passes it down to the handler via CONTEXT, a genuine
+  ;; argument that survives the thread hop, rather than an ambient special.
+  (let* ((*current-session-record* (session-runtime-record rt))
+         (cfg (harness-config harness))
          ;; Fresh every new connection, never cached across reconnects (#116):
          ;; a RELOAD_HARNESS that added a tool must reach the *next* client
          ;; this builds, including one for a session that already existed.

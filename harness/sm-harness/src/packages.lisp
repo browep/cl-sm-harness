@@ -14,6 +14,7 @@
    #:session-snapshot-status #:session-snapshot-canonical-id
    #:session-snapshot-transcript #:session-snapshot-cursor
    #:session-snapshot-backend #:session-snapshot-model
+   #:session-snapshot-parent-session-id
    #:session-summary #:make-session-summary #:session-summary-id #:session-summary-title
    #:session-summary-updated-at #:session-summary-status
    #:session-summary-canonical-id
@@ -21,6 +22,8 @@
    ;; #111: home-screen chip metadata -- when the session started and how
    ;; many user-initiated turns it has had.
    #:session-summary-created-at #:session-summary-turn-count
+   ;; #142: RUN_SUBAGENT parent-session linkage.
+   #:session-summary-parent-session-id
    #:transcript-entry #:transcript-entry-role #:transcript-entry-text
    #:transcript-entry-kind #:transcript-entry-meta #:transcript-entry-created-at
    #:default-tool-catalog #:default-tool-policy #:*reload-harness-system*

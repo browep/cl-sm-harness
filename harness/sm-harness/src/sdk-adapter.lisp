@@ -3,27 +3,43 @@
 ;;;; Sole production boundary that calls claude-agent-sdk-cl exports.
 
 (defun %sdk-tool-from-definition (definition)
-  (claude-agent-sdk-cl:make-sdk-tool
-   :name (tool-definition-name definition)
-   :description (tool-definition-description definition)
-   :input-schema (tool-definition-input-schema definition)
-   ;; #123: pass this catalog's own MCP ToolAnnotations plist straight
-   ;; through -- claude-agent-sdk-cl:make-sdk-tool validates and serves it
-   ;; on the tools/list wire, and its own client uses :read-only-p to decide
-   ;; whether a call needs its belt-and-suspenders TOOL-EXECUTION-LOCK.
-   :annotations (tool-definition-annotations definition)
-   :handler (lambda (arguments context)
-              ;; A handler returning a single value (the existing echo_text
-              ;; contract) gets IS-ERROR nil for free: an unrequested extra
-              ;; value from MULTIPLE-VALUE-BIND is nil. A handler that wants
-              ;; to report a domain-level failure (not a Lisp condition, so
-              ;; not the existing raise-to-JSON-RPC-error path) returns
-              ;; (VALUES text t).
-              (multiple-value-bind (result is-error)
-                  (funcall (tool-definition-handler definition) arguments context)
-                (claude-agent-sdk-cl:make-sdk-tool-result
-                 :text (princ-to-string result)
-                 :is-error (and is-error t))))))
+  ;; #142: *CURRENT-SESSION-RECORD* (tool-catalog.lisp) is read here, once,
+  ;; synchronously, while %ENSURE-CLIENT's LET* still has it genuinely
+  ;; bound -- captured into CALLING-SESSION-ID and baked into the wrapper
+  ;; closure below, which is safe precisely because that wrapper (unlike
+  ;; TOOL-DEFINITION-HANDLER, always a late-bound symbol so RELOAD_HARNESS
+  ;; reaches it) is already rebuilt fresh every connection and already
+  ;; captures DEFINITION itself the same way. Passed to the handler via
+  ;; CONTEXT -- a genuine argument -- rather than left as an ambient
+  ;; special, because every MCP tool call actually runs on a freshly
+  ;; spawned thread (CLAUDE-AGENT-SDK-CL's %CLIENT-SPAWN-TOOL-THREAD) that
+  ;; was never inside %ENSURE-CLIENT's dynamic extent, so a handler reading
+  ;; *CURRENT-SESSION-RECORD* directly always saw NIL there.
+  (let ((calling-session-id
+          (and *current-session-record*
+               (session-record-id *current-session-record*))))
+    (claude-agent-sdk-cl:make-sdk-tool
+     :name (tool-definition-name definition)
+     :description (tool-definition-description definition)
+     :input-schema (tool-definition-input-schema definition)
+     ;; #123: pass this catalog's own MCP ToolAnnotations plist straight
+     ;; through -- claude-agent-sdk-cl:make-sdk-tool validates and serves it
+     ;; on the tools/list wire, and its own client uses :read-only-p to decide
+     ;; whether a call needs its belt-and-suspenders TOOL-EXECUTION-LOCK.
+     :annotations (tool-definition-annotations definition)
+     :handler (lambda (arguments context)
+                ;; A handler returning a single value (the existing echo_text
+                ;; contract) gets IS-ERROR nil for free: an unrequested extra
+                ;; value from MULTIPLE-VALUE-BIND is nil. A handler that wants
+                ;; to report a domain-level failure (not a Lisp condition, so
+                ;; not the existing raise-to-JSON-RPC-error path) returns
+                ;; (VALUES text t).
+                (multiple-value-bind (result is-error)
+                    (funcall (tool-definition-handler definition) arguments
+                             (list* :calling-session-id calling-session-id context))
+                  (claude-agent-sdk-cl:make-sdk-tool-result
+                   :text (princ-to-string result)
+                   :is-error (and is-error t)))))))
 
 (defun %sdk-server-from-definition (server)
   (claude-agent-sdk-cl:make-sdk-mcp-server

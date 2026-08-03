@@ -98,14 +98,23 @@ reviewed edit, not runtime discovery -- each model id is passed verbatim as
   ;; MODEL from its new-session dropdown instead of relying on that
   ;; fallback, so its info panel always has something concrete to show.
   (backend "claude" :type string)
-  model)
+  model
+  ;; #142: set only for a session spawned by the RUN_SUBAGENT tool -- the
+  ;; spawning session's own id, persisted here (and mirrored onto
+  ;; SESSION-SUMMARY/the repository index, never just held in memory) so
+  ;; "what spawned session X" is a field read, not a transcript grep across
+  ;; every session for a RUN_SUBAGENT call that happens to mention X's id.
+  ;; NIL for every ordinary, top-level session -- the overwhelmingly common
+  ;; case -- and for every session created before #142 existed.
+  parent-session-id)
 
-(defun make-session-record (&key id title backend model)
+(defun make-session-record (&key id title backend model parent-session-id)
   (%make-session-record
    :id (or id (%new-id "sess"))
    :title (or title "New session")
    :backend (or backend *default-backend-id*)
-   :model model))
+   :model model
+   :parent-session-id parent-session-id))
 
 (defun %session-turn-count (transcript)
   "Number of user-initiated turns recorded in TRANSCRIPT (#111): one entry
@@ -117,10 +126,16 @@ carry role \"user\", so they never inflate this count."
   (count "user" transcript :key #'transcript-entry-role :test #'string=))
 
 (defstruct (session-summary (:constructor make-session-summary))
-  id title updated-at status canonical-id backend model created-at turn-count)
+  id title updated-at status canonical-id backend model created-at turn-count
+  ;; #142: NIL for an ordinary top-level session; the spawning session's id
+  ;; for one created by RUN_SUBAGENT. Carried on the summary (not just the
+  ;; full record) so LIST-SESSIONS/the home-screen chips can filter or
+  ;; display it without loading a session's whole transcript, mirroring how
+  ;; BACKEND/MODEL (#106) and CREATED-AT/TURN-COUNT (#111) already do.
+  parent-session-id)
 
 (defstruct (session-snapshot (:constructor make-session-snapshot))
-  id title status canonical-id transcript cursor backend model)
+  id title status canonical-id transcript cursor backend model parent-session-id)
 
 (defun session-record->summary (rec)
   (make-session-summary
@@ -132,7 +147,8 @@ carry role \"user\", so they never inflate this count."
    :backend (session-record-backend rec)
    :model (session-record-model rec)
    :created-at (session-record-created-at rec)
-   :turn-count (%session-turn-count (session-record-transcript rec))))
+   :turn-count (%session-turn-count (session-record-transcript rec))
+   :parent-session-id (session-record-parent-session-id rec)))
 
 (defun session-record->snapshot (rec)
   (make-session-snapshot
@@ -143,4 +159,5 @@ carry role \"user\", so they never inflate this count."
    :transcript (copy-list (session-record-transcript rec))
    :cursor (session-record-sequence rec)
    :backend (session-record-backend rec)
-   :model (session-record-model rec)))
+   :model (session-record-model rec)
+   :parent-session-id (session-record-parent-session-id rec)))

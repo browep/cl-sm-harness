@@ -114,7 +114,13 @@ useless if the provider they reconnect through is itself a frozen snapshot."
     (close-session-repository (harness-repository harness))
     harness))
 
-(defun start-session (harness &key title backend model)
+(defun start-session (harness &key title backend model parent-session-id)
+  "PARENT-SESSION-ID (#142) is set only by the RUN_SUBAGENT tool handler,
+to the spawning session's own id -- an ordinary caller never passes it.
+Accepted as any non-empty string with no catalog to validate against
+(unlike BACKEND/MODEL): it is pure metadata recording where this session
+came from, and a later-deleted parent must not retroactively break the
+child it already spawned."
   (when (harness-closed-p harness)
     (error 'harness-state-error :message "harness is closed"))
   (let ((backend (or backend *default-backend-id*)))
@@ -124,14 +130,20 @@ useless if the provider they reconnect through is itself a frozen snapshot."
     (when (and model (not (valid-model-id-p backend model)))
       (error 'harness-input-error
              :message (format nil "unknown model ~A for backend ~A" model backend)))
-    (let ((rec (make-session-record :title title :backend backend :model model)))
+    (let ((rec (make-session-record :title title :backend backend :model model
+                                    :parent-session-id parent-session-id)))
       (repository-save-session (harness-repository harness) rec)
       (sb-thread:with-mutex ((harness-lock harness))
         (%open-runtime harness rec))
       (session-record->snapshot rec))))
 
-(defun list-sessions (harness)
-  (repository-list-sessions (harness-repository harness)))
+(defun list-sessions (harness &key include-subagents parent-session-id)
+  "INCLUDE-SUBAGENTS/PARENT-SESSION-ID: see REPOSITORY-LIST-SESSIONS (#142)
+-- by default this omits every session RUN_SUBAGENT spawned, exactly like
+REPOSITORY-LIST-SESSIONS does, since this is a thin pass-through."
+  (repository-list-sessions (harness-repository harness)
+                            :include-subagents include-subagents
+                            :parent-session-id parent-session-id))
 
 (defun open-session (harness session-id)
   (when (harness-closed-p harness)
