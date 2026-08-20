@@ -1,3 +1,5 @@
+![sm-harness](harness/docs/assets/banner.svg)
+
 # sm-harness
 
 A self-improving agent harness for Claude Code, written in Common Lisp.
