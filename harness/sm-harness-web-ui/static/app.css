@@ -250,9 +250,21 @@ body {
 .file-browser-backdrop.open { opacity: 1; pointer-events: auto; }
 .file-browser-panel {
   position: fixed;
+  /* top+bottom, not height: 100vh -- 100vh is sized against the *largest*
+     possible viewport on browsers with dynamic chrome (mobile Safari/
+     Chrome's address bar that shows/hides on scroll), so a fixed panel
+     sized that way can render taller than the actually-visible viewport,
+     leaving a gap at the bottom through which whatever page content sits
+     behind this panel shows through -- found via a real screenshot on a
+     narrow/short viewport, where the tail of the directory tree visibly
+     bled into the chat transcript underneath. top+bottom pins both edges
+     to the real visual viewport directly, the same technique this
+     panel's own .file-browser-backdrop sibling already uses via `inset:
+     0` a few lines above -- no vh unit, no dvh browser-support tradeoff
+     either. */
   top: 0;
+  bottom: 0;
   left: 0;
-  height: 100vh;
   width: min(360px, 85vw);
   background: #121821;
   border-right: 1px solid #2a3441;
