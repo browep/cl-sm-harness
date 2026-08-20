@@ -20,6 +20,21 @@
         (sm-harness::%read-file-tool-handler arguments nil)
       (list text is-error))))
 
+(defun %write-binary-file (path bytes)
+  (ensure-directories-exist path)
+  (with-open-file (out path :direction :output :if-exists :supersede
+                       :if-does-not-exist :create
+                       :element-type '(unsigned-byte 8))
+    (write-sequence bytes out))
+  path)
+
+(defun %call-view-image-tool (&key path)
+  (let ((arguments (make-hash-table :test #'equal)))
+    (setf (gethash "path" arguments) path)
+    (multiple-value-bind (text is-error content)
+        (sm-harness::%view-image-tool-handler arguments nil)
+      (list text is-error content))))
+
 (defun %call-write-tool (&key path content)
   (let ((arguments (make-hash-table :test #'equal)))
     (setf (gethash "path" arguments) path)
@@ -146,6 +161,108 @@
              (is (null is-error))
              (is (search "binary file" text))))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test view-image-tool-is-registered-in-the-default-catalog
+  (let* ((catalog (sm-harness:default-tool-catalog))
+         (tools (sm-harness:tool-server-definition-tools
+                 (first (sm-harness:tool-catalog-servers catalog))))
+         (tool (find "view_image" tools
+                     :key #'sm-harness:tool-definition-name :test #'string=)))
+    (is (not (null tool)))
+    (is (equal '("path") (gethash "required" (sm-harness:tool-definition-input-schema tool))))
+    (is (eq t (getf (sm-harness::tool-definition-annotations tool) :read-only-p)))))
+
+(test view-image-tool-rejects-empty-path
+  (destructuring-bind (text is-error content) (%call-view-image-tool :path "")
+    (is (eq t is-error))
+    (is (null content))
+    (is (search "non-empty path" text))))
+
+(test view-image-tool-reports-missing-file-safely
+  (destructuring-bind (text is-error content)
+      (%call-view-image-tool :path "/does/not/exist/picture.png")
+    (is (eq t is-error))
+    (is (null content))
+    (is (search "file not found" text))))
+
+(test view-image-tool-rejects-unsupported-extension
+  (let* ((root (temp-data-root))
+         (path (merge-pathnames "notes.txt" root)))
+    (unwind-protect
+         (progn
+           (%write-text-file path "just text, not an image")
+           (destructuring-bind (text is-error content)
+               (%call-view-image-tool :path (namestring path))
+             (is (eq t is-error))
+             (is (null content))
+             (is (search "unsupported image type" text))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test view-image-tool-rejects-a-path-with-no-extension-at-all
+  (let* ((root (temp-data-root))
+         (path (merge-pathnames "IMAGE" root)))
+    (unwind-protect
+         (progn
+           (%write-binary-file path (vector 1 2 3))
+           (destructuring-bind (text is-error content)
+               (%call-view-image-tool :path (namestring path))
+             (is (eq t is-error))
+             (is (null content))
+             (is (search "unsupported image type" text))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test view-image-tool-rejects-an-oversized-image-and-names-the-limit
+  (let* ((root (temp-data-root))
+         (path (merge-pathnames "big.png" root)))
+    (unwind-protect
+         (progn
+           (%write-binary-file path (vector 1 2 3 4 5))
+           (let ((sm-harness::+view-image-max-bytes+ 4))
+             (destructuring-bind (text is-error content)
+                 (%call-view-image-tool :path (namestring path))
+               (is (eq t is-error))
+               (is (null content))
+               (is (search "exceeds the" text))
+               (is (search "byte limit" text)))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test view-image-tool-returns-a-text-plus-image-mcp-content-block-with-correct-base64
+  ;; "Hello, World!" ASCII bytes base64-encode to the well-known
+  ;; "SGVsbG8sIFdvcmxkIQ==" -- a real assertion on %BASE64-ENCODE-BYTES's
+  ;; correctness, not just on shape, since VIEW_IMAGE doesn't validate
+  ;; actual PNG structure (only extension and size).
+  (let* ((root (temp-data-root))
+         (path (merge-pathnames "greeting.png" root))
+         (bytes (map 'vector #'char-code "Hello, World!")))
+    (unwind-protect
+         (progn
+           (%write-binary-file path bytes)
+           (destructuring-bind (text is-error content)
+               (%call-view-image-tool :path (namestring path))
+             (declare (ignore text))
+             (is (null is-error))
+             (is (= 2 (length content)))
+             (let ((text-block (first content))
+                   (image-block (second content)))
+               (is (equal "text" (gethash "type" text-block)))
+               (is (search "greeting.png" (gethash "text" text-block)))
+               (is (equal "image" (gethash "type" image-block)))
+               (is (equal "image/png" (gethash "mimeType" image-block)))
+               (is (equal "SGVsbG8sIFdvcmxkIQ==" (gethash "data" image-block))))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test view-image-tool-maps-jpg-and-jpeg-and-webp-and-gif-extensions-to-mime-types
+  (is (equal "image/jpeg" (sm-harness::%view-image-media-type "/tmp/x.jpg")))
+  (is (equal "image/jpeg" (sm-harness::%view-image-media-type "/tmp/x.JPEG")))
+  (is (equal "image/webp" (sm-harness::%view-image-media-type "/tmp/x.webp")))
+  (is (equal "image/gif" (sm-harness::%view-image-media-type "/tmp/x.gif")))
+  (is (null (sm-harness::%view-image-media-type "/tmp/x.bmp"))))
+
+(test base64-encode-bytes-matches-known-vectors-including-one-and-two-byte-padding
+  (is (equal "" (sm-harness::%base64-encode-bytes (vector))))
+  (is (equal "Zg==" (sm-harness::%base64-encode-bytes (map 'vector #'char-code "f"))))
+  (is (equal "Zm8=" (sm-harness::%base64-encode-bytes (map 'vector #'char-code "fo"))))
+  (is (equal "Zm9v" (sm-harness::%base64-encode-bytes (map 'vector #'char-code "foo")))))
 
 (test write-file-tool-writes-then-reads-back-exact-content
   (let* ((root (temp-data-root))
@@ -691,6 +808,7 @@ persisted."
                (is (not (null tool)) "~A must be registered in the default catalog" name)
                (eq t (getf (sm-harness::tool-definition-annotations tool) :read-only-p)))))
       (is (eq t (read-only-p "read_file")))
+      (is (eq t (read-only-p "view_image")))
       (is (eq t (read-only-p "web_search")))
       (is (eq t (read-only-p "echo_text")))
       (is (eq nil (read-only-p "bash")))
@@ -710,6 +828,51 @@ persisted."
          (sdk-tool (sm-harness::%sdk-tool-from-definition definition)))
     (is (equal '(:read-only-p t :destructive-p nil :idempotent-p t :open-world-p nil)
                (claude-agent-sdk-cl:sdk-tool-annotations sdk-tool)))))
+
+(test sdk-tool-from-definition-uses-the-content-escape-hatch-when-the-handler-returns-a-third-value
+  "A handler returning (VALUES result is-error content) with non-NIL CONTENT
+gets that content passed straight through as the SDK tool result's
+:CONTENT, not wrapped as a text block from RESULT -- the mechanism
+VIEW_IMAGE relies on to return an actual MCP image content block."
+  (let* ((image-block (sm-harness::%json-object "type" "image"
+                                                "data" "AAAA"
+                                                "mimeType" "image/png"))
+         (definition (sm-harness::make-tool-definition
+                      :name "returns-content" :description "d"
+                      :input-schema (sm-harness::%echo-schema)
+                      :annotations '(:read-only-p t :destructive-p nil
+                                     :idempotent-p t :open-world-p nil)
+                      :handler (lambda (arguments context)
+                                 (declare (ignore arguments context))
+                                 (values nil nil (list image-block)))))
+         (sdk-tool (sm-harness::%sdk-tool-from-definition definition))
+         (result (funcall (claude-agent-sdk-cl:sdk-tool-handler sdk-tool)
+                          (make-hash-table :test #'equal) nil)))
+    (is (null (claude-agent-sdk-cl:sdk-tool-result-text result)))
+    (let ((returned-content (claude-agent-sdk-cl:sdk-tool-result-content result)))
+      (is (= 1 (length returned-content)))
+      (let ((returned-block (first returned-content)))
+        ;; MAKE-SDK-TOOL-RESULT deep-copies :CONTENT (%COPY-JSON-COMPATIBLE),
+        ;; so the returned hash table is a fresh copy, never EQ/EQUAL to
+        ;; IMAGE-BLOCK -- compare fields, not object identity.
+        (is (equal "image" (gethash "type" returned-block)))
+        (is (equal "image/png" (gethash "mimeType" returned-block)))
+        (is (equal "AAAA" (gethash "data" returned-block)))))))
+
+(test sdk-tool-from-definition-still-wraps-text-as-before-when-no-content-is-returned
+  (let* ((definition (sm-harness::make-tool-definition
+                      :name "returns-text" :description "d"
+                      :input-schema (sm-harness::%echo-schema)
+                      :annotations '(:read-only-p t :destructive-p nil
+                                     :idempotent-p t :open-world-p nil)
+                      :handler (lambda (arguments context)
+                                 (declare (ignore arguments context))
+                                 "plain result")))
+         (sdk-tool (sm-harness::%sdk-tool-from-definition definition))
+         (result (funcall (claude-agent-sdk-cl:sdk-tool-handler sdk-tool)
+                          (make-hash-table :test #'equal) nil)))
+    (is (equal "plain result" (claude-agent-sdk-cl:sdk-tool-result-text result)))
+    (is (null (claude-agent-sdk-cl:sdk-tool-result-content result)))))
 
 ;;;; #142: RUN_SUBAGENT -- parallel subagent sessions with backend/model
 ;;;; choice and authoritative parent-session linkage via CONTEXT's

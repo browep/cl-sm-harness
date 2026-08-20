@@ -160,6 +160,42 @@ emitted whole and re-creating the oversized result. When everything
 requested fits, no notice is emitted, so ordinary small reads are
 byte-identical to what they were before.
 
+### `view_image`
+
+Views an image file so a vision-capable model can actually see it, not just
+get `read_file`'s "binary file, N bytes" summary -- `read_file`'s UTF-8-or-
+binary-summary fallback deliberately never attempts to show pixels.
+**No sandboxing**, same posture as `read_file`: `path` can be any image the
+harness process can reach. Supports `.png`, `.jpg`/`.jpeg`, `.gif`, and
+`.webp` only (Anthropic's documented vision-supported formats); any other
+extension, a missing file, or a file over `+view-image-max-bytes+` (5MB) is
+a safe result, not a crash.
+
+The handler reads the whole file, base64-encodes it (a small hand-rolled
+encoder, `%base64-encode-bytes` -- deliberately not a new Quicklisp
+dependency for one stable, well-understood algorithm, the same reasoning
+this file's own `%json-object` helper already follows), and returns it as
+two MCP content blocks: a short text caption, then an image block. This is
+the one catalog tool whose handler uses the `TOOL-DEFINITION` `handler`
+slot's third return value, `CONTENT` -- see that slot's docstring and
+`%SDK-TOOL-FROM-DEFINITION` (`sdk-adapter.lisp`) -- to hand back real MCP
+content instead of a single text block, the only way a tool result actually
+puts pixels in front of the model rather than a byte count.
+
+**The image content block's shape is MCP's own, not the Anthropic Messages
+API's `tool_result` shape**: `{"type":"image","data":<base64>,
+"mimeType":<mime>}` directly on the block, *not* Messages API's nested
+`{"type":"image","source":{"type":"base64","media_type":...,"data":...}}`.
+Both shapes are equally JSON-compatible and pass `make-sdk-tool-result`'s
+own validation without complaint either way, since that only checks
+JSON-compatibility, not MCP conformance -- the difference only surfaces one
+layer further out, at the real `claude` CLI's own zod schema validation of
+the MCP tool result on the wire, which rejects the nested Messages-API
+shape outright ("malformed result that failed schema validation"). Found
+this the hard way testing live against this session's own chat agent
+before landing it, not from a hunch: every unit test used the JSON-
+compatible-content escape hatch generically enough not to catch it.
+
 ### `write_file`
 
 Writes (creating or overwriting) a file's contents. **No sandboxing** (see

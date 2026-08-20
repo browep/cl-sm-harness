@@ -33,13 +33,23 @@
                 ;; value from MULTIPLE-VALUE-BIND is nil. A handler that wants
                 ;; to report a domain-level failure (not a Lisp condition, so
                 ;; not the existing raise-to-JSON-RPC-error path) returns
-                ;; (VALUES text t).
-                (multiple-value-bind (result is-error)
+                ;; (VALUES text t). A third value, CONTENT, is an optional
+                ;; escape hatch (see TOOL-CATALOG.LISP's TOOL-DEFINITION
+                ;; HANDLER slot doc) -- when non-NIL it is passed straight
+                ;; through as MAKE-SDK-TOOL-RESULT's :CONTENT instead of
+                ;; wrapping RESULT as a single text block, the mechanism
+                ;; VIEW_IMAGE uses to return an actual MCP image content
+                ;; block rather than text.
+                (multiple-value-bind (result is-error content)
                     (funcall (tool-definition-handler definition) arguments
                              (list* :calling-session-id calling-session-id context))
-                  (claude-agent-sdk-cl:make-sdk-tool-result
-                   :text (princ-to-string result)
-                   :is-error (and is-error t)))))))
+                  (if content
+                      (claude-agent-sdk-cl:make-sdk-tool-result
+                       :content content
+                       :is-error (and is-error t))
+                      (claude-agent-sdk-cl:make-sdk-tool-result
+                       :text (princ-to-string result)
+                       :is-error (and is-error t))))))))
 
 (defun %sdk-server-from-definition (server)
   (claude-agent-sdk-cl:make-sdk-mcp-server

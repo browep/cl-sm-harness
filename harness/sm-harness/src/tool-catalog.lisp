@@ -24,6 +24,14 @@
   ;; (nothing else in this file needs one) has no symbol to late-bind and is
   ;; frozen the same way a captured #'name would be -- fine for a handler
   ;; that will never need a live edit, not otherwise.
+  ;;
+  ;; Return contract: (VALUES text is-error), or (VALUES text is-error
+  ;; content) as a third, optional value -- CONTENT, when non-NIL, is a
+  ;; JSON-compatible MCP content-block list (%JSON-OBJECT-shaped hash
+  ;; tables) that %SDK-TOOL-FROM-DEFINITION passes straight through as
+  ;; MAKE-SDK-TOOL-RESULT's :CONTENT instead of wrapping TEXT as a single
+  ;; text block -- see VIEW_IMAGE, whose handler returns an image content
+  ;; block this way so a vision-capable model actually sees the pixels.
   handler
   ;; NIL, or a plist of :READ-ONLY-P/:DESTRUCTIVE-P/:IDEMPOTENT-P/:OPEN-WORLD-P
   ;; booleans -- claude-agent-sdk-cl:make-sdk-tool's own MCP ToolAnnotations
@@ -213,6 +221,132 @@ return a size summary instead of their content."
    ;; #123: a pure filesystem read, no mutation -- read-only and idempotent.
    :annotations '(:read-only-p t :destructive-p nil :idempotent-p t :open-world-p nil)
    :handler '%read-file-tool-handler))
+
+(defparameter +view-image-max-bytes+ (* 5 1024 1024)
+  "Raw byte cap VIEW_IMAGE will read and base64-encode, rejected outright
+rather than truncated -- a truncated image is not decodable, so partial
+image bytes would be strictly worse than refusing outright. Chosen to stay
+well under typical multimodal API request-size ceilings once base64's ~4/3
+inflation is applied.")
+
+(defparameter +view-image-media-types+
+  '(("png" . "image/png")
+    ("jpg" . "image/jpeg")
+    ("jpeg" . "image/jpeg")
+    ("gif" . "image/gif")
+    ("webp" . "image/webp"))
+  "Extension -> MIME type table for VIEW_IMAGE, matching Anthropic's
+documented set of vision-supported image formats. Any other extension (or a
+path with none) is rejected as a safe result, never guessed at from
+content-sniffed bytes.")
+
+(defun %view-image-media-type (path)
+  (let ((type (string-downcase (or (pathname-type (pathname path)) ""))))
+    (cdr (assoc type +view-image-media-types+ :test #'string=))))
+
+(defparameter +base64-alphabet+
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+
+(defun %base64-encode-bytes (bytes)
+  "Encode BYTES (a (VECTOR (UNSIGNED-BYTE 8))) as standard base64 text with
+'=' padding. Hand-rolled rather than adding a new Quicklisp dependency for
+one small, stable algorithm -- this file already hand-rolls its own JSON
+object builder (%JSON-OBJECT) for the same reason: one more third-party
+system is a bigger liability than a few lines of arithmetic."
+  (let ((len (length bytes))
+        (out (make-string-output-stream)))
+    (loop for i from 0 below len by 3
+          do (let* ((b0 (aref bytes i))
+                    (has1 (< (+ i 1) len))
+                    (has2 (< (+ i 2) len))
+                    (b1 (if has1 (aref bytes (+ i 1)) 0))
+                    (b2 (if has2 (aref bytes (+ i 2)) 0))
+                    (n (logior (ash b0 16) (ash b1 8) b2)))
+               (write-char (char +base64-alphabet+ (ldb (byte 6 18) n)) out)
+               (write-char (char +base64-alphabet+ (ldb (byte 6 12) n)) out)
+               (write-char (if has1 (char +base64-alphabet+ (ldb (byte 6 6) n)) #\=) out)
+               (write-char (if has2 (char +base64-alphabet+ (ldb (byte 6 0) n)) #\=) out)))
+    (get-output-stream-string out)))
+
+(defun %read-file-bytes (path)
+  (with-open-file (in path :direction :input :element-type '(unsigned-byte 8))
+    (let* ((len (file-length in))
+           (buf (make-array len :element-type '(unsigned-byte 8))))
+      (read-sequence buf in)
+      buf)))
+
+(defun %view-image-schema ()
+  (let ((schema (%json-object "type" "object"))
+        (props (%json-object))
+        (field (%json-object "type" "string")))
+    (setf (gethash "path" props) field
+          (gethash "properties" schema) props
+          (gethash "required" schema) (list "path"))
+    schema))
+
+(defun %view-image-tool-handler (arguments context)
+  (declare (ignore context))
+  (let* ((path (gethash "path" arguments))
+         (media-type (and (stringp path) (plusp (length path))
+                          (%view-image-media-type path))))
+    (cond
+      ((not (and (stringp path) (plusp (length path))))
+       (values "view_image requires a non-empty path" t))
+      ((not (probe-file path))
+       (values (format nil "file not found: ~A" path) t))
+      ((null media-type)
+       (values (format nil "unsupported image type for ~A -- view_image supports .png, .jpg/.jpeg, .gif, and .webp only"
+                       path)
+               t))
+      ((> (%file-byte-size path) +view-image-max-bytes+)
+       (values (format nil "image exceeds the ~:D byte limit (this file is ~:D bytes) -- resize or crop it before calling view_image again"
+                       +view-image-max-bytes+ (%file-byte-size path))
+               t))
+      (t
+       (handler-case
+           (let* ((bytes (%read-file-bytes path))
+                  (data (%base64-encode-bytes bytes))
+                  ;; MCP's own content-block shape (validated by the real
+                  ;; `claude` CLI's zod schema) puts "data"/"mimeType"
+                  ;; directly on the image block -- NOT the Anthropic
+                  ;; Messages API's nested {"source":{"type":"base64",...}}
+                  ;; shape tool_result blocks use once inside a real
+                  ;; conversation. Confirmed the hard way: the nested form
+                  ;; round-trips through MAKE-SDK-TOOL-RESULT fine (it's
+                  ;; JSON-compatible) but the CLI rejects it with
+                  ;; "malformed result that failed schema validation"
+                  ;; before it ever reaches the model.
+                  (image-block (%json-object "type" "image"
+                                             "data" data
+                                             "mimeType" media-type))
+                  (text-block (%json-object
+                               "type" "text"
+                               "text" (format nil "displayed ~A (~A, ~:D bytes)"
+                                              path media-type (length bytes)))))
+             (values nil nil (list text-block image-block)))
+         (error ()
+           (values (format nil "unable to read image: ~A" path) t)))))))
+
+(defun make-view-image-tool-definition ()
+  "No sandboxing: any image path the harness process can reach is viewable,
+same posture as READ_FILE (#61/#62). Reads the whole file, base64-encodes
+it, and returns it as an MCP image content block (rather than as text) so a
+vision-capable model actually sees the pixels, not just a byte-size
+summary -- READ_FILE's binary-file fallback deliberately never attempts
+this. Supports .png/.jpg/.jpeg/.gif/.webp only; anything else, a missing
+file, or a file over +VIEW-IMAGE-MAX-BYTES+ is a safe result, not a crash."
+  (make-tool-definition
+   :name "view_image"
+   :description "View an image file so a vision-capable model can actually
+see it, not just get a byte-size summary the way read_file's binary-file
+fallback does. PATH is required and must be a .png, .jpg/.jpeg, .gif, or
+.webp file the harness process can reach -- no sandboxing, same posture as
+read_file. Images over 5MB are rejected outright (resize/crop first)."
+   :input-schema (%view-image-schema)
+   ;; #123: a pure filesystem read, no mutation -- read-only and idempotent,
+   ;; same as read_file.
+   :annotations '(:read-only-p t :destructive-p nil :idempotent-p t :open-world-p nil)
+   :handler '%view-image-tool-handler))
 
 (defparameter +write-tool-max-chars+ (* 5 1024 1024)
   "Cap on write_file's content length, rejected outright rather than
@@ -1282,6 +1416,7 @@ error rather than being hidden when nothing is wired up."
           :version "0.1.0"
           :tools (append (list (make-echo-tool-definition)
                                (make-read-tool-definition)
+                               (make-view-image-tool-definition)
                                (make-write-tool-definition)
                                (make-bash-tool-definition)
                                (make-reload-tool-definition)
