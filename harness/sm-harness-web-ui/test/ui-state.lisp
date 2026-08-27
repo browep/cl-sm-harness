@@ -83,6 +83,30 @@
     (is (search "42" (cdr d)))
     (is (search "2026-08-01T00:00:00Z" (cdr d)))))
 
+(test event-display-capability-change-shows-added-and-removed-tools
+  ;; #146: rendered as its own chip role ("capability-change" -- app.css's
+  ;; own .msg-capability-change), distinct from the generic "tool" role
+  ;; :tool-completed already gets and from "harness" (#76's synthetic
+  ;; follow-up bubble), naming the changed tools directly in the chip text
+  ;; itself rather than relying on the model to mention them.
+  (let* ((ev (sm-harness:make-event :type :capability-change :sequence 1
+                                    :session-id "s"
+                                    :payload (list :added '("new_tool")
+                                                   :removed '("old_tool"))))
+         (d (sm-harness-web-ui::event-display ev)))
+    (is (string= "capability-change" (car d)))
+    (is (search "new_tool" (cdr d)))
+    (is (search "old_tool" (cdr d)))))
+
+(test event-display-capability-change-with-only-added-tools
+  (let* ((ev (sm-harness:make-event :type :capability-change :sequence 1
+                                    :session-id "s"
+                                    :payload (list :added '("a" "b") :removed nil)))
+         (d (sm-harness-web-ui::event-display ev)))
+    (is (string= "capability-change" (car d)))
+    (is (search "a, b" (cdr d)))
+    (is (null (search "removed" (cdr d))))))
+
 (test event-display-unrecognized-shows-the-sdk-class-name
   (let* ((ev (sm-harness:make-event :type :unrecognized :sequence 1
                                     :session-id "s"

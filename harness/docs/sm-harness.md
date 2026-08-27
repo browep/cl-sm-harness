@@ -396,6 +396,68 @@ resets to 0 whenever any turn completes without queueing a new follow-up
 (a normal reply, a failed reload, or a different tool call) — it bounds one
 chain, not a session's lifetime total.
 
+#### Capability-change signal on a successful reload (#146)
+
+#76's automatic follow-up above tells the model to go verify whatever it
+just changed, but nothing records *what actually changed in the tool
+catalog itself* — that was left entirely to the model's own free-text
+reply, if it mentioned it at all. `%reload-harness-tool-handler`
+(`tool-catalog.lisp`) now also diffs the catalog's tool-name set across the
+reload: `%tool-catalog-names` flattens `default-tool-catalog`'s own output
+(via `*capability-change-catalog-fn*`, a `DEFVAR` seam defaulting to the
+symbol `default-tool-catalog` — production always calls exactly that; the
+indirection exists purely so a test can point it at a scratch catalog
+instead) into a plain list of tool names, captured once immediately before
+`asdf:load-system` and again immediately after a *successful* reload only
+(the existing `error` clause above already returns before this runs, so a
+failed reload never reaches it). `set-difference` against the two name
+lists gives ADDED/REMOVED; a reload that only changed a tool handler's own
+body, with an identical name set, yields both empty and records nothing —
+that case is already covered by #76's own generic follow-up above, not a
+"capability change" for this signal's purposes.
+
+**Deliberately not a new `session-runtime` slot.** The handler runs on its
+own freshly spawned tool-call thread (`claude-agent-sdk-cl`'s
+`%client-spawn-tool-thread`), never the calling session's own worker
+thread, so handing the computed diff off to that session's transcript is a
+genuine cross-thread problem — the same one `*publish-lock*` (#129) already
+solved for `set-session-title`. Adding a slot to `session-runtime`'s
+`defstruct` while live instances already exist (any session already open in
+a running image) risks the incompatible-structure-redefinition failure
+documented above under "reload_harness" — a permanent, reload-proof failure
+for the rest of the process's life — so this reuses that same "plain global
+special, not a struct slot" shape instead: `*pending-capability-changes*` (a
+session-id → `(:added (...) :removed (...))` hash table) plus its own
+`*capability-change-lock*` mutex, both `tool-catalog.lisp` `DEFVAR`s (never
+`DEFPARAMETER`, for the identical reload-survival reason
+`*reload-harness-system*`/`*post-reload-hook*` already document — this file
+reloads as a dependency on every `reload_harness` call). The handler writes
+under that lock, keyed by `context`'s `:calling-session-id` — the same
+thread-surviving channel #142's `run_subagent` caller-id capture and #76's
+own correlation already rely on, never `*current-session-record*` (only
+safely readable synchronously during client/catalog construction, per its
+own docstring, not from inside a running tool handler).
+
+**Consumption happens once, on the session's own worker thread.**
+`%handle-mapped-event`'s (`runtime.lisp`) existing `:tool-completed` clause
+already correlates a completed tool call back to `reload_harness` via
+`%tool-base-name` for #76's follow-up (also already handling #118's
+MCP-namespacing there, so this sits right next to and reuses that same
+check rather than adding a second one). Right after queueing #76's
+follow-up, it also pops this session's own entry (if any) out of
+`*pending-capability-changes*` under `*capability-change-lock*` — the lock
+only guards that handoff, not the transcript mutation itself, which stays
+single-writer-safe the same way every other `%append-transcript` call in
+that function already is. A present entry becomes its own new,
+distinctly-typed `:capability-change` event (payload `:added`/`:removed`,
+following the same typed-event convention `:synthetic t` already uses on
+`:user-message`) and a durable transcript entry (`kind
+"capability-change"`) — persisted through the same end-of-turn
+`repository-save-session` every other entry in a turn already relies on, so
+it survives a reload/reopen of the session, unlike `:system`/`:rate-limit`
+events (see "Contentless SYSTEM chips fixed (#102)" in
+[docs/sm-harness-web-ui.md](sm-harness-web-ui.md#contentless-system-chips-fixed-102)).
+
 #### Post-reload hook and browser live-refresh (#78)
 
 Once `reload_harness` completes without error, it also calls an optional,

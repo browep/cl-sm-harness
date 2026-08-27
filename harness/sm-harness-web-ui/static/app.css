@@ -41,6 +41,14 @@ body {
    human typed it. Dashed border plus a distinct amber tint signal
    "automated", not a real user message. */
 .msg-harness { background: #2e2712; color: #e3c98b; border: 1px dashed #6b5a2a; }
+/* A #146 capability-change chip: a reload_harness call whose real
+   before/after tool-catalog diff actually added or removed a tool.
+   Deliberately distinct from both .msg-tool (the generic tool-result chip
+   right above it in the transcript) and .msg-harness above (the dashed
+   amber synthetic-followup bubble a successful reload also always
+   schedules) -- a dashed teal/green treatment names this its own kind of
+   harness-computed signal, not a tool result and not a synthetic turn. */
+.msg-capability-change { background: #0f2e28; color: #8bd6b0; border: 1px dashed #2a6b52; }
 .composer { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
 .prompt { flex: 1; min-height: 72px; border-radius: 8px; border: 1px solid #3a4656; background: #0f1419; color: #e7ecf3; padding: 0.5rem; }
 .status-chip { padding: 0.2rem 0.55rem; border-radius: 999px; background: #243044; font-size: 0.85rem; }

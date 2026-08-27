@@ -784,6 +784,60 @@ call, and a DEFPARAMETER here would silently drop the web UI's installed
 hook (CLOG re-routing + live browser refresh, #78) after the first reload
 of a process's life.")
 
+(defvar *pending-capability-changes* (make-hash-table :test #'equal)
+  "Session-id -> (:ADDED (names...) :REMOVED (names...)) plist, populated by
+%RELOAD-HARNESS-TOOL-HANDLER (#146) immediately after a *successful* reload
+whose tool-name set actually changed, and consumed exactly once by
+%HANDLE-MAPPED-EVENT (runtime.lisp) when that same reload_harness call's
+:TOOL-COMPLETED event is processed there.
+
+Deliberately a plain global hash table plus its own lock
+(*CAPABILITY-CHANGE-LOCK* below), not a new SESSION-RUNTIME slot: adding a
+slot to that DEFSTRUCT while live instances already exist (any session
+already open in a running image) risks the incompatible-structure-
+redefinition failure documented under reload_harness's own section in
+docs/sm-harness.md -- a permanent, reload-proof failure for the rest of the
+process's life (see *PUBLISH-LOCK*, runtime.lisp, which made the identical
+call for #129). A plain special variable carries none of that risk.
+
+The tool handler runs on its own freshly spawned thread
+(CLAUDE-AGENT-SDK-CL's %CLIENT-SPAWN-TOOL-THREAD), never the session's own
+worker thread, so writing here is a genuine cross-thread handoff -- the
+lock protects exactly that handoff, nothing else. DEFVAR, not DEFPARAMETER,
+so this table survives every later RELOAD_HARNESS call: this file is part
+of :SM-HARNESS and therefore reloads as a dependency on every call, and a
+DEFPARAMETER would silently wipe any in-flight entry it happened to
+recompile past (see *RELOAD-HARNESS-SYSTEM*'s own docstring above for the
+identical #102 hazard this mirrors).")
+
+(defvar *capability-change-lock* (sb-thread:make-mutex :name "capability-change")
+  "Guards *PENDING-CAPABILITY-CHANGES* across its one writer (a tool-handler
+thread, inside %RELOAD-HARNESS-TOOL-HANDLER) and one reader-per-entry (a
+session's own worker thread, inside %HANDLE-MAPPED-EVENT). DEFVAR for the
+same reload-survival reason as *PENDING-CAPABILITY-CHANGES* itself.")
+
+(defvar *capability-change-catalog-fn* 'default-tool-catalog
+  "Function designator %RELOAD-HARNESS-TOOL-HANDLER funcalls to snapshot the
+tool catalog immediately before and after a reload, for the #146
+added/removed diff. Defaults to the symbol DEFAULT-TOOL-CATALOG -- the same
+accessor the rest of this file already treats as canonical (see
+HARNESS-CATALOG-PROVIDER's own default in runtime.lisp) -- so production
+never does anything other than call DEFAULT-TOOL-CATALOG. Exists as a
+DEFVAR seam purely so a test can rebind it to a closure over a fixture
+catalog whose contents a scratch ASDF reload can deterministically flip
+between the two calls, without touching this project's own real
+DEFAULT-TOOL-CATALOG definition to do it.")
+
+(defun %tool-catalog-names (catalog)
+  "Flatten CATALOG (a TOOL-CATALOG) down to the list of tool names it
+offers, across every server -- the one piece of catalog shape #146's
+added/removed diff actually needs. Reuses TOOL-CATALOG-SERVERS/
+TOOL-SERVER-DEFINITION-TOOLS/TOOL-DEFINITION-NAME, the same accessors
+SDK-ADAPTER.LISP's own %SDK-CATALOG walk already uses, rather than a second
+hand-rolled path into a TOOL-CATALOG's shape."
+  (loop for server in (tool-catalog-servers catalog)
+        append (mapcar #'tool-definition-name (tool-server-definition-tools server))))
+
 (defun %reload-schema ()
   (let ((schema (%json-object "type" "object"))
         (props (%json-object))
@@ -793,9 +847,20 @@ of a process's life.")
     schema))
 
 (defun %reload-harness-tool-handler (arguments context)
-  (declare (ignore context))
   (let ((force (and (gethash "force" arguments) t))
-        (warnings '()))
+        (warnings '())
+        ;; #146: CONTEXT's :CALLING-SESSION-ID is the same thread-surviving
+        ;; channel RUN_SUBAGENT's #142 caller-id capture and #76/#118's own
+        ;; reload correlation both already rely on -- never
+        ;; *CURRENT-SESSION-RECORD*, which is only safely readable
+        ;; synchronously during client/catalog construction, not from inside
+        ;; a running tool handler (see its own docstring below).
+        (calling-session-id (getf context :calling-session-id))
+        ;; Snapshot BEFORE the reload, via the exact accessor production
+        ;; always uses (*CAPABILITY-CHANGE-CATALOG-FN* defaults to
+        ;; DEFAULT-TOOL-CATALOG) -- captured now, since ASDF:LOAD-SYSTEM
+        ;; below is the one moment that can actually redefine it.
+        (before-names (%tool-catalog-names (funcall *capability-change-catalog-fn*))))
     (handler-case
         (handler-bind ((warning (lambda (w)
                                   (push (princ-to-string w) warnings)
@@ -825,6 +890,19 @@ reverting the source, until the container is restarted."
       (handler-case (funcall *post-reload-hook*)
         (error (c)
           (push (format nil "post-reload hook failed: ~A" c) warnings))))
+    ;; #146: only reached on a successful reload (the ERROR clause above
+    ;; already returned). Diff against the post-reload snapshot of the same
+    ;; accessor -- a reload that only changed a tool handler's own body,
+    ;; with an identical name set, yields empty ADDED/REMOVED and records
+    ;; nothing, matching #76's own "body-only edit is not a capability
+    ;; change" scoping.
+    (let* ((after-names (%tool-catalog-names (funcall *capability-change-catalog-fn*)))
+           (added (sort (set-difference after-names before-names :test #'string=) #'string<))
+           (removed (sort (set-difference before-names after-names :test #'string=) #'string<)))
+      (when (and calling-session-id (or added removed))
+        (sb-thread:with-mutex (*capability-change-lock*)
+          (setf (gethash calling-session-id *pending-capability-changes*)
+                (list :added added :removed removed)))))
     (let ((collected (nreverse warnings)))
       ;; ~@[str~] consumes COLLECTED only if it is NIL (the no-warnings
       ;; case); when non-NIL it is left in the argument list for the ~{~} that

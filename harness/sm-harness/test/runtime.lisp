@@ -791,6 +791,148 @@
       (sm-harness:close-harness h)
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
 
+(test capability-change-event-fires-when-a-reload-tool-completion-has-a-pending-diff
+  ;; #146 runtime-side consumption, isolated from %RELOAD-HARNESS-TOOL-HANDLER
+  ;; itself: pre-seed *PENDING-CAPABILITY-CHANGES* the way that handler would
+  ;; after a real added/removed diff (see reload-harness.lisp's
+  ;; handler-level tests for that half), then drive an ordinary scripted
+  ;; reload_harness completion cycle -- MAKE-REPEATED-TOOL-TURN-TRANSPORT
+  ;; never runs the real handler at all (its tool_result content is entirely
+  ;; canned), so this exercises only %HANDLE-MAPPED-EVENT's own consumption,
+  ;; persistence, and publish logic.
+  (let* ((root (temp-data-root))
+         (transport (make-repeated-tool-turn-transport
+                     (list (list :tool-name "reload_harness" :is-error nil))))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "capability change"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (sb-thread:with-mutex (sm-harness::*capability-change-lock*)
+      (setf (gethash session-id sm-harness::*pending-capability-changes*)
+            (list :added '("new_tool") :removed '("old_tool"))))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "please reload")
+           (is (wait-until
+                (lambda ()
+                  (find "capability-change"
+                        (sm-harness:session-snapshot-transcript
+                         (sm-harness:open-session h session-id))
+                        :key #'sm-harness:transcript-entry-kind :test #'string=))
+                :timeout 5))
+           (let* ((transcript (sm-harness:session-snapshot-transcript
+                               (sm-harness:open-session h session-id)))
+                  (entry (find "capability-change" transcript
+                              :key #'sm-harness:transcript-entry-kind :test #'string=)))
+             (is (string= "system" (sm-harness:transcript-entry-role entry)))
+             (is (search "new_tool" (sm-harness:transcript-entry-text entry)))
+             (is (search "old_tool" (sm-harness:transcript-entry-text entry))))
+           ;; Consumed exactly once: the entry this test seeded is gone
+           ;; afterward, not left behind for a later, unrelated reload to
+           ;; pick up by mistake.
+           (is (null (gethash session-id sm-harness::*pending-capability-changes*))))
+      (remhash session-id sm-harness::*pending-capability-changes*)
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test capability-change-event-does-not-fire-when-no-diff-is-pending
+  ;; The ordinary, overwhelmingly common case: a reload_harness completion
+  ;; with nothing waiting in *PENDING-CAPABILITY-CHANGES* for this session
+  ;; (a body-only edit, or no source change at all) must not fabricate one.
+  (let* ((root (temp-data-root))
+         (transport (make-repeated-tool-turn-transport
+                     (list (list :tool-name "reload_harness" :is-error nil))))
+         (h (sm-harness:make-harness
+             :config (sm-harness:make-harness-config
+                      :data-root root
+                      :transport-factory (lambda (options)
+                                           (declare (ignore options)) transport))))
+         (snapshot (sm-harness:start-session h :title "no capability change"))
+         (session-id (sm-harness:session-snapshot-id snapshot)))
+    (unwind-protect
+         (progn
+           (sm-harness:submit-turn h session-id "please reload")
+           (is (wait-until
+                (lambda ()
+                  (find "synthetic"
+                        (sm-harness:session-snapshot-transcript
+                         (sm-harness:open-session h session-id))
+                        :key #'sm-harness:transcript-entry-kind :test #'string=))
+                :timeout 5))
+           (is (null (find "capability-change"
+                           (sm-harness:session-snapshot-transcript
+                            (sm-harness:open-session h session-id))
+                           :key #'sm-harness:transcript-entry-kind :test #'string=))))
+      (sm-harness:close-harness h)
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(test capability-change-signal-reaches-the-transcript-end-to-end-through-a-real-reload
+  ;; Genuine end-to-end coverage, not a mock: a real RELOAD_HARNESS tool
+  ;; call executes through the real MCP catalog dispatch (like
+  ;; RELOAD-HARNESS-TOOL-EXECUTES-THROUGH-THE-REAL-CATALOG above), with
+  ;; *CAPABILITY-CHANGE-CATALOG-FN* rebound to a closure whose own return
+  ;; value flips between the two calls the handler makes around the real
+  ;; ASDF reload -- and the message-stream tool_result cycle is a FUNCTION
+  ;; chunk that blocks until that real call's own mcp_response has actually
+  ;; been written back, the same ordering guarantee a real CLI gives for
+  ;; free (it only ever reports a tool_result once the tool call it
+  ;; describes has actually finished) -- without that wait, this transport's
+  ;; canned tool_result would race the real handler's still-running
+  ;; ASDF:LOAD-SYSTEM call and arrive first, exactly as observed while
+  ;; developing this test.
+  (let* ((root (temp-data-root))
+         (calls 0)
+         (tool-call-json (make-catalog-tool-call-json
+                          :name "reload_harness" :arguments (make-hash-table :test #'equal)))
+         (transport nil))
+    (setf transport
+          (make-instance 'harness-fake-transport
+                         :chunks
+                         (list (concatenate 'string +init-ok+ +nl+)
+                               (concatenate 'string tool-call-json +nl+)
+                               (lambda ()
+                                 (wait-for-mcp-response transport)
+                                 (%reload-cycle-messages "toolu_1" :tool-name "reload_harness" :is-error nil)))))
+    (let* ((h (sm-harness:make-harness
+               :config (sm-harness:make-harness-config
+                        :data-root root
+                        :transport-factory (lambda (options)
+                                             (declare (ignore options)) transport))))
+           (snapshot (sm-harness:start-session h :title "capability change e2e"))
+           (session-id (sm-harness:session-snapshot-id snapshot)))
+      (setf sm-harness::*capability-change-catalog-fn*
+            (lambda ()
+              (incf calls)
+              (sm-harness::make-tool-catalog
+               :servers (list (sm-harness::make-tool-server-definition
+                               :name "sm_harness"
+                               :tools (mapcar (lambda (n)
+                                                (sm-harness::make-tool-definition :name n :handler 'identity))
+                                              (if (= calls 1)
+                                                  '("bash" "echo_text")
+                                                  '("bash" "echo_text" "new_tool"))))))))
+      (unwind-protect
+           (progn
+             (sm-harness:submit-turn h session-id "please reload")
+             (is (wait-until
+                  (lambda ()
+                    (find "capability-change"
+                          (sm-harness:session-snapshot-transcript
+                           (sm-harness:open-session h session-id))
+                          :key #'sm-harness:transcript-entry-kind :test #'string=))
+                  :timeout 5))
+             (let* ((transcript (sm-harness:session-snapshot-transcript
+                                 (sm-harness:open-session h session-id)))
+                    (entry (find "capability-change" transcript
+                                :key #'sm-harness:transcript-entry-kind :test #'string=)))
+               (is (search "new_tool" (sm-harness:transcript-entry-text entry)))))
+        (setf sm-harness::*capability-change-catalog-fn* 'sm-harness:default-tool-catalog)
+        (sm-harness:close-harness h)
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))))
+
 (test different-tool-completion-does-not-schedule-a-followup
   (let* ((root (temp-data-root))
          (transport (make-repeated-tool-turn-transport

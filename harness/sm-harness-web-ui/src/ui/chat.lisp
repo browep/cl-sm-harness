@@ -323,6 +323,15 @@ reliably there and not part of what the user meant to send."
                          ;; A harness-initiated synthetic follow-up (#76) renders
                          ;; distinctly on reload/reopen too, matching the live path.
                          ((string= "synthetic" kind) "harness")
+                         ;; #146: a reload_harness capability-change chip
+                         ;; (its own persisted role, distinct from both
+                         ;; "tool" and "harness" above) renders identically
+                         ;; whether seen live or replayed after a reopen --
+                         ;; TRANSCRIPT-ENTRY-ROLE itself is "system" for this
+                         ;; kind (%HANDLE-MAPPED-EVENT, runtime.lisp), which
+                         ;; would otherwise fall through to the generic
+                         ;; .msg-system styling on replay only.
+                         ((string= "capability-change" kind) "capability-change")
                          (t (sm-harness:transcript-entry-role entry))))
                  (raw (sm-harness:transcript-entry-text entry)))
             (add-line role

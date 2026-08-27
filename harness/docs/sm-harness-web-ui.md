@@ -1016,6 +1016,64 @@ warning anywhere. The same reset silently dropped the installed
 after the first reload too. Both are now `DEFVAR`, which only initializes
 when unbound, so `main`'s startup `SETF` survives every later reload.
 
+## Capability-change chip on a successful reload (#146)
+
+sm-harness now diffs the tool catalog's name set across a successful
+`reload_harness` call and, when it actually changed, emits a new
+`:capability-change` event carrying `:added`/`:removed` tool-name lists —
+see the ["Capability-change signal on a successful reload
+(#146)"](sm-harness.md#capability-change-signal-on-a-successful-reload-146)
+section in `docs/sm-harness.md` for the harness-side mechanics (why this is
+a plain global table plus a lock rather than a new `session-runtime` slot,
+and how it correlates back to the completed `reload_harness` call). This UI
+layer only has to render it.
+
+`presenter.lisp`'s `event-display` gained a dedicated `:capability-change`
+case, naming the added/removed tools directly in the chip text itself
+(`%capability-change-chip-text`) rather than relying on the model to
+mention them — e.g. `"Capability change (reload_harness) -- added: x, y;
+removed: z"`. Its own chip role, `"capability-change"`, keeps it visually
+distinct both from the generic `"tool"` role `:tool-completed` already gets
+(the ordinary tool-result chip right above it in the transcript) and from
+`"harness"` (#76's dashed-amber synthetic-followup bubble, which a
+successful reload also always schedules) — `app.css`'s new
+`.msg-capability-change` rule gives it a dashed teal/green treatment
+instead.
+
+Unlike `:system`/`:rate-limit` (see "Contentless SYSTEM chips fixed (#102)"
+above), this event *is* persisted to the durable transcript
+(`sm-harness`'s own `%append-transcript` call, `kind "capability-change"`),
+so it must still render correctly after a reload/reopen, not just live.
+`render-chat`'s (`src/ui/chat.lisp`) historical-replay loop already special-
+cases transcript `kind` `"tool"`/`"synthetic"` into their own live-matching
+roles (`transcript-entry-role` alone would otherwise fall back to whatever
+role `%append-transcript` was called with — `"system"` here, i.e. the wrong,
+generic `.msg-system` styling on replay only); it now special-cases
+`"capability-change"` the same way.
+
+**Coverage.** `sm-harness/tests` gained handler-level tests
+(`reload-harness.lisp`) for added-tool/removed-tool/no-change/failed-reload,
+each driving a real `asdf:load-system` reload against a uniquely-named
+per-test scratch system (never the shared `reload-fixture` system the
+file's older tests use — `temp-data-root`'s one-second resolution means two
+of these tests can collide on the same root directory, and a shared
+system/package name across tests whose assertions depend on its exact
+contents would let one test's stale package state leak into another's);
+runtime-level tests (`runtime.lisp`) for the `%handle-mapped-event`
+consumption/persistence path in isolation (pre-seeding
+`*pending-capability-changes*` against a scripted, decoupled fake-transport
+tool-completion cycle) and for the no-pending-diff case producing no chip;
+and one genuine end-to-end test driving a real `reload_harness` call
+through the real MCP catalog dispatch, with the message-stream tool_result
+cycle scripted as a function chunk that blocks until the real call's own
+`mcp_response` has actually been written back — without that wait, the
+fake transport's canned tool_result would race the still-running real
+handler's `asdf:load-system` call and arrive first (observed directly while
+developing this test). `sm-harness-web-ui/presenter-tests` gained
+`event-display-capability-change-shows-added-and-removed-tools` and an
+added-only variant, mirroring `event-display-rate-limit-shows-its-fields`'s
+existing style.
+
 ## Session-switch clicks not updating the address bar (#124)
 
 `render-chat`/`render-home` (`src/ui/chat.lisp`/`src/ui/home.lisp`) are

@@ -257,6 +257,17 @@
           do (push (format nil "~A: ~A" (%humanize-payload-key k) v) parts))
     (format nil "~{~A~^, ~}" (nreverse parts))))
 
+(defun %capability-change-chip-text (payload)
+  "PAYLOAD carries :ADDED/:REMOVED lists of tool-name strings (sm-harness's
+%RELOAD-HARNESS-TOOL-HANDLER, tool-catalog.lisp), each possibly NIL/empty
+but never both -- %HANDLE-MAPPED-EVENT (runtime.lisp) only ever fires this
+event when at least one is non-empty."
+  (let* ((added (getf payload :added))
+         (removed (getf payload :removed))
+         (parts (append (when added (list (format nil "added: ~{~A~^, ~}" added)))
+                         (when removed (list (format nil "removed: ~{~A~^, ~}" removed))))))
+    (format nil "Capability change (reload_harness) -- ~{~A~^; ~}" parts)))
+
 (defun %log-presenter-fallback (ev)
   "#102: EVENT-DISPLAY's catch-all is meant to be a safety net, not the
    normal path for any event type this UI actually expects to see. Every
@@ -330,6 +341,15 @@
       (:unrecognized
        (cons "system"
              (escape-text (format nil "Unrecognized event: ~A" (or (getf payload :class) "?")))))
+      (:capability-change
+       ;; #146: a reload_harness call whose real, before/after tool-catalog
+       ;; diff actually added or removed a tool -- harness-computed, never
+       ;; derived from the model's own reply text. Its own chip role
+       ;; ("capability-change", app.css) keeps it visually distinct from
+       ;; both the generic "tool" chip (:tool-completed, right above it in
+       ;; the transcript) and the dashed-amber "harness" synthetic-followup
+       ;; bubble (#76) that a successful reload also always schedules.
+       (cons "capability-change" (escape-text (%capability-change-chip-text payload))))
       (t
        (%log-presenter-fallback ev)
        (let ((extra (%format-payload-fields payload)))

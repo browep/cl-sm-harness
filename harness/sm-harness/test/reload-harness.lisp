@@ -188,3 +188,203 @@
              (is (search "fixture hook secret" text))))
       (setf asdf:*central-registry* (remove root asdf:*central-registry* :test #'equal))
       (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+;;;; #146: harness-computed, deterministic added/removed tool-name signal on
+;;;; a successful reload_harness whose catalog's tool-name SET actually
+;;;; changed. *CAPABILITY-CHANGE-CATALOG-FN* is *RELOAD-HARNESS-TOOL-HANDLER*'s
+;;;; own before/after snapshot accessor (tool-catalog.lisp) -- rebound here to
+;;;; a closure over the *RELOAD-FIXTURE* package's own VALUE function (already
+;;;; defined by %WRITE-RELOAD-FIXTURE above), late-bound via INTERN/FUNCALL so
+;;;; it reflects whatever FIXTURE.LISP currently defines, exactly the way
+;;;; DEFAULT-TOOL-CATALOG reflects a real reload's own redefinition in
+;;;; production. This drives an actual, real ASDF reload for each case
+;;;; (empirically verified, not a mock of the diffing logic) -- consistent
+;;;; with this file's other tests above.
+
+(defun %tool-catalog-from-names (names)
+  (sm-harness::make-tool-catalog
+   :servers (list (sm-harness::make-tool-server-definition
+                   :name "fixture"
+                   :tools (mapcar (lambda (n)
+                                    (sm-harness::make-tool-definition :name n :handler 'identity))
+                                  names)))))
+
+(defvar *capability-fixture-counter* 0
+  "TEMP-DATA-ROOT's own directory name only has one-second resolution
+(GET-UNIVERSAL-TIME), so two tests started within the same wall-clock
+second -- routine, given how fast this suite runs -- can collide on the
+exact same root pathname; ASDF then treats the second test's freshly
+written .asd/.lisp pair as already loaded, nothing changed, and silently
+keeps serving the first test's stale package contents instead. The
+pre-existing reload-fixture tests above never hit this because they all
+share one fixed system/package name across the whole file regardless, so a
+same-second collision there just means a second test reuses the first
+one's already-correct state. These #146 tests below instead need a
+genuinely fresh package per test (their assertions depend on exactly what
+VALUE returns), so each one gets its own uniquely named scratch system
+instead of sharing that fixed name.")
+
+(defun %write-capability-fixture (root name-sym defun-body)
+  ;; Each scratch system's own SOURCE FILE is named after NAME-SYM too, not a
+  ;; fixed "fixture.lisp" -- TEMP-DATA-ROOT's one-second resolution
+  ;; (GET-UNIVERSAL-TIME) means two of these tests started in the same
+  ;; wall-clock second, routine given how fast this suite runs, can share
+  ;; the exact same ROOT directory; a fixed filename would then let a later
+  ;; test's write silently clobber an earlier, still-registered system's
+  ;; own source file out from under it.
+  (ensure-directories-exist root)
+  (let ((name (string-downcase (symbol-name name-sym))))
+    (%write-text-file
+     (merge-pathnames (format nil "~A.asd" name) root)
+     (format nil "(asdf:defsystem #:~A :components ((:file ~S)))~%" name name))
+    (%write-text-file
+     (merge-pathnames (format nil "~A.lisp" name) root)
+     (format nil "(defpackage #:~A (:use #:cl) (:export #:value))~%(in-package #:~A)~%(defun value () ~A)~%"
+             name name defun-body))
+    root))
+
+(defmacro %with-capability-fixture ((system-var) &body body)
+  "Binds SYSTEM-VAR to a keyword naming a scratch system unique to this
+macro expansion (see *CAPABILITY-FIXTURE-COUNTER*'s docstring), rebinds
+*RELOAD-HARNESS-SYSTEM* to it and *CAPABILITY-CHANGE-CATALOG-FN* to a
+closure reading that same system's own VALUE function -- late-bound via
+INTERN/FUNCALL, exactly like DEFAULT-TOOL-CATALOG reflects a real reload's
+own redefinition in production -- around BODY, restoring both afterward."
+  (let ((name (gensym "SYSTEM")))
+    `(let* ((,name (intern (format nil "CAPABILITY-FIXTURE-~D" (incf *capability-fixture-counter*))
+                            "KEYWORD"))
+            (,system-var ,name)
+            (sm-harness::*reload-harness-system* ,name)
+            (sm-harness::*capability-change-catalog-fn*
+              (lambda ()
+                ;; The scratch package does not exist yet before this
+                ;; fixture's very first successful load in a fresh image --
+                ;; nothing to diff against yet, so an empty catalog is the
+                ;; correct "before" snapshot for that call, not an error.
+                (let ((pkg (find-package (symbol-name ,name))))
+                  (%tool-catalog-from-names
+                   (if pkg (funcall (intern "VALUE" pkg)) '()))))))
+       (unwind-protect (progn ,@body)
+         (setf sm-harness::*capability-change-catalog-fn* 'sm-harness:default-tool-catalog)))))
+
+(defun %call-reload-tool-for-session (session-id &key force)
+  (let ((arguments (make-hash-table :test #'equal)))
+    (when force (setf (gethash "force" arguments) t))
+    (multiple-value-bind (text is-error)
+        (sm-harness::%reload-harness-tool-handler
+         arguments (list :calling-session-id session-id))
+      (list text is-error))))
+
+(test reload-harness-tool-records-a-capability-change-on-an-added-tool
+  (let ((root (temp-data-root)))
+    (%with-capability-fixture (sys)
+      (unwind-protect
+           (progn
+             (%write-capability-fixture root sys "(list \"a\" \"b\")")
+             (%push-fixture-registry root)
+             ;; Baseline load: no capability change is recorded (nothing to
+             ;; diff against yet in this fresh image), and no CALLING-SESSION-ID
+             ;; is under test here.
+             (%call-reload-tool)
+             (sleep 1.1) ; ensure a strictly newer source mtime than the fasl
+             (%write-capability-fixture root sys "(list \"a\" \"b\" \"c\")")
+             (destructuring-bind (text is-error)
+                 (%call-reload-tool-for-session "sess-146-added")
+               (is (null is-error))
+               (is (search "reloaded" text)))
+             (let ((cc (gethash "sess-146-added" sm-harness::*pending-capability-changes*)))
+               (is (not (null cc)))
+               (is (equal '("c") (getf cc :added)))
+               (is (null (getf cc :removed)))))
+        (remhash "sess-146-added" sm-harness::*pending-capability-changes*)
+        (setf asdf:*central-registry* (remove root asdf:*central-registry* :test #'equal))
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))))
+
+(test reload-harness-tool-records-a-capability-change-on-a-removed-tool
+  (let ((root (temp-data-root)))
+    (%with-capability-fixture (sys)
+      (unwind-protect
+           (progn
+             (%write-capability-fixture root sys "(list \"a\" \"b\" \"c\")")
+             (%push-fixture-registry root)
+             (%call-reload-tool)
+             (sleep 1.1)
+             (%write-capability-fixture root sys "(list \"a\" \"b\")")
+             (destructuring-bind (text is-error)
+                 (%call-reload-tool-for-session "sess-146-removed")
+               (is (null is-error))
+               (is (search "reloaded" text)))
+             (let ((cc (gethash "sess-146-removed" sm-harness::*pending-capability-changes*)))
+               (is (not (null cc)))
+               (is (null (getf cc :added)))
+               (is (equal '("c") (getf cc :removed)))))
+        (remhash "sess-146-removed" sm-harness::*pending-capability-changes*)
+        (setf asdf:*central-registry* (remove root asdf:*central-registry* :test #'equal))
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))))
+
+(test reload-harness-tool-records-no-capability-change-when-the-name-set-is-unchanged
+  ;; A reload that only changes a tool handler's own body (or, as here,
+  ;; nothing at all) with an identical tool-name set is not a "capability
+  ;; change" for #146's purposes -- #76's existing generic follow-up already
+  ;; covers a plain body-only edit.
+  (let ((root (temp-data-root)))
+    (%with-capability-fixture (sys)
+      (unwind-protect
+           (progn
+             (%write-capability-fixture root sys "(list \"a\" \"b\")")
+             (%push-fixture-registry root)
+             (%call-reload-tool)
+             (sleep 1.1)
+             (%write-capability-fixture root sys "(list \"a\" \"b\")")
+             (destructuring-bind (text is-error)
+                 (%call-reload-tool-for-session "sess-146-nochange")
+               (is (null is-error))
+               (is (search "reloaded" text)))
+             (is (null (gethash "sess-146-nochange" sm-harness::*pending-capability-changes*))))
+        (remhash "sess-146-nochange" sm-harness::*pending-capability-changes*)
+        (setf asdf:*central-registry* (remove root asdf:*central-registry* :test #'equal))
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))))
+
+(test reload-harness-tool-records-no-capability-change-on-a-failed-reload
+  (let ((root (temp-data-root)))
+    (%with-capability-fixture (sys)
+      (unwind-protect
+           (progn
+             (%write-capability-fixture root sys "(list \"a\" \"b\")")
+             (%push-fixture-registry root)
+             (%call-reload-tool)
+             (sleep 1.1)
+             (%write-text-file
+              (merge-pathnames (format nil "~A.lisp" (string-downcase (symbol-name sys))) root)
+              (format nil "(in-package #:~A)~%(defun value ( ~%" (string-downcase (symbol-name sys))))
+             (destructuring-bind (text is-error)
+                 (%call-reload-tool-for-session "sess-146-failed")
+               (is (eq t is-error))
+               (is (search "reload failed" text)))
+             (is (null (gethash "sess-146-failed" sm-harness::*pending-capability-changes*))))
+        (remhash "sess-146-failed" sm-harness::*pending-capability-changes*)
+        (setf asdf:*central-registry* (remove root asdf:*central-registry* :test #'equal))
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))))
+
+(test reload-harness-tool-records-no-capability-change-without-a-calling-session-id
+  ;; CONTEXT with no :CALLING-SESSION-ID at all (e.g. %CALL-RELOAD-TOOL's own
+  ;; NIL context, matching a headless/standalone call) has nowhere to record
+  ;; a diff against -- silently skipped, never an error, since this signal is
+  ;; a purely additive extra on top of RELOAD_HARNESS's own core contract.
+  (let ((root (temp-data-root))
+        (before-count 0))
+    (%with-capability-fixture (sys)
+      (unwind-protect
+           (progn
+             (%write-capability-fixture root sys "(list \"a\" \"b\")")
+             (%push-fixture-registry root)
+             (%call-reload-tool)
+             (sleep 1.1)
+             (setf before-count (hash-table-count sm-harness::*pending-capability-changes*))
+             (%write-capability-fixture root sys "(list \"a\" \"b\" \"c\")")
+             (destructuring-bind (text is-error) (%call-reload-tool)
+               (is (null is-error))
+               (is (search "reloaded" text)))
+             (is (= before-count (hash-table-count sm-harness::*pending-capability-changes*))))
+        (setf asdf:*central-registry* (remove root asdf:*central-registry* :test #'equal))
+        (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore)))))

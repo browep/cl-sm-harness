@@ -207,6 +207,15 @@ rendered indistinguishably from a real user message."
   (format nil "[harness] automatic reload_harness follow-up limit (~D consecutive) reached; no further automatic follow-up turns will run until this chain resets."
           +max-consecutive-synthetic-followups+))
 
+(defun %capability-change-text (cc)
+  "Harness-authored transcript/chip text for a #146 capability-change event.
+CC is the (:ADDED (...) :REMOVED (...)) plist %RELOAD-HARNESS-TOOL-HANDLER
+(tool-catalog.lisp) computed from the real before/after catalog diff --
+never anything derived from the model's own reply, per that issue's own
+requirement."
+  (format nil "[harness] Tool catalog changed by reload_harness.~@[ Added: ~{~A~^, ~}.~]~@[ Removed: ~{~A~^, ~}.~]"
+          (getf cc :added) (getf cc :removed)))
+
 (defun %maybe-run-synthetic-followup (harness rt)
   "Consume RT's pending synthetic follow-up, if any, once the current turn
 has fully finished. Auto-submits a new turn via the same SUBMIT-TURN path
@@ -432,7 +441,21 @@ returned unchanged."
          ;; mapping layer already splits success/failure into distinct event
          ;; types -- see #58) -- so reaching here already means success.
          (when (equal (%tool-base-name name) "reload_harness")
-           (setf (session-runtime-pending-synthetic-followup rt) (%reload-followup-text))))
+           (setf (session-runtime-pending-synthetic-followup rt) (%reload-followup-text))
+           ;; #146: consume (once) whatever added/removed diff
+           ;; %RELOAD-HARNESS-TOOL-HANDLER stashed for this session, if any --
+           ;; NIL when the reload changed no tool names (a body-only edit).
+           ;; This runs on this session's own worker thread, same as every
+           ;; other %APPEND-TRANSCRIPT call here, so no lock is needed around
+           ;; the transcript mutation itself; the lock below only guards the
+           ;; handoff out of the cross-thread table.
+           (let ((cc (sb-thread:with-mutex (*capability-change-lock*)
+                       (prog1 (gethash (session-record-id rec) *pending-capability-changes*)
+                         (remhash (session-record-id rec) *pending-capability-changes*)))))
+             (when cc
+               (%append-transcript rt "system" (%capability-change-text cc)
+                                   :kind "capability-change" :meta cc)
+               (%publish rt :capability-change cc)))))
        (%append-transcript rt "assistant"
                            (format nil "Tool completed: ~A" (getf payload :content))
                            :kind "tool" :meta payload)
