@@ -637,6 +637,64 @@ for directory contents.
   navigation selectors can stay static text rather than matching a
   random per-run temp dir name).
 
+## SHOW_IMAGE chat tile
+
+`sm-harness/src/tool-catalog.lisp`'s `show_image` tool (see its own
+section in `docs/sm-harness.md`) renders a local image via headless
+Chromium and hands the screenshot to the model as usual -- but also, when
+the call happens inside a real session, makes the human watching that
+session's own browser tab see the same picture inline in the transcript,
+as a real `<img>` element, not a text description.
+
+- **Split matches #129's title-update precedent exactly**: a durable half
+  (a `"image"`-kind transcript entry, `text` = the plain absolute
+  screenshot path, appended and persisted via `SHOW-IMAGE-TILE`,
+  `sm-harness/src/session-service.lisp`) and a live half (an
+  `:IMAGE-SHOWN` event published right after, so a tab already open on
+  that session updates immediately without waiting for a reload) -- the
+  same split `SET-SESSION-TITLE` established for a session mutation
+  triggered from *inside* a tool handler's own thread rather than the
+  session's worker thread.
+- **`%IMAGE-TILE-HTML` (`src/presenter.lisp`) is the one deliberate
+  exception to `escape-text`/`markdown-to-html`'s documented "no `<img>`,
+  ever" posture (#30, see that section's own comment block).** That
+  posture exists to stop arbitrary model-authored chat *prose* from
+  smuggling a tracking-pixel `<img src="https://...">` into the
+  transcript; it does not apply here, because this `<img>`'s `src` is
+  never model-supplied text dropped into an attribute -- it is always
+  `%FS-HREF` applied to a path `SHOW-IMAGE-TILE` itself just wrote to
+  disk, reusing the file browser's own `/fs/` serving (#138) rather than
+  inlining base64: a served URL is a handful of bytes to persist and
+  replay forever, where a base64 payload would repeat the full
+  (often multi-100KB) screenshot itself in the session's JSON transcript
+  file on every save. `%IMAGE-TILE-HTML` degrades to a plain "no longer
+  available" text line (not a broken `<img>` or a replay-crashing error)
+  when the file is gone -- expected for a screenshot that landed outside
+  `/data` (a headless/standalone `show_image` call with no
+  `*TOOL-HARNESS*`) after a container restart.
+- **Both the live path and the historical-replay path call the same
+  `%IMAGE-TILE-HTML`.** `EVENT-DISPLAY`'s `:IMAGE-SHOWN` case
+  (`presenter.lisp`) covers a tab already open when the tile appears;
+  `render-chat`'s replay loop (`src/ui/chat.lisp`) covers reopening a tab
+  later, by special-casing `kind = "image"` the same way it already
+  special-cases `"tool"`/`"synthetic"`/`"capability-change"` -- reading
+  the persisted entry's plain path back out of `text` and rebuilding the
+  identical `<img>` tag, rather than trying to persist and replay HTML
+  (or `:META`, whose shape does not round-trip identically before vs.
+  after a disk reload -- `%PLIST->JSON`/`%JSON->ENTRY`,
+  `sm-harness/src/session-repository.lisp` -- which is why this
+  deliberately does not use `:META` for anything replay depends on).
+- **Verified against a real running server, not just unit tests**: a
+  `show_image` call was made from a real subagent session, its
+  persisted transcript entry inspected on disk, its screenshot fetched
+  back byte-identical over `/fs/`, and -- the strongest check -- a real
+  headless-Chromium Playwright page opened on that session's own
+  `/sessions/<id>` URL (both immediately, exercising the live path, and
+  again as a fresh navigation with no prior connection, exercising pure
+  replay) found `img.chat-image-tile` fully decoded
+  (`naturalWidth`/`naturalHeight` populated, `complete: true`) in both
+  cases.
+
 ## Dead browser tabs and listener delivery
 
 A tab whose websocket silently died (laptop sleep, network drop) leaves a

@@ -206,6 +206,43 @@ for why %PUBLISH cannot use SESSION-RUNTIME-LOCK internally instead."
       (%publish rt :title (list :title trimmed))
       (session-record->summary (session-runtime-record rt)))))
 
+(defun show-image-tile (harness session-id path &key caption)
+  "Append a durable transcript entry (KIND \"image\") for SESSION-ID
+recording PATH -- an absolute filesystem path to an already-rendered
+image, e.g. the PNG a SHOW_IMAGE tool call (tool-catalog.lisp) just
+screenshotted via Playwright -- and publish an :IMAGE-SHOWN event so a
+browser tab already open on SESSION-ID renders it immediately as a chat
+tile. This is the same live-event-plus-durable-entry split SET-SESSION-
+TITLE (#129) above established for a session update triggered from
+*inside* a tool handler's own thread, not the session's worker thread --
+same OPEN-SESSION-then-%GET-RUNTIME-then-SESSION-RUNTIME-LOCK shape.
+
+PATH is stored as a plain string, exactly like every other transcript-
+entry TEXT field always has been -- no HTML, no base64. All HTML for the
+tile (an <img> tag) is built later, at render time -- live or replay --
+by SM-HARNESS-WEB-UI's own presenter, straight from this harness-owned
+path (via the file browser's existing /fs/ serving, #138), never from
+arbitrary text a model or another caller supplied verbatim into an
+attribute -- see PRESENTER.LISP's %IMAGE-TILE-HTML for why that split
+keeps this safe. CAPTION is an optional short human-readable label
+(typically the original path the caller asked to view) carried in META
+for a future renderer to use; nothing here requires it.
+
+Signals HARNESS-INPUT-ERROR for a NIL/empty PATH. SESSION-ID need not
+already be attached in memory -- reopened first, same as SET-SESSION-
+TITLE. Returns the updated SESSION-SUMMARY."
+  (unless (and (stringp path) (plusp (length path)))
+    (error 'harness-input-error :message "path must be a non-empty string"))
+  (open-session harness session-id)
+  (let ((rt (%get-runtime harness session-id)))
+    (sb-thread:with-mutex ((session-runtime-lock rt))
+      (%append-transcript rt "assistant" path :kind "image"
+                                              :meta (list :caption caption))
+      (repository-save-session (harness-repository harness)
+                               (session-runtime-record rt)))
+    (%publish rt :image-shown (list :path path :caption caption))
+    (session-record->summary (session-runtime-record rt))))
+
 (defun submit-turn (harness session-id prompt &key (kind "message"))
   "KIND tags the durable transcript entry and published :user-message event
 (default \"message\"). Internal harness-initiated follow-ups (#76) pass

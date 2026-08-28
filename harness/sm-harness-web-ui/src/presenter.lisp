@@ -299,6 +299,13 @@ event when at least one is non-empty."
              (escape-text (format nil "Tool completed: ~A" (getf payload :content)))))
       (:tool-failed
        (cons "tool" "Tool failed"))
+      (:image-shown
+       ;; SHOW_IMAGE's chat tile (#150-ish): PATH is always a screenshot
+       ;; SHOW-IMAGE-TILE (session-service.lisp) itself wrote to disk, so
+       ;; %IMAGE-TILE-HTML's <img> is safe to hand ADD-LINE's INNER-HTML
+       ;; path unescaped, same trust boundary GIT-DIFF-HTML/file-browser
+       ;; HTML already rely on elsewhere in this file.
+       (cons "image" (%image-tile-html (getf payload :path))))
       (:terminal
        (cons "result" (escape-text (or (getf payload :text) ""))))
       (:error
@@ -662,6 +669,34 @@ own docstring above for why a prefix is needed at all now that the root
 is / rather than the narrower /app this feature originally shipped with."
   (format nil "~A~{~A~^/~}" +file-browser-url-prefix+
           (mapcar #'%fs-url-encode-component (%fs-rel-components path))))
+
+(defun %image-tile-html (path)
+  "Build the one deliberate exception to escape-text/markdown-to-html's
+no-<img>-ever posture (#30 above): the safe <img> tag for a SHOW_IMAGE
+chat tile (sm-harness/src/tool-catalog.lisp's show_image tool +
+SHOW-IMAGE-TILE, session-service.lisp). PATH always names a screenshot
+SHOW-IMAGE-TILE itself just wrote to disk after rendering it via
+Playwright -- never raw text a model or another caller supplied verbatim
+into an attribute -- so only the %FS-HREF'd URL and the escaped file name
+vary here; the tag shape itself is fixed. Reuses the file browser's own
+/fs/ serving (#138) rather than inlining base64 into the transcript: a
+served URL is a handful of bytes to persist and replay forever, where a
+base64 payload would be the full (often multi-100KB) screenshot itself,
+repeated in every session's JSON transcript file on every save.
+
+Returns a safe \"no longer available\" line, not a broken <img>, when
+PATH no longer exists (%FS-HREF calls TRUENAME, which requires the file
+to exist) -- a screenshot living outside /data (a headless/standalone
+SHOW_IMAGE call with no *TOOL-HARNESS*, see %SHOW-IMAGE-OUTPUT-DIR's own
+docstring) does not survive a container restart, and a stale tile must
+degrade safely on replay rather than erroring the whole transcript
+render."
+  (handler-case
+      (format nil "<img class=\"chat-image-tile\" style=\"max-width:480px;max-height:480px;border-radius:6px;display:block;\" src=\"~A\" alt=\"~A\" loading=\"lazy\">"
+              (%fs-href path)
+              (%escape-attr (escape-text (file-namestring path))))
+    (error ()
+      (escape-text (format nil "[image no longer available: ~A]" path)))))
 
 ;;; ---------------------------------------------------------------------
 ;;; Git diff viewer (#140, follow-up to #138's file browser): pure

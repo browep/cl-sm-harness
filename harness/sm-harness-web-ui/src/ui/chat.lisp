@@ -332,12 +332,21 @@ reliably there and not part of what the user meant to send."
                          ;; would otherwise fall through to the generic
                          ;; .msg-system styling on replay only.
                          ((string= "capability-change" kind) "capability-change")
+                         ;; SHOW_IMAGE's chat tile: its own persisted role too,
+                         ;; matching the live :IMAGE-SHOWN path below.
+                         ((string= "image" kind) "image")
                          (t (sm-harness:transcript-entry-role entry))))
                  (raw (sm-harness:transcript-entry-text entry)))
             (add-line role
-                      (if (string= role "assistant")
-                          (markdown-to-html raw)
-                          (escape-text raw))
+                      (cond
+                        ((string= role "assistant") (markdown-to-html raw))
+                        ;; RAW here is the plain absolute screenshot path
+                        ;; SHOW-IMAGE-TILE (session-service.lisp) persisted,
+                        ;; never HTML -- %IMAGE-TILE-HTML builds the same
+                        ;; <img> tag on replay that EVENT-DISPLAY's
+                        ;; :IMAGE-SHOWN case builds live, from that path.
+                        ((string= role "image") (%image-tile-html raw))
+                        (t (escape-text raw)))
                       :scroll nil)))
         (when entries (scroll-transcript-to-bottom)))
       (multiple-value-bind (snapshot lid cursor)

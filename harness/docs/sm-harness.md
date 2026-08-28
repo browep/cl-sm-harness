@@ -196,6 +196,63 @@ this the hard way testing live against this session's own chat agent
 before landing it, not from a hunch: every unit test used the JSON-
 compatible-content escape hatch generically enough not to catch it.
 
+### `show_image`
+
+Shows a local image both to the calling model and, when the call happens
+inside a real chat session, to the human watching that session's browser
+tab -- as an actual rendered `<img>` chat tile, not just a description.
+`path` is required, no sandboxing (same posture as `read_file`/
+`view_image`), and must have one of `+show-image-supported-extensions+`'s
+extensions: `.png`/`.jpg`/`.jpeg`/`.gif`/`.webp`/`.svg`/`.bmp` -- a
+deliberately broader set than `view_image`'s vision-API-restricted one,
+since SVG/BMP go through a real browser rather than straight to the
+model.
+
+Unlike `view_image`, this never hands the source file's own bytes to the
+model. It builds a tiny standalone HTML page (`<img id="shown"
+src="file://...">`), renders it in headless Chromium via Playwright
+(`e2e/show-image-render.mjs`, reusing `sm-harness-web-ui/e2e`'s own
+already-`npm ci`'d install rather than a second copy of the same
+dependency -- see "Running browser E2E without Docker" in
+`docs/sm-harness-web-ui.md`), and screenshots the rendered `<img>`
+element once it finishes decoding (`page.locator('#shown').screenshot()`,
+cropped tightly to the image's own bounds, not the whole viewport). The
+screenshot -- always a plain PNG, regardless of the source format -- is
+what actually crosses the MCP wire back to the model, as an image content
+block (same shape `view_image` returns, see its own section above).
+
+**The chat tile is a separate side effect, not part of the MCP result.**
+The handler reads `context`'s `:calling-session-id` (the same mechanism
+`%SDK-TOOL-FROM-DEFINITION`, sdk-adapter.lisp, already documents) and, if
+`*TOOL-HARNESS*` is configured, calls `SHOW-IMAGE-TILE`
+(session-service.lisp) -- modeled directly on `SET-SESSION-TITLE` (#129)'s
+own shape for a session mutation triggered from *inside* a tool handler's
+own thread, not the session's worker thread: `OPEN-SESSION` (reopens an
+idle session transparently), then `%GET-RUNTIME` +
+`SESSION-RUNTIME-LOCK` to append a durable `"image"`-kind transcript
+entry and persist it, then `%PUBLISH` an `:IMAGE-SHOWN` event outside
+that lock so an already-open browser tab updates immediately. The
+persisted transcript entry's `text` is deliberately just the plain
+absolute screenshot path -- never HTML, never base64 -- exactly like
+every other transcript entry's `text` field always has been; building the
+actual `<img>` tag (`%IMAGE-TILE-HTML`, both the live event-display path
+and the historical-replay path use the same function) is
+`sm-harness-web-ui`'s job, not this file's, since this file has to load
+and run without CLOG. See "SHOW_IMAGE chat tile" in
+`docs/sm-harness-web-ui.md` for that half.
+
+The generated HTML/PNG pair lives under
+`<data-root>/<project-key>/show-image/<session-id>/` when a harness is
+configured (mirroring the uploads layout `sm-harness-web-ui/src/ui/
+upload.lisp` documents, so a tile survives a container restart the same
+way an uploaded file does), or a plain temp-directory subdirectory
+otherwise (headless/standalone use). `+show-image-render-timeout-
+seconds+` (30s) bounds the Chromium child via the same `%RUN-BASH-
+COMMAND` timeout/kill machinery the `bash` tool above already documents,
+reused rather than duplicated. `+view-image-max-bytes+` (5MB) bounds the
+resulting screenshot, reused from `view_image` above rather than adding a
+near-duplicate constant.
+
 ### `write_file`
 
 Writes (creating or overwriting) a file's contents. **No sandboxing** (see

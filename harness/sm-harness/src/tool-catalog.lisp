@@ -1213,6 +1213,247 @@ about it -- only the display title."
    :annotations '(:read-only-p nil :destructive-p nil :idempotent-p t :open-world-p nil)
    :handler '%set-session-title-tool-handler))
 
+;;; ---------------------------------------------------------------------
+;;; show_image (#150-ish): render a local image file through a real
+;;; browser via Playwright and hand the resulting screenshot both to the
+;;; calling model (as an MCP image content block, same contract
+;;; VIEW_IMAGE above already established) and -- when this call happens
+;;; inside a real session, i.e. *TOOL-HARNESS* is configured and CONTEXT
+;;; carries a :CALLING-SESSION-ID -- to that session's own transcript as
+;;; a live chat tile (SHOW-IMAGE-TILE, session-service.lisp; the actual
+;;; <img> HTML is built later by SM-HARNESS-WEB-UI's presenter, never
+;;; here, since this file has to load and run without CLOG).
+;;;
+;;; Unlike VIEW_IMAGE, which hands the source file's own bytes straight
+;;; to the model, this tool never sends the source bytes anywhere: it
+;;; builds a tiny standalone HTML page with a single <img> pointing at
+;;; the source file via a file:// URL, loads that page in headless
+;;; Chromium (baked into this image at /opt/ms-playwright specifically so
+;;; this works with no extra setup -- see docs/sm-harness-web-ui.md,
+;;; "Running browser E2E without Docker"), and screenshots the rendered
+;;; <img> element once it finishes decoding. That indirection is the
+;;; whole point, not incidental ceremony: a real browser decodes strictly
+;;; more image formats than Anthropic's documented vision-supported set
+;;; (SVG included -- +SHOW-IMAGE-SUPPORTED-EXTENSIONS+ allows it even
+;;; though +VIEW-IMAGE-MEDIA-TYPES+ above does not), and the screenshot
+;;; that comes back is always a plain, model-vision-compatible PNG
+;;; regardless of the source format.
+
+(defparameter +show-image-supported-extensions+
+  '("png" "jpg" "jpeg" "gif" "webp" "svg" "bmp")
+  "Source file extensions SHOW_IMAGE accepts, checked case-insensitively.
+Deliberately broader than +VIEW-IMAGE-MEDIA-TYPES+'s vision-API-restricted
+set: a real browser <img> tag decodes strictly more formats than
+Anthropic's vision API takes directly (SVG and BMP in particular), and
+this tool's whole point is going through a browser render rather than
+sending source bytes straight to the model the way VIEW_IMAGE does.")
+
+(defparameter +show-image-max-source-bytes+ (* 20 1024 1024)
+  "Cap on the SOURCE file SHOW_IMAGE will hand to the browser to render,
+rejected outright rather than attempted -- generous relative to
++VIEW-IMAGE-MAX-BYTES+ (5MB) precisely because this file's bytes never
+themselves cross the MCP wire; only the rendered screenshot does, and
+that is bounded separately, by +VIEW-IMAGE-MAX-BYTES+ reused below for
+the same reason a second, redundant constant would only invite drift.")
+
+(defparameter +show-image-render-timeout-seconds+ 30
+  "Bound on the headless-Chromium render+screenshot child SHOW_IMAGE
+spawns (%RUN-BASH-COMMAND above already SIGTERMs-then-SIGKILLs a runaway
+process group on timeout) -- generous next to the sub-second renders seen
+in practice, to absorb a cold Chromium launch on a loaded host without
+false-failing an ordinary call.")
+
+(defparameter +show-image-render-script-path+
+  "/app/harness/sm-harness-web-ui/e2e/show-image-render.mjs"
+  "Absolute path to the Playwright driver script SHOW_IMAGE shells out to
+(e2e/show-image-render.mjs -- see its own header comment for why it lives
+under sm-harness-web-ui/e2e rather than a dedicated directory: reusing
+that directory's already-`npm ci`'d `playwright` install, baked into
+every image build for exactly this kind of in-container browser
+automation, beats standing up a second copy of the same dependency.
+Node's ESM resolution walks up from the *script file's own* directory,
+not the process's CWD, so an absolute path here works regardless of what
+CWD %RUN-BASH-COMMAND happens to run under -- confirmed directly, not
+assumed, before this shipped.")
+
+(defun %show-image-extension (path)
+  (string-downcase (or (pathname-type (pathname path)) "")))
+
+(defun %show-image-schema ()
+  (let ((schema (%json-object "type" "object"))
+        (props (%json-object))
+        (field (%json-object "type" "string")))
+    (setf (gethash "path" props) field
+          (gethash "properties" schema) props
+          (gethash "required" schema) (list "path"))
+    schema))
+
+(defun %show-image-shell-quote (s)
+  "Wrap S in single quotes for safe use as one /bin/sh -c argument, the
+same POSIX-shell-safe escaping approach %RUN-GIT (presenter.lisp) avoids
+needing entirely by never going through a shell -- this tool does, via
+%RUN-BASH-COMMAND, reused rather than duplicating its timeout/kill
+machinery. Only ever applied to paths this handler itself generated
+(a fixed render-script path, and OUTPUT-DIR-relative temp file names
+built from a timestamp and a random integer), never to caller-supplied
+text, but kept correct regardless -- cheap insurance, and the pattern
+every other embedded single quote in a shell string should follow."
+  (with-output-to-string (out)
+    (write-char #\' out)
+    (loop for ch across s
+          do (if (char= ch #\')
+                 (write-string "'\\''" out)
+                 (write-char ch out)))
+    (write-char #\' out)))
+
+(defun %show-image-url-unreserved-byte-p (byte)
+  "RFC 3986 unreserved bytes, plus '/' (47) left unescaped so a file://
+URL's path separators survive -- everything else about this mirrors
+sm-harness-web-ui/src/presenter.lisp's %FS-URL-ENCODE-COMPONENT (checking
+raw bytes rather than CODE-CHAR'd characters for the same Latin-1-
+collision reason its own docstring explains), deliberately re-implemented
+here rather than shared: sm-harness must load and run without CLOG, so it
+cannot reference anything in sm-harness-web-ui."
+  (or (<= 48 byte 57) (<= 65 byte 90) (<= 97 byte 122)
+      (member byte '(45 46 95 126 47))))
+
+(defun %show-image-file-url (path)
+  "PATH's TRUENAME as a percent-encoded file:// URL, safe to embed
+directly inside an HTML double-quoted src attribute with no further
+escaping: every byte outside %SHOW-IMAGE-URL-UNRESERVED-BYTE-P (which
+includes '\"', '<', '>', and non-ASCII bytes) becomes %XX."
+  (with-output-to-string (out)
+    (write-string "file://" out)
+    (loop for byte across (sb-ext:string-to-octets (namestring (truename path))
+                                                    :external-format :utf-8)
+          do (if (%show-image-url-unreserved-byte-p byte)
+                 (write-char (code-char byte) out)
+                 (format out "%~2,'0X" byte)))))
+
+(defun %show-image-html-page (file-url)
+  (format nil "<!doctype html><html><head><meta charset=\"utf-8\"><style>html,body{margin:0;padding:0;background:#20232a;}img{display:block;}</style></head><body><img id=\"shown\" src=\"~A\"></body></html>"
+          file-url))
+
+(defun %show-image-output-dir (harness session-id)
+  "Durable directory SHOW_IMAGE writes its generated HTML/PNG pair to.
+When HARNESS is configured (the real production path), mirrors the
+<data-root>/<project-key>/... layout sm-harness-web-ui/src/ui/upload.lisp
+already documents for uploads -- <data-root>/<project-key>/show-image/
+<session-id-or-\"_standalone\">/ -- so a generated screenshot survives a
+container restart the same way an uploaded file does, letting a replayed
+chat tile keep working rather than 404ing the moment /tmp is cleared.
+Falls back to a plain temp-directory subdirectory when HARNESS is NIL
+(headless/standalone use, same posture every other *TOOL-HARNESS*-aware
+tool here already takes)."
+  (if harness
+      (merge-pathnames (format nil "~A/show-image/~A/"
+                               (harness-config-project-key (harness-config harness))
+                               (or session-id "_standalone"))
+                       (harness-config-data-root (harness-config harness)))
+      (merge-pathnames "sm-harness-show-image/"
+                       (pathname (concatenate 'string
+                                              (or (sb-ext:posix-getenv "TMPDIR") "/tmp")
+                                              "/")))))
+
+(defun %show-image-tool-handler (arguments context)
+  (let* ((path (gethash "path" arguments))
+         (calling-session-id (getf context :calling-session-id))
+         (ext (and (stringp path) (plusp (length path)) (%show-image-extension path))))
+    (cond
+      ((not (and (stringp path) (plusp (length path))))
+       (values "show_image requires a non-empty path" t))
+      ((not (probe-file path))
+       (values (format nil "file not found: ~A" path) t))
+      ((not (member ext +show-image-supported-extensions+ :test #'string=))
+       (values (format nil "unsupported image type for ~A -- show_image supports ~{.~A~^, ~} only"
+                       path +show-image-supported-extensions+)
+               t))
+      ((> (%file-byte-size path) +show-image-max-source-bytes+)
+       (values (format nil "image exceeds the ~:D byte limit (this file is ~:D bytes) -- resize it before calling show_image again"
+                       +show-image-max-source-bytes+ (%file-byte-size path))
+               t))
+      (t
+       (handler-case
+           (let* ((output-dir (%show-image-output-dir *tool-harness* calling-session-id))
+                  (basename (format nil "~A-~A" (get-universal-time) (random 1000000000)))
+                  (html-path (merge-pathnames (format nil "~A.html" basename) output-dir))
+                  (png-path (merge-pathnames (format nil "~A.png" basename) output-dir))
+                  (file-url (%show-image-file-url path)))
+             (%write-file-atomic html-path (%show-image-html-page file-url))
+             (unwind-protect
+                 (let ((command (format nil "node ~A ~A ~A"
+                                        (%show-image-shell-quote +show-image-render-script-path+)
+                                        (%show-image-shell-quote (namestring html-path))
+                                        (%show-image-shell-quote (namestring png-path)))))
+                   (multiple-value-bind (stdout stderr exit-code timed-out-p kill-failure)
+                       (%run-bash-command command nil +show-image-render-timeout-seconds+)
+                     (declare (ignore stdout))
+                     (cond
+                       (timed-out-p
+                        (values (%bash-timeout-result-text +show-image-render-timeout-seconds+ kill-failure) t))
+                       ((not (eql exit-code 0))
+                        (values (format nil "show_image render failed (exit ~A): ~A"
+                                        exit-code (if (plusp (length stderr)) stderr "no error output"))
+                                t))
+                       ((not (probe-file png-path))
+                        (values "show_image render reported success but produced no screenshot" t))
+                       ((> (%file-byte-size png-path) +view-image-max-bytes+)
+                        (values (format nil "rendered screenshot exceeds the ~:D byte limit (~:D bytes)"
+                                        +view-image-max-bytes+ (%file-byte-size png-path))
+                                t))
+                       (t
+                        (let* ((bytes (%read-file-bytes png-path))
+                               (data (%base64-encode-bytes bytes))
+                               (image-block (%json-object "type" "image"
+                                                          "data" data
+                                                          "mimeType" "image/png"))
+                               (text-block (%json-object
+                                            "text"
+                                            (format nil "rendered and displayed ~A as an image tile (screenshot: image/png, ~:D bytes)"
+                                                    path (length bytes))
+                                            "type" "text")))
+                          (when (and *tool-harness* calling-session-id)
+                            (ignore-errors
+                              (show-image-tile *tool-harness* calling-session-id
+                                               (namestring (truename png-path))
+                                               :caption path)))
+                          (values nil nil (list text-block image-block)))))))
+               (ignore-errors (delete-file html-path))))
+         (error (c)
+           (values (format nil "unable to render image: ~A" c) t)))))))
+
+(defun make-show-image-tool-definition ()
+  "No sandboxing on PATH, same posture as VIEW_IMAGE/READ_FILE (#61/#62):
+any image the harness process can reach is viewable. Builds a minimal
+standalone HTML page around PATH and renders it in headless Chromium via
+Playwright (docs/sm-harness-web-ui.md, \"Running browser E2E without
+Docker\"), then screenshots the rendered <img> element -- never PATH's
+own bytes -- so the result is always a plain PNG the calling model can
+see (an MCP image content block, same shape VIEW_IMAGE returns) and, when
+this call happens inside a real chat session, so a browser tab already
+open on that session renders the same screenshot immediately as a chat
+tile (SHOW-IMAGE-TILE, session-service.lisp)."
+  (make-tool-definition
+   :name "show_image"
+   :description "Show a local image file both to you and, when this is a
+real chat session, to the human as a rendered chat tile. PATH is required
+and must be a local .png/.jpg/.jpeg/.gif/.webp/.svg/.bmp file the harness
+process can reach -- no sandboxing, same posture as read_file. Unlike
+view_image, this builds a tiny HTML page around the image, renders it in a
+real headless browser via Playwright, and screenshots the result -- so it
+also handles SVG/BMP (view_image does not), and the human watching this
+chat sees the same rendered picture inline, not just a text description.
+Use this whenever you want to show the human an image, not just look at
+one yourself."
+   :input-schema (%show-image-schema)
+   ;; #123: renders and reads a file, and (best-effort) appends to a
+   ;; session transcript -- not a pure read like READ_FILE/VIEW_IMAGE, so
+   ;; not read-only; not destructive (nothing existing is removed/changed);
+   ;; each call writes a fresh screenshot file rather than reusing one, so
+   ;; not idempotent; no external network/service involved.
+   :annotations '(:read-only-p nil :destructive-p nil :idempotent-p nil :open-world-p nil)
+   :handler '%show-image-tool-handler))
+
 (defparameter +run-subagent-max-requests+ 8
   "Handler-side cap on REQUESTS per RUN_SUBAGENT call (#142) -- the safety
 boundary every catalog tool needs, since every catalog tool executes with
@@ -1499,7 +1740,8 @@ error rather than being hidden when nothing is wired up."
                                (make-bash-tool-definition)
                                (make-reload-tool-definition)
                                (make-web-search-tool-definition)
-                               (make-set-session-title-tool-definition))
+                               (make-set-session-title-tool-definition)
+                               (make-show-image-tool-definition))
                          (unless (and *current-session-record*
                                       (session-record-parent-session-id
                                        *current-session-record*))
