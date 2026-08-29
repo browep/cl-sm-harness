@@ -2,6 +2,7 @@
 
 # sm-harness
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Watch the video](https://img.youtube.com/vi/3IkrGNwkdJk/0.jpg)](https://www.youtube.com/watch?v=3IkrGNwkdJk)
 
 A self-improving agent harness for Claude Code, written in Common Lisp.
@@ -81,6 +82,10 @@ built your app, and its full history of doing so, ships with it.
   [`sm-harness-web-ui.md`](harness/docs/sm-harness-web-ui.md).
 - `harness/README.md` — the `claude-agent-sdk-cl` library README (install,
   API, Docker-only test ladder).
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
 
 ## Status
 

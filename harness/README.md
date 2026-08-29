@@ -287,4 +287,6 @@ See GitHub [issue #1](https://github.com/browep/claude-agent-sdk-cl/issues/1) an
 
 ## License
 
-The upstream Python SDK is MIT-licensed. This port is an independent implementation; copied or adapted test material must retain source provenance and required notices.
+MIT — see [`LICENSE`](../LICENSE) at the repo root (matches the `:license "MIT"` declared in `claude-agent-sdk-cl.asd`, `sm-harness.asd`, and `sm-harness-web-ui.asd`).
+
+The upstream Python SDK is also MIT-licensed. This port is an independent implementation; copied or adapted test material must retain source provenance and required notices.
